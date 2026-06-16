@@ -113,6 +113,13 @@
   .modal-body label { font-size:12px; color:var(--mut); display:inline-flex; align-items:center; gap:6px; margin-right:12px; }
   .modal-body label.ck { color:var(--txt); }
   .modal-body input[type=range] { vertical-align:middle; }
+  .cmodal { position:fixed; inset:0; background:#000a; z-index:40; display:flex; align-items:center; justify-content:center; }
+  .cmodal .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; width:540px; max-width:94vw; }
+  .cmodal .hd { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); font-weight:700; }
+  .cmodal .bd { padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
+  .cmodal .bd .row { display:flex; gap:8px; align-items:center; }
+  .cmodal .bd label.k { font-size:12px; color:var(--mut); min-width:74px; }
+  .cmodal .bd input[type=text] { flex:1; }
   .ecline { display:flex; flex-wrap:wrap; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:8px; }
   .ecline input.ecl-text { flex:1; min-width:120px; }
   .ecline input[type=color] { width:34px; height:26px; padding:0; border:none; background:none; }
@@ -122,7 +129,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.6.2</span>
+  <span class="ver" id="appVer">v1.7.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button id="btnOverlays">✚ Overlays</button>
@@ -258,6 +265,22 @@
       <div id="ovList" style="display:flex;flex-direction:column;gap:6px"></div>
       <hr>
       <div id="ovEditor"></div>
+    </div>
+  </div>
+</div>
+
+<div id="exModal" class="cmodal" style="display:none">
+  <div class="card">
+    <div class="hd"><span>▶ Render MP4</span><button class="mini" id="exClose">✕</button></div>
+    <div class="bd">
+      <div class="row"><label class="k">Canvas</label>
+        <select id="exCanvas"><option value="9x16">9:16 Reels / Stories</option>
+          <option value="4x5">4:5 Meta feed</option><option value="16x9">16:9 YouTube</option></select></div>
+      <div class="row"><label class="k">Folder</label><input type="text" id="exDir" spellcheck="false"></div>
+      <div class="row"><label class="k">Filename</label><input type="text" id="exName" placeholder="Meowi_rollies_hero" spellcheck="false"></div>
+      <div class="row"><label class="k"></label><label class="ck" style="color:var(--txt)"><input type="checkbox" id="exStamp" checked> Add timestamp (never overwrite an existing file)</label></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button class="ghost" id="exCancel">Cancel</button><button class="primary" id="exGo">▶ Render</button></div>
+      <div class="status" id="exStatus"></div>
     </div>
   </div>
 </div>
@@ -789,12 +812,31 @@ $('#tlTracksWrap').addEventListener('pointerdown', ev=>{
 
 /* ---------- save / render ---------- */
 $('#btnSave').onclick=()=>projSave();
-$('#btnRender').onclick=async()=>{ stop(); const b=$('#btnRender'); b.disabled=true; b.textContent='⏳ Rendering…';
-  $('#status').textContent='Rendering '+EDL.settings.canvas+'… (this runs ffmpeg, ~10-30s)';
-  try{ const r=await api('/api/render',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(EDL)});
-    if(r.ok){ $('#status').innerHTML='✅ Rendered <b>'+r.name+'</b> ('+r.total+'s) → <a class="dl" href="'+r.output+'" target="_blank">open</a>'; toast('Render complete'); }
-    else { $('#status').textContent='❌ '+(r.log||'render failed'); toast('Render failed'); }
-  }catch(e){ $('#status').textContent='❌ '+e; } finally{ b.disabled=false; b.textContent='▶ Render MP4'; }
+function openExportModal(){ stop();
+  $('#exDir').value=(EDL.settings.outDir)||MAN.exportsDir||'';
+  $('#exName').value=(EDL.settings.outName)||'Meowi_rollies_hero';
+  $('#exCanvas').value=EDL.settings.canvas||'9x16';
+  $('#exStatus').textContent=''; $('#exModal').style.display='flex'; }
+function closeExportModal(){ $('#exModal').style.display='none'; }
+$('#btnRender').onclick=openExportModal;
+$('#exClose').onclick=closeExportModal; $('#exCancel').onclick=closeExportModal;
+$('#exModal').onclick=e=>{ if(e.target.id==='exModal') closeExportModal(); };
+$('#exGo').onclick=async()=>{
+  const canvas=$('#exCanvas').value; EDL.settings.canvas=canvas; $('#setCanvas').value=canvas; sizeStage(); updateTotal();
+  const dir=$('#exDir').value.trim(), base=($('#exName').value.trim()||'Meowi_rollies_hero');
+  EDL.settings.outDir=dir; EDL.settings.outName=base;
+  let name=base;
+  if($('#exStamp').checked){ const d=new Date(), p=n=>String(n).padStart(2,'0');
+    name+='_'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'-'+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds()); }
+  name+='_'+canvas;
+  const body=Object.assign({},EDL,{_outDir:dir,_outName:name});
+  const go=$('#exGo'); go.disabled=true; go.textContent='⏳ Rendering…'; $('#exStatus').textContent='Rendering '+canvas+'… (~10–30s)';
+  try{ const r=await api('/api/render',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(r.ok){ const link=r.output?(' · <a class="dl" href="'+r.output+'" target="_blank">open</a>'):'';
+      $('#exStatus').innerHTML='✅ Saved <b>'+r.name+'</b> ('+r.total+'s)<br><span style="color:var(--mut);word-break:break-all">'+r.path+'</span>'+link;
+      $('#status').innerHTML='✅ '+r.name+link; toast('Render complete'); }
+    else { $('#exStatus').textContent='❌ '+(r.log||'render failed'); toast('Render failed'); }
+  }catch(e){ $('#exStatus').textContent='❌ '+e; } finally{ go.disabled=false; go.textContent='▶ Render'; }
 };
 $('#btnReload').onclick=()=>boot(true);
 $('#btnPlayTl').onclick=()=>{ if(tlPlaying) stop(); else playTimeline(); };

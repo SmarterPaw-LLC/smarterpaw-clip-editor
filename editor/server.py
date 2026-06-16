@@ -483,7 +483,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
     return out, None
 
 
-def render(edl):
+def render(edl, out_dir=None, out_name=None):
     s = edl.get("settings", {})
     canvas = s.get("canvas", "9x16")
     W, H = CANVAS.get(canvas, CANVAS["9x16"])
@@ -575,8 +575,15 @@ def render(edl):
         vid_src, ov_err = apply_overlays(silent, edl.get("overlays", []), W, H, tmp)
         if vid_src is None:
             return {"ok": False, "log": f"overlays failed:\n{ov_err}"}
-        os.makedirs(EXPORTS, exist_ok=True)
-        out = os.path.join(EXPORTS, f"Meowi_rollies_hero_{canvas}.mp4")
+        base_name = (out_name or f"Meowi_rollies_hero_{canvas}").strip()
+        if not base_name.lower().endswith(".mp4"):
+            base_name += ".mp4"
+        target_dir = out_dir.strip() if out_dir else EXPORTS
+        try:
+            os.makedirs(target_dir, exist_ok=True)
+        except Exception as ex:
+            return {"ok": False, "log": f"Can't create folder:\n{target_dir}\n{ex}"}
+        out = os.path.join(target_dir, base_name)
         music = os.path.join(MUSIC_DIR, s.get("music", "1076_smile.mp3"))
         fade = round(total - 1.0, 2)
         if os.path.exists(music):
@@ -589,9 +596,19 @@ def render(edl):
             r = run([FFMPEG, "-y", "-loglevel", "error", "-i", vid_src,
                      "-c:v", "copy", "-movflags", "+faststart", out])
         if r.returncode != 0:
-            return {"ok": False, "log": f"mux failed:\n{r.stderr[-1500:]}"}
-        rel = "/" + urllib.parse.quote(os.path.relpath(out, PROJ).replace("\\", "/"))
-        return {"ok": True, "output": rel, "name": os.path.basename(out),
+            tail = r.stderr[-1500:]
+            hint = ""
+            if "Permission denied" in tail or "being used" in tail or "Invalid argument" in tail:
+                hint = "\n(The file may be open in a video player — close it, or use a new filename.)"
+            return {"ok": False, "log": f"Couldn't write the file:\n{tail}{hint}"}
+        url = None
+        try:
+            rel = os.path.relpath(out, PROJ)
+            if not rel.startswith(".."):
+                url = "/" + urllib.parse.quote(rel.replace("\\", "/"))
+        except Exception:
+            url = None
+        return {"ok": True, "output": url, "path": os.path.abspath(out), "name": os.path.basename(out),
                 "total": round(total, 2), "canvas": canvas}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -639,7 +656,8 @@ class Handler(BaseHTTPRequestHandler):
                     logo = "/" + cand
                     break
             return self._json({"clips": clips, "music": list_music(),
-                               "canvases": list(CANVAS.keys()), "logo": logo, "assets": list_assets()})
+                               "canvases": list(CANVAS.keys()), "logo": logo, "assets": list_assets(),
+                               "exportsDir": EXPORTS})
         if path == "/api/edl":
             return self._json(load_edl())
         if path == "/api/projects":
@@ -681,9 +699,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             return self._json({"ok": False, "log": "not found"}, 404)
         if path == "/api/render":
+            out_dir = data.pop("_outDir", None) or None
+            out_name = data.pop("_outName", None) or None
             save_edl(data)
             try:
-                return self._json(render(data))
+                return self._json(render(data, out_dir, out_name))
             except Exception as e:
                 return self._json({"ok": False, "log": repr(e)}, 500)
         if path == "/api/upload":
