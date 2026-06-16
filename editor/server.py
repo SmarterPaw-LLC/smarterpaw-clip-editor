@@ -228,6 +228,40 @@ def _font_path(key):
     return p if os.path.exists(p) else FONT_FILES["arial"]
 
 
+def wrap_caption(text, font_path, fontsize, maxw):
+    """Word-wrap text to fit maxw px; returns (wrapped_text, n_lines). Balances a 2-line wrap."""
+    try:
+        from PIL import ImageFont
+        font = ImageFont.truetype(font_path, fontsize)
+        measure = lambda s: font.getlength(s)
+    except Exception:
+        measure = lambda s: len(s) * fontsize * 0.55
+    words = text.split()
+    if not words:
+        return text, 1
+    lines, cur = [], ""
+    for w in words:
+        t = (cur + " " + w).strip()
+        if measure(t) <= maxw or not cur:
+            cur = t
+        else:
+            lines.append(cur); cur = w
+    if cur:
+        lines.append(cur)
+    # balance a 2-line wrap so lines are more even
+    if len(lines) == 2 and measure(text) <= maxw * 1.9:
+        best, bestdiff = None, 1e9
+        for i in range(1, len(words)):
+            a, b = " ".join(words[:i]), " ".join(words[i:])
+            if measure(a) <= maxw and measure(b) <= maxw:
+                diff = abs(measure(a) - measure(b))
+                if diff < bestdiff:
+                    bestdiff, best = diff, (a, b)
+        if best:
+            lines = list(best)
+    return "\n".join(lines), len(lines)
+
+
 def _rgba(c, alpha=255):
     c = (c or "#000000").lstrip("#")
     if len(c) == 3:
@@ -492,12 +526,14 @@ def render(edl):
             cap = (seg.get("cap") or "").strip()
             cap_dt = ""
             if cap:
+                wrapped, nlines = wrap_caption(cap, FONT_FILES["arial"], fs, int(W * 0.86))
                 cf = os.path.join(tmp, f"cap_{idx}.txt")
                 with open(cf, "w", encoding="utf-8") as f:
-                    f.write(cap)
+                    f.write(wrapped)
+                cap_y = max(0, capY - int((nlines - 1) * fs * 0.62))
                 cap_dt = (f"drawtext=fontfile='{FONT}':textfile='{esc_path(cf)}':fontcolor=white:"
-                          f"fontsize={fs}:borderw=7:bordercolor=black@0.95:box=1:boxcolor=black@0.30:"
-                          f"boxborderw=18:x=(w-text_w)/2:y={capY}")
+                          f"fontsize={fs}:text_align=C:line_spacing=6:borderw=7:bordercolor=black@0.95:"
+                          f"box=1:boxcolor=black@0.30:boxborderw=18:x=(w-text_w)/2:y={cap_y}")
             so = os.path.join(tmp, f"seg_{idx:02d}.mp4")
             if is_last and ec_transparent:
                 # extend the last clip by the end-card duration and fade the CTA overlay in over it
