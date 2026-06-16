@@ -90,7 +90,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.1.0</span>
+  <span class="ver" id="appVer">v1.1.1</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnReload">Reload clips</button>
@@ -190,14 +190,14 @@ function getVid(id){
   const c=MAN.byId[id]; if(!c) return null;
   const v=document.createElement('video');
   v.className='clipvid'; v.muted=true; v.playsInline=true; v.preload='auto'; v.src=c.url;
-  v.addEventListener('timeupdate',()=>{ if(!tlPlaying && activeId===id){ $('#vidTime').textContent=fmt(v.currentTime)+'s'; $('#scrub').value=v.currentTime; }});
+  v.addEventListener('timeupdate',()=>{ if(!tlPlaying && activeId===id){ $('#vidTime').textContent=fmt(v.currentTime)+'s'; }});
   stage.insertBefore(v, $('#capOverlay')); vids[id]=v; return v;
 }
 function showVid(id){ for(const k in vids) vids[k].style.display=(k===id)?'block':'none'; activeId=id; }
 function activeVid(){ return vids[activeId]||null; }
 function withClip(id, cb){ const v=getVid(id); if(!v){ if(cb)cb(null); return; }
-  if(v.readyState>=1){ $('#scrub').max=v.duration||(MAN.byId[id]||{}).dur||10; if(cb)cb(v); }
-  else v.addEventListener('loadedmetadata', function h(){ v.removeEventListener('loadedmetadata',h); $('#scrub').max=v.duration||(MAN.byId[id]||{}).dur||10; if(cb)cb(v); }); }
+  if(v.readyState>=1){ if(cb)cb(v); }
+  else v.addEventListener('loadedmetadata', function h(){ v.removeEventListener('loadedmetadata',h); if(cb)cb(v); }); }
 
 function toast(m){ const t=$('#toast'); t.textContent=m; t.style.display='block'; clearTimeout(t._t); t._t=setTimeout(()=>t.style.display='none',2200); }
 function fmt(n){ return (Math.round(n*10)/10).toFixed(1); }
@@ -290,7 +290,9 @@ function renderTimeline(){
   });
   updateTotal();
 }
-function updateTotal(){ const t=totalDur(); $('#totalPill').textContent=fmt(t)+'s · '+EDL.settings.canvas; $('#tlTime').textContent='0.0 / '+fmt(t)+'s'; }
+function updateTotal(){ const t=totalDur(); $('#totalPill').textContent=fmt(t)+'s · '+EDL.settings.canvas;
+  if(playhead>t) playhead=0;
+  if(!tlPlaying){ $('#tlTime').textContent=fmt(Math.min(playhead,t))+' / '+fmt(t)+'s'; $('#scrub').max=t; $('#scrub').value=Math.min(playhead,t); } }
 function segAction(a,i){
   if(a==='up'&&i>0){ [EDL.segments[i-1],EDL.segments[i]]=[EDL.segments[i],EDL.segments[i-1]]; sel=i-1; }
   else if(a==='down'&&i<EDL.segments.length-1){ [EDL.segments[i+1],EDL.segments[i]]=[EDL.segments[i],EDL.segments[i+1]]; sel=i+1; }
@@ -308,10 +310,18 @@ function loadSegIntoTrim(){
 
 /* ---------- playback ---------- */
 const music = new Audio();
-let tlPlaying=false, pbToken=0, segRaf=null, clockRaf=null, segTO=null, clockTimer=null;
+let tlPlaying=false, pbToken=0, segRaf=null, clockRaf=null, segTO=null, clockTimer=null, playhead=0;
 function stop(){ tlPlaying=false; pbToken++; cancelAnimationFrame(segRaf); cancelAnimationFrame(clockRaf); clearInterval(clockTimer); clearTimeout(segTO);
   const v=activeVid(); if(v){ v.onseeked=null; try{v.pause();}catch(e){} } music.pause();
-  $('#endcard').style.display='none'; $('#btnPlayTl').textContent='▶ Play timeline'; }
+  $('#endcard').style.display='none'; $('#btnPlayTl').textContent='▶ Play timeline'; }   // note: keeps playhead where it stopped
+
+// Show the frame at the current timeline playhead (used when scrubbing while stopped).
+function seekToPlayhead(){
+  let acc=0, found=null, off=0;
+  for(const s of EDL.segments){ const d=Math.max(0.05,+s.dur||1); if(playhead < acc+d){ found=s; off=playhead-acc; break; } acc+=d; }
+  $('#tlTime').textContent=fmt(playhead)+' / '+fmt(totalDur())+'s'; $('#vidTime').textContent=fmt(playhead)+'s';
+  if(found){ const v=getVid(found.id); if(v){ showVid(found.id); applyFraming(found,v); try{v.currentTime=(+found.in||0)+off;}catch(e){} showCap(found.cap); } $('#endcard').style.display='none'; }
+}
 
 // Play one segment's [in, in+dur] using that clip's OWN preloaded, muted element.
 // No src-swapping (which interrupts play()); we just seek + show + play that element.
@@ -347,18 +357,20 @@ function playTimeline(){
   const segs=EDL.segments, bounds=[]; let acc=0;
   segs.forEach(s=>{ const d=Math.max(0.05,+s.dur||1); bounds.push({a:acc,b:acc+d,s}); acc+=d; });
   const vidTotal=acc, endDur=(EDL.settings.endcardDur||2.6), total=vidTotal+endDur;
-  let curIdx=-1; const t0=performance.now();
+  if(playhead>=vidTotal-0.05) playhead=0;             // restart only if parked at/after the end
+  let curIdx=-1; const t0=performance.now()-playhead*1000;   // resume from the playhead
   const tick=()=>{
     if(!tlPlaying) return;
     const e=(performance.now()-t0)/1000;
-    $('#tlTime').textContent=fmt(Math.min(e,total))+' / '+fmt(total)+'s';
-    $('#scrub').max=total; $('#scrub').value=Math.min(e,total);   // scrub = smooth timeline playhead
-    $('#vidTime').textContent=fmt(Math.min(e,total))+'s';
+    playhead=Math.min(e,total);
+    $('#tlTime').textContent=fmt(playhead)+' / '+fmt(total)+'s';
+    $('#scrub').max=total; $('#scrub').value=playhead;   // scrub = smooth timeline playhead
+    $('#vidTime').textContent=fmt(playhead)+'s';
     if(e>=vidTotal){                                   // end-card phase
       if(curIdx!==999){ curIdx=999; const a=activeVid(); if(a){try{a.pause();}catch(_){}} showCap('');
         $('#endcard .l2').textContent=EDL.settings.endcard[1]||''; $('#endcard .l3').textContent=EDL.settings.endcard[2]||'';
         $('#endcard').style.display='flex'; }
-      if(e>=total){ stop(); }
+      if(e>=total){ playhead=0; stop(); $('#scrub').value=0; $('#tlTime').textContent='0.0 / '+fmt(total)+'s'; }
       return;
     }
     let idx=0; for(let k=0;k<bounds.length;k++){ if(e>=bounds[k].a && e<bounds[k].b){ idx=k; break; } if(k===bounds.length-1) idx=k; }
@@ -378,7 +390,7 @@ function playTimeline(){
 }
 
 /* ---------- trimmer controls ---------- */
-$('#scrub').oninput=e=>{ stop(); const v=activeVid(); if(v){ try{v.currentTime=parseFloat(e.target.value);}catch(err){} } };
+$('#scrub').oninput=e=>{ stop(); playhead=parseFloat(e.target.value)||0; seekToPlayhead(); };   // bottom scrub = timeline transport
 $('#btnPlaySeg').onclick=()=>{ if(sel<0) return toast('Select a segment first'); stop(); playRange(EDL.segments[sel], ()=>{}); };
 $('#btnSetIn').onclick=()=>{ if(sel<0) return toast('Select a segment first'); const v=activeVid(); if(!v) return; EDL.segments[sel].in=Math.round(v.currentTime*100)/100; loadSegIntoTrim(); renderTimeline(); };
 $('#btnSetOut').onclick=()=>{ if(sel<0) return toast('Select a segment first'); const v=activeVid(); if(!v) return; const s=EDL.segments[sel]; const d=Math.round((v.currentTime-s.in)*100)/100; if(d>0){ s.dur=d; loadSegIntoTrim(); renderTimeline(); } else toast('Playhead must be after IN'); };
