@@ -289,7 +289,7 @@ function fmt(n){ return (Math.round(n*10)/10).toFixed(1); }
 
 function sizeStage(){
   const [aw,ah]=ASPECT[EDL.settings.canvas]||[9,16];
-  const wrap=$('#stageWrap'); const maxH=Math.min(560, window.innerHeight-260); const maxW=520;
+  const wrap=$('#stageWrap'); const maxH=Math.max(220, Math.min(520, window.innerHeight-470)); const maxW=480;
   let h=maxH, w=h*aw/ah; if(w>maxW){ w=maxW; h=w*ah/aw; }
   wrap.style.width=w+'px'; wrap.style.height=h+'px';
   // caption sizing approximates render: fontsize = captionSize * canvasWidth, scaled to stage width
