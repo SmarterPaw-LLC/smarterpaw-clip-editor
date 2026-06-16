@@ -72,6 +72,10 @@
   .seg .nums label { font-size:11px; color:var(--mut); display:flex; flex-direction:column; gap:2px; }
   .seg .nums input { width:62px; }
   .seg input.cap { width:100%; margin-top:4px; }
+  .seg .cscrub-row { display:flex; align-items:center; gap:6px; margin-top:6px; }
+  .seg .cscrub { flex:1; min-width:0; height:18px; accent-color:var(--acc2); }
+  .seg .csct { font-size:11px; color:var(--mut); min-width:44px; text-align:right; font-variant-numeric:tabular-nums; }
+  .seg .cbtn { padding:2px 7px; font-size:11px; white-space:nowrap; }
   .seg .ctl { display:flex; gap:4px; }
   .settings { padding:10px 12px; border-top:1px solid var(--line); }
   .settings .row { display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
@@ -86,7 +90,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.0.5</span>
+  <span class="ver" id="appVer">v1.1.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnReload">Reload clips</button>
@@ -240,7 +244,7 @@ function totalDur(){ let t=0; EDL.segments.forEach(s=>t+=(+s.dur||0)); return t+
 function renderTimeline(){
   const tl=$('#timeline'); tl.innerHTML='';
   EDL.segments.forEach((s,i)=>{
-    const c=MAN.byId[s.id]; const name=c?c.label:s.id;
+    const c=MAN.byId[s.id]; const name=c?c.label:s.id; const cdur=(c&&c.dur)||60;
     const el=document.createElement('div'); el.className='seg'+(i===sel?' sel':'');
     el.innerHTML=`
       <div class="top"><span class="hd">${i+1}. ${name}</span>
@@ -254,13 +258,34 @@ function renderTimeline(){
         <label>zoom<input type="number" step="0.05" min="1" data-f="zoom" value="${s.zoom||1}"></label>
         <label>anchor<select data-f="anchor">${['center','top','bottom','left','right'].map(a=>`<option ${a===(s.anchor||'center')?'selected':''}>${a}</option>`).join('')}</select></label>
       </div>
-      <input class="cap" type="text" data-f="cap" placeholder="caption (blank = none)" value="${(s.cap||'').replace(/"/g,'&quot;')}">`;
+      <input class="cap" type="text" data-f="cap" placeholder="caption (blank = none)" value="${(s.cap||'').replace(/"/g,'&quot;')}">
+      <div class="cscrub-row">
+        <button class="mini cbtn" data-sa="play" title="Play this segment in the preview">▶</button>
+        <input type="range" class="cscrub" min="0" max="${cdur}" step="0.05" value="${s.in}">
+        <span class="csct">${fmt(s.in)}s</span>
+      </div>
+      <div class="cscrub-row">
+        <button class="mini cbtn" data-sa="in" title="Set this clip's IN point to the scrub position">⇤ Set IN</button>
+        <button class="mini cbtn" data-sa="out" title="Set this clip's OUT (duration) to the scrub position">Set OUT ⇥</button>
+        <span class="csct" style="flex:1;text-align:left">in ${fmt(s.in)} · ${fmt(s.dur)}s</span>
+      </div>`;
     el.querySelector('.hd').onclick=()=>selectSeg(i);
     el.querySelectorAll('[data-f]').forEach(inp=>{
       inp.onchange=()=>{ let v=inp.value; if(['in','dur','zoom'].includes(inp.dataset.f)) v=parseFloat(v)||0;
         EDL.segments[i][inp.dataset.f]=v; updateTotal(); if(i===sel) loadSegIntoTrim(); };
     });
     el.querySelectorAll('[data-a]').forEach(b=>{ b.onclick=()=>segAction(b.dataset.a,i); });
+    const cscrub=el.querySelector('.cscrub'), csct=el.querySelector('.csct');
+    cscrub.oninput=()=>{ const t=parseFloat(cscrub.value)||0; csct.textContent=fmt(t)+'s';
+      stop(); sel=i; tl.querySelectorAll('.seg').forEach((x,xi)=>x.classList.toggle('sel',xi===i));
+      $('#inIn').value=s.in; $('#inDur').value=s.dur; $('#inZoom').value=s.zoom||1; $('#inAnchor').value=s.anchor||'center'; $('#trimName').textContent=name;
+      withClip(s.id, v=>{ if(!v) return; showVid(s.id); applyFraming(s,v); try{v.currentTime=t;}catch(e){} showCap(s.cap); });
+    };
+    el.querySelectorAll('[data-sa]').forEach(b=>{ b.onclick=(ev)=>{ ev.stopPropagation(); const t=parseFloat(cscrub.value)||0; const a=b.dataset.sa;
+      if(a==='play'){ stop(); selectSeg(i); playRange(EDL.segments[i], ()=>{}); }
+      else if(a==='in'){ s.in=Math.round(t*100)/100; renderTimeline(); selectSeg(i); toast('IN set to '+fmt(t)+'s'); }
+      else if(a==='out'){ const d=Math.round((t-(+s.in||0))*100)/100; if(d>0){ s.dur=d; renderTimeline(); selectSeg(i); toast('Duration set to '+fmt(d)+'s'); } else toast('Scrub past the IN point first'); }
+    }; });
     tl.appendChild(el);
   });
   updateTotal();
