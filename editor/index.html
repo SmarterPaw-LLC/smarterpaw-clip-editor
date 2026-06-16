@@ -104,7 +104,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.2.0</span>
+  <span class="ver" id="appVer">v1.2.1</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnReload">Reload clips</button>
@@ -410,10 +410,17 @@ function stop(){ tlPlaying=false; pbToken++; cancelAnimationFrame(segRaf); cance
 
 // Show the frame at the current timeline playhead (used when scrubbing while stopped).
 function seekToPlayhead(){
+  const ec=normEndcard(EDL.settings);
   let acc=0, found=null, off=0;
   for(const s of EDL.segments){ const d=Math.max(0.05,+s.dur||1); if(playhead < acc+d){ found=s; off=playhead-acc; break; } acc+=d; }
   $('#tlTime').textContent=fmt(playhead)+' / '+fmt(totalDur())+'s'; $('#vidTime').textContent=fmt(playhead)+'s';
   if(found){ const v=getVid(found.id); if(v){ showVid(found.id); applyFraming(found,v); try{v.currentTime=(+found.in||0)+off;}catch(e){} showCap(found.cap); } $('#endcard').style.display='none'; }
+  else if(ec.enabled){                                 // playhead is in the end-card region
+    showCap('');
+    if(ec.bg.mode==='transparent' && EDL.segments.length){ const last=EDL.segments[EDL.segments.length-1]; const v=getVid(last.id);
+      if(v){ showVid(last.id); applyFraming(last,v); try{v.currentTime=(+last.in||0)+(+last.dur||0)+(playhead-acc);}catch(e){} } }
+    buildEndcard(ec); $('#endcard').style.display='flex';
+  } else { $('#endcard').style.display='none'; }
 }
 
 // Play one segment's [in, in+dur] using that clip's OWN preloaded, muted element.
@@ -451,7 +458,7 @@ function playTimeline(){
   segs.forEach(s=>{ const d=Math.max(0.05,+s.dur||1); bounds.push({a:acc,b:acc+d,s}); acc+=d; });
   const ec=normEndcard(EDL.settings);
   const vidTotal=acc, endDur=(ec.enabled?ec.dur:0), total=vidTotal+endDur;
-  if(playhead>=vidTotal-0.05) playhead=0;             // restart only if parked at/after the end
+  if(playhead>=total-0.05) playhead=0;                // restart only if parked at the very end (past the end card)
   let curIdx=-1; const t0=performance.now()-playhead*1000;   // resume from the playhead
   const tick=()=>{
     if(!tlPlaying) return;
