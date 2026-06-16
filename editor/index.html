@@ -86,7 +86,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.0.1</span>
+  <span class="ver" id="appVer">v1.0.2</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnReload">Reload clips</button>
@@ -311,22 +311,45 @@ function playRange(seg, onDone){
   else v.addEventListener('loadedmetadata', function h(){ v.removeEventListener('loadedmetadata',h); seekThenGo(); });
 }
 
+// Master wall-clock scheduler: advancement is driven by real elapsed time, NOT video
+// events — so the timeline can never stall waiting on a clip to load/seek/play. Each
+// segment's clip is seeked + played best-effort and kept loosely in sync.
 function playTimeline(){
-  if(!EDL.segments.length) return; stop(); tlPlaying=true;
+  if(!EDL.segments.length) return; stop(); tlPlaying=true; pbToken++;
   $('#btnPlayTl').textContent='❚❚ Stop'; $('#endcard').style.display='none';
   if(MAN.music.includes(EDL.settings.music)){ music.src='/sources/music/'+encodeURIComponent(EDL.settings.music);
     music.currentTime=0; music.volume=0.5; music.play().catch(()=>{}); }
-  const total=totalDur(); const t0=performance.now();
-  (function clk(){ if(!tlPlaying) return; const e=(performance.now()-t0)/1000;
-    $('#tlTime').textContent=fmt(Math.min(e,total))+' / '+fmt(total)+'s'; clockRaf=requestAnimationFrame(clk); })();
-  let i=0;
-  const advance=()=>{ if(!tlPlaying) return; i++;
-    if(i>=EDL.segments.length){ const v=activeVid(); if(v)v.pause(); showCap('');
-      $('#endcard .l2').textContent=EDL.settings.endcard[1]||''; $('#endcard .l3').textContent=EDL.settings.endcard[2]||'';
-      $('#endcard').style.display='flex';
-      setTimeout(()=>{ if(tlPlaying) stop(); }, (EDL.settings.endcardDur||2.6)*1000); return; }
-    playRange(EDL.segments[i], advance); };
-  playRange(EDL.segments[0], advance);
+  const segs=EDL.segments, bounds=[]; let acc=0;
+  segs.forEach(s=>{ const d=Math.max(0.05,+s.dur||1); bounds.push({a:acc,b:acc+d,s}); acc+=d; });
+  const vidTotal=acc, endDur=(EDL.settings.endcardDur||2.6), total=vidTotal+endDur;
+  let curIdx=-1; const t0=performance.now();
+  const tick=()=>{
+    if(!tlPlaying) return;
+    const e=(performance.now()-t0)/1000;
+    $('#tlTime').textContent=fmt(Math.min(e,total))+' / '+fmt(total)+'s';
+    if(e>=vidTotal){                                   // end-card phase
+      if(curIdx!==999){ curIdx=999; const a=activeVid(); if(a){try{a.pause();}catch(_){}} showCap('');
+        $('#endcard .l2').textContent=EDL.settings.endcard[1]||''; $('#endcard .l3').textContent=EDL.settings.endcard[2]||'';
+        $('#endcard').style.display='flex'; }
+      if(e>=total){ stop(); return; }
+      clockRaf=requestAnimationFrame(tick); return;
+    }
+    let idx=0; for(let k=0;k<bounds.length;k++){ if(e>=bounds[k].a && e<bounds[k].b){ idx=k; break; } if(k===bounds.length-1) idx=k; }
+    const bd=bounds[idx], s=bd.s, v=getVid(s.id), want=(+s.in||0)+(e-bd.a);
+    if(idx!==curIdx){                                  // entered a new segment
+      curIdx=idx;
+      for(const k in vids){ if(vids[k]!==v){ try{vids[k].pause();}catch(_){} } }
+      if(v){ applyFraming(s,v); showVid(s.id); try{v.currentTime=Math.max(0,want);}catch(_){}
+        const p=v.play(); if(p&&p.catch)p.catch(()=>{}); }
+      showCap(s.cap);
+    } else if(v){                                      // mid-segment: keep clip synced + playing
+      if(Math.abs(v.currentTime-want)>0.35){ try{v.currentTime=Math.max(0,want);}catch(_){} }
+      if(v.paused){ const p=v.play(); if(p&&p.catch)p.catch(()=>{}); }
+    }
+    const a=activeVid(); if(a){ $('#scrub').value=a.currentTime; $('#vidTime').textContent=fmt(a.currentTime)+'s'; }
+    clockRaf=requestAnimationFrame(tick);
+  };
+  clockRaf=requestAnimationFrame(tick);
 }
 
 /* ---------- trimmer controls ---------- */
