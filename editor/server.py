@@ -215,6 +215,103 @@ def crop_xy(anchor, W, H):
     return f"(iw-{W})/2", f"(ih-{H})/2"
 
 
+FONT_FILES = {
+    "arial": "C:/Windows/Fonts/arialbd.ttf",
+    "cooper": os.path.join(EDITOR, "fonts", "CooperBlack-Std.otf"),
+    "meowijuana": os.path.join(EDITOR, "fonts", "meowijuana.ttf"),
+}
+
+
+def _font_path(key):
+    p = FONT_FILES.get(key, FONT_FILES["arial"])
+    return p if os.path.exists(p) else FONT_FILES["arial"]
+
+
+def _rgba(c, alpha=255):
+    c = (c or "#000000").lstrip("#")
+    if len(c) == 3:
+        c = "".join(ch * 2 for ch in c)
+    try:
+        return (int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16), alpha)
+    except Exception:
+        return (0, 0, 0, alpha)
+
+
+def normalize_endcard(s):
+    """Return a rich end-card dict, migrating the old 3-string array form."""
+    ec = s.get("endcard")
+    if isinstance(ec, list) or ec is None:
+        arr = (ec if isinstance(ec, list) else ["MEOWIJUANA", "CATNIP JOINTS", "SHOP NOW"])
+        arr = (list(arr) + ["", "", ""])[:3]
+        ec = {
+            "enabled": True, "dur": float(s.get("endcardDur", ENDCARD_DUR)),
+            "bg": {"mode": "gradient", "color": "#111111", "start": "#f5e020", "end": "#e87820", "angle": 170},
+            "logo": {"show": True, "scale": 0.8, "x": 0.5, "y": 0.30},
+            "lines": [
+                {"text": "", "font": "meowijuana", "color": "#f07830", "size": 0.075, "y": 0.30, "button": False, "bg": "#f07830"},
+                {"text": arr[1], "font": "cooper", "color": "#257741", "size": 0.05, "y": 0.56, "button": False, "bg": "#f07830"},
+                {"text": arr[2], "font": "cooper", "color": "#ffffff", "size": 0.05, "y": 0.68, "button": True, "bg": "#f07830"},
+            ],
+        }
+    ec.setdefault("enabled", True)
+    ec["dur"] = float(ec.get("dur", ENDCARD_DUR))
+    bg = ec.setdefault("bg", {})
+    bg.setdefault("mode", "gradient"); bg.setdefault("color", "#111111")
+    bg.setdefault("start", "#f5e020"); bg.setdefault("end", "#e87820"); bg.setdefault("angle", 170)
+    lg = ec.setdefault("logo", {})
+    lg.setdefault("show", True); lg.setdefault("scale", 0.8); lg.setdefault("x", 0.5); lg.setdefault("y", 0.30)
+    for ln in ec.setdefault("lines", []):
+        ln.setdefault("font", "cooper"); ln.setdefault("color", "#ffffff"); ln.setdefault("size", 0.05)
+        ln.setdefault("y", 0.6); ln.setdefault("button", False); ln.setdefault("bg", "#f07830")
+    return ec
+
+
+def build_endcard_image(ec, W, H, out_path):
+    """Render the end-card graphics to a PNG (RGBA). Transparent bg leaves only logo+text."""
+    from PIL import Image, ImageDraw, ImageFont
+    bg = ec["bg"]; mode = bg.get("mode", "gradient")
+    if mode == "transparent":
+        img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    elif mode == "color":
+        img = Image.new("RGBA", (W, H), _rgba(bg.get("color"), 255))
+    else:  # vertical gradient: start (top) -> end (bottom)
+        top, bot = _rgba(bg.get("start")), _rgba(bg.get("end"))
+        col = [tuple(int(top[i] + (bot[i] - top[i]) * (y / (H - 1 or 1))) for i in range(4)) for y in range(H)]
+        strip = Image.new("RGBA", (1, H)); strip.putdata(col)
+        img = strip.resize((W, H))
+    draw = ImageDraw.Draw(img)
+    lg = ec.get("logo", {})
+    if lg.get("show", True):
+        logo_path = os.path.join(PROJ, "logo.png")
+        if os.path.exists(logo_path):
+            try:
+                lo = Image.open(logo_path).convert("RGBA")
+                lw = max(1, int(W * float(lg.get("scale", 0.8))))
+                lh = max(1, int(lo.height * lw / lo.width))
+                lo = lo.resize((lw, lh))
+                cx, cy = int(W * float(lg.get("x", 0.5))), int(H * float(lg.get("y", 0.30)))
+                img.alpha_composite(lo, (cx - lw // 2, cy - lh // 2))
+            except Exception:
+                pass
+    for ln in ec.get("lines", []):
+        txt = (ln.get("text") or "").strip()
+        if not txt:
+            continue
+        size = max(8, int(W * float(ln.get("size", 0.05))))
+        try:
+            font = ImageFont.truetype(_font_path(ln.get("font", "cooper")), size)
+        except Exception:
+            font = ImageFont.truetype(FONT_FILES["arial"], size)
+        cx, cy = int(W * 0.5), int(H * float(ln.get("y", 0.6)))
+        if ln.get("button"):
+            bb = draw.textbbox((cx, cy), txt, font=font, anchor="mm")
+            padx, pady = int(size * 0.55), int(size * 0.38)
+            draw.rounded_rectangle([bb[0] - padx, bb[1] - pady, bb[2] + padx, bb[3] + pady],
+                                   radius=int(size * 0.3), fill=_rgba(ln.get("bg"), 255))
+        draw.text((cx, cy), txt, font=font, fill=_rgba(ln.get("color"), 255), anchor="mm")
+    img.save(out_path)
+
+
 def render(edl):
     s = edl.get("settings", {})
     canvas = s.get("canvas", "9x16")
@@ -227,7 +324,16 @@ def render(edl):
     try:
         fs = int(W * float(s.get("captionSize", 0.058)))
         capY = int(H * float(s.get("captionY", 0.62)))
-        endcard_dur = float(s.get("endcardDur", ENDCARD_DUR))
+        EC = normalize_endcard(s)
+        ec_on = bool(EC.get("enabled", True))
+        ec_dur = float(EC.get("dur", ENDCARD_DUR))
+        ec_transparent = ec_on and EC["bg"].get("mode") == "transparent"
+        ec_png = os.path.join(tmp, "endcard_gfx.png")
+        if ec_on:
+            try:
+                build_endcard_image(EC, W, H, ec_png)
+            except Exception as e:
+                return {"ok": False, "log": f"end card image failed: {e!r}"}
         listf = os.path.join(tmp, "concat.txt")
         lines = []
         total = 0.0
@@ -238,56 +344,49 @@ def render(edl):
             z = max(float(seg.get("zoom", 1.0)), 1.0)
             sw, sh = math.ceil(W * z), math.ceil(H * z)
             cx, cy = crop_xy(seg.get("anchor", "center"), W, H)
-            vf = f"scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={W}:{H}:{cx}:{cy},setsar=1,fps=30,format=yuv420p"
+            base = f"scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={W}:{H}:{cx}:{cy},setsar=1,fps=30,format=yuv420p"
+            dur = float(seg["dur"])
+            is_last = (idx == len(segs) - 1)
             cap = (seg.get("cap") or "").strip()
+            cap_dt = ""
             if cap:
                 cf = os.path.join(tmp, f"cap_{idx}.txt")
                 with open(cf, "w", encoding="utf-8") as f:
                     f.write(cap)
-                vf += (f",drawtext=fontfile='{FONT}':textfile='{esc_path(cf)}':fontcolor=white:"
-                       f"fontsize={fs}:borderw=7:bordercolor=black@0.95:box=1:boxcolor=black@0.30:"
-                       f"boxborderw=18:x=(w-text_w)/2:y={capY}")
+                cap_dt = (f"drawtext=fontfile='{FONT}':textfile='{esc_path(cf)}':fontcolor=white:"
+                          f"fontsize={fs}:borderw=7:bordercolor=black@0.95:box=1:boxcolor=black@0.30:"
+                          f"boxborderw=18:x=(w-text_w)/2:y={capY}")
             so = os.path.join(tmp, f"seg_{idx:02d}.mp4")
-            dur = float(seg["dur"])
-            r = run([FFMPEG, "-y", "-loglevel", "error", "-ss", str(seg["in"]), "-i", src,
-                     "-t", str(dur), "-vf", vf] + ENC + [so])
-            if r.returncode != 0:
-                return {"ok": False, "log": f"seg {idx} failed:\n{r.stderr[-1500:]}"}
+            if is_last and ec_transparent:
+                # extend the last clip by the end-card duration and fade the CTA overlay in over it
+                ext = dur + ec_dur
+                vbase = base + (("," + cap_dt + f":enable='lt(t,{dur})'") if cap_dt else "")
+                fc = (f"[0:v]{vbase}[v];"
+                      f"[1:v]format=rgba,fade=t=in:st={dur}:d=0.4:alpha=1[g];"
+                      f"[v][g]overlay=0:0:enable='gte(t,{dur})'[out]")
+                r = run([FFMPEG, "-y", "-loglevel", "error", "-ss", str(seg["in"]), "-i", src,
+                         "-t", str(ext), "-loop", "1", "-i", ec_png,
+                         "-filter_complex", fc, "-map", "[out]"] + ENC + [so])
+                if r.returncode != 0:
+                    return {"ok": False, "log": f"seg {idx} (transparent end card) failed:\n{r.stderr[-1500:]}"}
+                total += ext
+            else:
+                vf = base + (("," + cap_dt) if cap_dt else "")
+                r = run([FFMPEG, "-y", "-loglevel", "error", "-ss", str(seg["in"]), "-i", src,
+                         "-t", str(dur), "-vf", vf] + ENC + [so])
+                if r.returncode != 0:
+                    return {"ok": False, "log": f"seg {idx} failed:\n{r.stderr[-1500:]}"}
+                total += dur
             lines.append("file '" + so.replace("\\", "/") + "'")
-            total += dur
-        # end card
-        ec = os.path.join(tmp, "seg_99_endcard.mp4")
-        el = s.get("endcard", ["MEOWIJUANA", "CATNIP JOINTS", "SHOP NOW"])
-        el = (el + ["", "", ""])[:3]
-        f2, f3 = int(W * 0.046), int(W * 0.052)
-        logo_name = s.get("logo", "logo.png")
-        logo_path = os.path.join(PROJ, os.path.basename(logo_name)) if logo_name else ""
-        sub_t = el[1].replace("'", "")
-        btn_t = el[2].replace("'", "")
-        if logo_path and os.path.exists(logo_path):
-            lw = int(W * 0.80); ly = int(H * 0.27)
-            sub_y = int(H * 0.55); btn_y = int(H * 0.66)
-            fc = (f"[1:v]scale={lw}:-1[lg];[0:v][lg]overlay=(W-w)/2:{ly}[bg];"
-                  f"[bg]drawtext=fontfile='{FONT}':text='{sub_t}':fontcolor=0xF5A623:fontsize={f2}:x=(w-text_w)/2:y={sub_y},"
-                  f"drawtext=fontfile='{FONT}':text='{btn_t}':fontcolor=black:fontsize={f3}:box=1:boxcolor=0xF5A623:"
-                  f"boxborderw=26:x=(w-text_w)/2:y={btn_y},format=yuv420p[v]")
-            r = run([FFMPEG, "-y", "-loglevel", "error",
-                     "-f", "lavfi", "-t", str(endcard_dur), "-i", f"color=c=0x111111:s={W}x{H}:r=30",
-                     "-loop", "1", "-t", str(endcard_dur), "-i", logo_path,
-                     "-filter_complex", fc, "-map", "[v]"] + ENC + [ec])
-        else:
-            f1 = int(W * 0.085); y1 = int(H * 0.40); y2 = y1 + int(f1 * 1.15); y3 = int(H * 0.60)
-            ecvf = (
-                f"drawtext=fontfile='{FONT}':text='{el[0]}':fontcolor=white:fontsize={f1}:x=(w-text_w)/2:y={y1},"
-                f"drawtext=fontfile='{FONT}':text='{sub_t}':fontcolor=0xF5A623:fontsize={f2}:x=(w-text_w)/2:y={y2},"
-                f"drawtext=fontfile='{FONT}':text='{btn_t}':fontcolor=black:fontsize={f3}:box=1:boxcolor=0xF5A623:"
-                f"boxborderw=26:x=(w-text_w)/2:y={y3},format=yuv420p")
-            r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi",
-                     "-i", f"color=c=0x111111:s={W}x{H}:r=30:d={endcard_dur}", "-vf", ecvf] + ENC + [ec])
-        if r.returncode != 0:
-            return {"ok": False, "log": f"endcard failed:\n{r.stderr[-1500:]}"}
-        lines.append("file '" + ec.replace("\\", "/") + "'")
-        total += endcard_dur
+        # end card: solid/gradient gets its own clip; transparent is already baked into the last segment
+        if ec_on and not ec_transparent:
+            ec_clip = os.path.join(tmp, "seg_99_endcard.mp4")
+            r = run([FFMPEG, "-y", "-loglevel", "error", "-loop", "1", "-t", str(ec_dur),
+                     "-i", ec_png, "-vf", "format=yuv420p"] + ENC + [ec_clip])
+            if r.returncode != 0:
+                return {"ok": False, "log": f"endcard failed:\n{r.stderr[-1500:]}"}
+            lines.append("file '" + ec_clip.replace("\\", "/") + "'")
+            total += ec_dur
         with open(listf, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
         silent = os.path.join(tmp, "silent.mp4")
@@ -318,7 +417,8 @@ def render(edl):
 
 CTYPE = {".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css",
          ".mp4": "video/mp4", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".wav": "audio/wav",
-         ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".json": "application/json"}
+         ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".json": "application/json",
+         ".otf": "font/otf", ".ttf": "font/ttf", ".woff": "font/woff", ".woff2": "font/woff2"}
 
 
 class Handler(BaseHTTPRequestHandler):

@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Meowi Clip Editor</title>
 <style>
+  @font-face{ font-family:'Cooper Std Black'; src:url('/editor/fonts/CooperBlack-Std.otf') format('opentype'); font-display:swap; }
+  @font-face{ font-family:'Meowijuana'; src:url('/editor/fonts/meowijuana.ttf') format('truetype'); font-display:swap; }
   :root { --bg:#15171c; --panel:#1e2128; --panel2:#262a33; --line:#333845; --txt:#e6e8ee;
           --mut:#9aa3b2; --acc:#f5a623; --acc2:#5b8cff; --ok:#34c759; --bad:#ff5a5a; }
   * { box-sizing:border-box; }
@@ -84,13 +86,25 @@
   .pill { font-size:11px; color:var(--mut); border:1px solid var(--line); border-radius:20px; padding:2px 8px; }
   .toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:#000c; color:#fff;
            padding:10px 16px; border-radius:8px; display:none; z-index:20; border:1px solid var(--line); }
+  .modal { position:fixed; inset:0; background:#000a; z-index:30; display:flex; align-items:center; justify-content:center; }
+  .modal-card { background:var(--panel); border:1px solid var(--line); border-radius:12px; width:560px; max-width:94vw; max-height:90vh; overflow:auto; }
+  .modal-hd { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--panel); }
+  .modal-body { padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
+  .modal-body .sec { font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:var(--acc); margin-top:4px; }
+  .modal-body hr { border:none; border-top:1px solid var(--line); margin:6px 0; }
+  .modal-body label { font-size:12px; color:var(--mut); display:inline-flex; align-items:center; gap:6px; margin-right:12px; }
+  .modal-body label.ck { color:var(--txt); }
+  .modal-body input[type=range] { vertical-align:middle; }
+  .ecline { display:flex; flex-wrap:wrap; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:8px; }
+  .ecline input.ecl-text { flex:1; min-width:120px; }
+  .ecline input[type=color] { width:34px; height:26px; padding:0; border:none; background:none; }
   a.dl { color:var(--acc2); }
 </style>
 </head>
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.1.1</span>
+  <span class="ver" id="appVer">v1.2.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnReload">Reload clips</button>
@@ -126,7 +140,7 @@
     <div id="stageWrap">
       <!-- one <video class="clipvid"> per clip is injected here -->
       <div id="capOverlay"><span></span></div>
-      <div id="endcard"><img id="ecLogo" alt=""><div class="l1">MEOWIJUANA</div><div class="l2">CATNIP JOINTS</div><div class="l3">SHOP NOW</div></div>
+      <div id="endcard"><img id="ecLogo" alt=""><div id="ecLines"></div></div>
     </div>
     <div class="transport">
       <button id="btnPlayTl" class="primary">▶ Play timeline</button>
@@ -166,14 +180,42 @@
         <select id="setCanvas"><option value="9x16">9:16 Reels/Stories</option>
           <option value="4x5">4:5 Meta feed</option><option value="16x9">16:9 YouTube</option></select></div>
       <div class="row"><label>Music</label><select id="setMusic"></select></div>
-      <div class="row"><label>End card</label>
-        <input type="text" id="setEc1" style="width:90px"><input type="text" id="setEc2" style="width:100px">
-        <input type="text" id="setEc3" style="width:80px"></div>
+      <div class="row"><label>End card</label><button class="mini" id="btnEndcard">🎬 Edit end card…</button></div>
     </div>
     <div class="status" id="status">Loading…</div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
+
+<div id="ecModal" class="modal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-hd"><b>🎬 End Card</b><button class="mini" id="ecClose">✕ Done</button></div>
+    <div class="modal-body">
+      <div><label class="ck"><input type="checkbox" id="ecEnabled"> Show end card</label>
+        <label>Hold <input type="number" id="ecDur" step="0.1" min="0.5" style="width:60px"> s</label></div>
+      <hr>
+      <div class="sec">Background</div>
+      <div><label>Style <select id="ecBgMode">
+        <option value="gradient">Gradient</option>
+        <option value="color">Solid color</option>
+        <option value="transparent">Transparent (play over last clip)</option></select></label></div>
+      <div id="ecGradRow"><label>Preset <select id="ecGradPreset"></select></label>
+        <label>Start <input type="color" id="ecGradStart"></label>
+        <label>End <input type="color" id="ecGradEnd"></label>
+        <label>Angle <input type="number" id="ecGradAngle" style="width:54px">°</label></div>
+      <div id="ecColorRow"><label>Color <input type="color" id="ecBgColor"></label></div>
+      <hr>
+      <div class="sec">Logo</div>
+      <div><label class="ck"><input type="checkbox" id="ecLogoShow"> Show logo</label></div>
+      <div><label>Size <input type="range" id="ecLogoScale" min="0.2" max="1" step="0.01"></label>
+        <label>X <input type="range" id="ecLogoX" min="0" max="1" step="0.01"></label>
+        <label>Y <input type="range" id="ecLogoY" min="0" max="1" step="0.01"></label></div>
+      <hr>
+      <div class="sec">Text lines</div>
+      <div id="ecLinesEditor" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+  </div>
+</div>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -211,9 +253,7 @@ function sizeStage(){
   const fpx = (EDL.settings.captionSize||0.058) * w * 1.0;
   $('#capOverlay').style.fontSize = fpx+'px';
   $('#capOverlay').style.top = ((EDL.settings.captionY||0.62)*100)+'%';
-  $('#endcard .l1').style.fontSize=(0.085*w)+'px';
-  $('#endcard .l2').style.fontSize=(0.048*w)+'px';
-  $('#endcard .l3').style.fontSize=(0.052*w)+'px';
+  buildEndcard(normEndcard(EDL.settings));   // re-fit end card to the new stage size
 }
 
 function anchorPos(a){ return {center:'50% 50%',top:'50% 0%',bottom:'50% 100%',left:'0% 50%',right:'100% 50%'}[a]||'50% 50%'; }
@@ -222,6 +262,59 @@ function applyFraming(seg, v){ v=v||vids[activeId]; if(!v) return;
   v.style.objectPosition=pos; v.style.transformOrigin=pos; v.style.transform = z>1?`scale(${z})`:'none';
 }
 function showCap(text){ const o=$('#capOverlay'); if(text&&text.trim()){ o.querySelector('span').textContent=text; o.style.display='block'; } else { o.style.display='none'; } }
+
+/* ---------- end card ---------- */
+const FONTS={ arial:"'Arial Black',Arial,sans-serif", cooper:"'Cooper Std Black','Cooper Black',serif", meowijuana:"'Meowijuana',cursive" };
+const GRADIENTS=[
+  {n:'Sierra Sunshine (Toys/Reviews)',s:'#f5e020',e:'#e87820'},
+  {n:'Meowi Waui',s:'#c8e830',e:'#1a7a30'},
+  {n:'Garden Pawty',s:'#c8f0b8',e:'#5aa830'},
+  {n:'Kalico Kush',s:'#f5c842',e:'#d4540a'},
+  {n:'Whisker Tickler',s:'#f5d020',e:'#e8540a'},
+  {n:'Cloud 9',s:'#5ec8f0',e:'#8abf2a'},
+  {n:'Mice Dreams (Lavender)',s:'#d4b8e0',e:'#7b2d8b'},
+  {n:'Purrple Passion',s:'#f472b6',e:'#7c1fa1'},
+  {n:'Winter Lift',s:'#a8d8f0',e:'#2090b8'},
+  {n:'Harvest Moon',s:'#f5c030',e:'#c85010'},
+];
+function normEndcard(s){
+  let ec=s.endcard;
+  if(Array.isArray(ec) || ec==null){
+    const a=(Array.isArray(ec)?ec:['MEOWIJUANA','CATNIP JOINTS','SHOP NOW']).concat(['','','']).slice(0,3);
+    ec={ enabled:true, dur:(+s.endcardDur||2.6),
+      bg:{mode:'gradient',color:'#111111',start:'#f5e020',end:'#e87820',angle:170},
+      logo:{show:true,scale:0.8,x:0.5,y:0.30},
+      lines:[
+        {text:'',font:'meowijuana',color:'#f07830',size:0.075,y:0.30,button:false,bg:'#f07830'},
+        {text:a[1],font:'cooper',color:'#257741',size:0.05,y:0.56,button:false,bg:'#f07830'},
+        {text:a[2],font:'cooper',color:'#ffffff',size:0.05,y:0.68,button:true,bg:'#f07830'} ] };
+  }
+  ec.enabled=ec.enabled!==false; ec.dur=+ec.dur||2.6;
+  ec.bg=Object.assign({mode:'gradient',color:'#111111',start:'#f5e020',end:'#e87820',angle:170}, ec.bg||{});
+  ec.logo=Object.assign({show:true,scale:0.8,x:0.5,y:0.30}, ec.logo||{});
+  ec.lines=(ec.lines||[]).map(l=>Object.assign({text:'',font:'cooper',color:'#ffffff',size:0.05,y:0.6,button:false,bg:'#f07830'},l));
+  while(ec.lines.length<3) ec.lines.push({text:'',font:'cooper',color:'#ffffff',size:0.05,y:0.6,button:false,bg:'#f07830'});
+  s.endcard=ec; return ec;
+}
+function buildEndcard(ec){
+  ec=ec||normEndcard(EDL.settings);
+  const W=$('#stageWrap').clientWidth||360, card=$('#endcard'), bg=ec.bg;
+  card.style.background = bg.mode==='transparent' ? 'transparent'
+    : (bg.mode==='color' ? bg.color : `linear-gradient(${bg.angle||170}deg, ${bg.start}, ${bg.end})`);
+  const lg=$('#ecLogo');
+  if(ec.logo.show && MAN.logo){ lg.src=MAN.logo; lg.style.display='block'; lg.style.position='absolute';
+    lg.style.width=(ec.logo.scale*100)+'%'; lg.style.height='auto'; lg.style.margin='0';
+    lg.style.left=(ec.logo.x*100)+'%'; lg.style.top=(ec.logo.y*100)+'%'; lg.style.transform='translate(-50%,-50%)'; }
+  else lg.style.display='none';
+  const box=$('#ecLines'); box.innerHTML='';
+  ec.lines.forEach(ln=>{ if(!ln.text||!ln.text.trim()) return;
+    const d=document.createElement('div'); d.textContent=ln.text;
+    d.style.cssText='position:absolute;left:'+(50)+'%;top:'+(ln.y*100)+'%;transform:translate(-50%,-50%);white-space:nowrap;font-weight:800;line-height:1;';
+    d.style.fontFamily=FONTS[ln.font]||FONTS.cooper; d.style.fontSize=(ln.size*W)+'px'; d.style.color=ln.color;
+    if(ln.button){ d.style.background=ln.bg; const p=ln.size*W; d.style.padding=(p*0.38)+'px '+(p*0.55)+'px'; d.style.borderRadius=(p*0.3)+'px'; }
+    box.appendChild(d);
+  });
+}
 
 /* ---------- bin ---------- */
 function renderBin(){
@@ -240,7 +333,7 @@ function renderBin(){
 }
 
 /* ---------- timeline ---------- */
-function totalDur(){ let t=0; EDL.segments.forEach(s=>t+=(+s.dur||0)); return t+(EDL.settings.endcardDur||2.6); }
+function totalDur(){ let t=0; EDL.segments.forEach(s=>t+=(+s.dur||0)); const ec=normEndcard(EDL.settings); return t+(ec.enabled?ec.dur:0); }
 function renderTimeline(){
   const tl=$('#timeline'); tl.innerHTML='';
   EDL.segments.forEach((s,i)=>{
@@ -356,7 +449,8 @@ function playTimeline(){
     music.currentTime=0; music.volume=0.5; music.play().catch(()=>{}); }
   const segs=EDL.segments, bounds=[]; let acc=0;
   segs.forEach(s=>{ const d=Math.max(0.05,+s.dur||1); bounds.push({a:acc,b:acc+d,s}); acc+=d; });
-  const vidTotal=acc, endDur=(EDL.settings.endcardDur||2.6), total=vidTotal+endDur;
+  const ec=normEndcard(EDL.settings);
+  const vidTotal=acc, endDur=(ec.enabled?ec.dur:0), total=vidTotal+endDur;
   if(playhead>=vidTotal-0.05) playhead=0;             // restart only if parked at/after the end
   let curIdx=-1; const t0=performance.now()-playhead*1000;   // resume from the playhead
   const tick=()=>{
@@ -367,9 +461,12 @@ function playTimeline(){
     $('#scrub').max=total; $('#scrub').value=playhead;   // scrub = smooth timeline playhead
     $('#vidTime').textContent=fmt(playhead)+'s';
     if(e>=vidTotal){                                   // end-card phase
-      if(curIdx!==999){ curIdx=999; const a=activeVid(); if(a){try{a.pause();}catch(_){}} showCap('');
-        $('#endcard .l2').textContent=EDL.settings.endcard[1]||''; $('#endcard .l3').textContent=EDL.settings.endcard[2]||'';
-        $('#endcard').style.display='flex'; }
+      if(ec.enabled){
+        if(curIdx!==999){ curIdx=999; buildEndcard(ec); $('#endcard').style.display='flex'; showCap('');
+          if(ec.bg.mode==='transparent'){ const a=activeVid(); if(a&&a.paused){ const p=a.play(); if(p&&p.catch)p.catch(()=>{}); } }
+          else { const a=activeVid(); if(a){try{a.pause();}catch(_){}} } }
+        else if(ec.bg.mode==='transparent'){ const a=activeVid(); if(a&&a.paused){ const p=a.play(); if(p&&p.catch)p.catch(()=>{}); } }
+      }
       if(e>=total){ playhead=0; stop(); $('#scrub').value=0; $('#tlTime').textContent='0.0 / '+fmt(total)+'s'; }
       return;
     }
@@ -403,8 +500,52 @@ $('#btnAddSel').onclick=()=>{ const id=$('#btnAddSel').dataset.id || (sel>=0&&ED
 /* ---------- settings ---------- */
 $('#setCanvas').onchange=e=>{ EDL.settings.canvas=e.target.value; sizeStage(); updateTotal(); };
 $('#setMusic').onchange=e=>{ EDL.settings.music=e.target.value; };
-['setEc1','setEc2','setEc3'].forEach((id,k)=>{ $('#'+id).onchange=()=>{ EDL.settings.endcard[k]=$('#'+id).value;
-  const d=$('#endcard '+['.l1','.l2','.l3'][k]); if(d) d.textContent=$('#'+id).value; }; });
+
+/* ---------- end-card modal ---------- */
+function ecBgModeUI(){ const m=$('#ecBgMode').value; $('#ecGradRow').style.display=(m==='gradient')?'':'none'; $('#ecColorRow').style.display=(m==='color')?'':'none'; }
+function ecRefresh(){ buildEndcard(normEndcard(EDL.settings)); }
+function buildLineEditors(ec){
+  const box=$('#ecLinesEditor'); box.innerHTML='';
+  ec.lines.forEach((ln,i)=>{
+    const d=document.createElement('div'); d.className='ecline';
+    d.innerHTML=`<input class="ecl-text" type="text" placeholder="line ${i+1} text" value="${(ln.text||'').replace(/"/g,'&quot;')}">
+      <select class="ecl-font"><option value="cooper">Cooper</option><option value="meowijuana">Meowijuana</option><option value="arial">Arial</option></select>
+      <input class="ecl-color" type="color" value="${ln.color}" title="text color">
+      <label>size<input class="ecl-size" type="range" min="0.02" max="0.14" step="0.005" value="${ln.size}"></label>
+      <label>y<input class="ecl-y" type="range" min="0" max="1" step="0.01" value="${ln.y}"></label>
+      <label class="ck"><input class="ecl-btn" type="checkbox" ${ln.button?'checked':''}> button</label>
+      <input class="ecl-bg" type="color" value="${ln.bg}" title="button color">`;
+    d.querySelector('.ecl-font').value=ln.font;
+    const upd=()=>{ ln.text=d.querySelector('.ecl-text').value; ln.font=d.querySelector('.ecl-font').value;
+      ln.color=d.querySelector('.ecl-color').value; ln.size=parseFloat(d.querySelector('.ecl-size').value)||0.05;
+      ln.y=parseFloat(d.querySelector('.ecl-y').value)||0.6; ln.button=d.querySelector('.ecl-btn').checked; ln.bg=d.querySelector('.ecl-bg').value; ecRefresh(); };
+    d.querySelectorAll('input,select').forEach(el=>{ el.oninput=upd; el.onchange=upd; });
+    box.appendChild(d);
+  });
+}
+function openEcModal(){ const ec=normEndcard(EDL.settings); stop();
+  $('#ecEnabled').checked=ec.enabled; $('#ecDur').value=ec.dur; $('#ecBgMode').value=ec.bg.mode;
+  $('#ecGradPreset').innerHTML='<option value="">— preset —</option>'+GRADIENTS.map((g,i)=>`<option value="${i}">${g.n}</option>`).join('');
+  $('#ecGradStart').value=ec.bg.start; $('#ecGradEnd').value=ec.bg.end; $('#ecGradAngle').value=ec.bg.angle||170; $('#ecBgColor').value=ec.bg.color||'#111111';
+  $('#ecLogoShow').checked=ec.logo.show; $('#ecLogoScale').value=ec.logo.scale; $('#ecLogoX').value=ec.logo.x; $('#ecLogoY').value=ec.logo.y;
+  buildLineEditors(ec); ecBgModeUI();
+  $('#ecModal').style.display='flex'; $('#endcard').style.display='flex'; buildEndcard(ec); }
+function closeEcModal(){ $('#ecModal').style.display='none'; $('#endcard').style.display='none'; renderTimeline(); }
+$('#btnEndcard').onclick=openEcModal;
+$('#ecClose').onclick=closeEcModal;
+$('#ecModal').onclick=e=>{ if(e.target.id==='ecModal') closeEcModal(); };
+$('#ecEnabled').onchange=()=>{ normEndcard(EDL.settings).enabled=$('#ecEnabled').checked; updateTotal(); };
+$('#ecDur').oninput=()=>{ normEndcard(EDL.settings).dur=parseFloat($('#ecDur').value)||2.6; updateTotal(); };
+$('#ecBgMode').onchange=()=>{ normEndcard(EDL.settings).bg.mode=$('#ecBgMode').value; ecBgModeUI(); ecRefresh(); };
+$('#ecGradPreset').onchange=()=>{ const i=$('#ecGradPreset').value; if(i==='') return; const g=GRADIENTS[+i]; const bg=normEndcard(EDL.settings).bg; bg.start=g.s; bg.end=g.e; $('#ecGradStart').value=g.s; $('#ecGradEnd').value=g.e; ecRefresh(); };
+$('#ecGradStart').oninput=()=>{ normEndcard(EDL.settings).bg.start=$('#ecGradStart').value; ecRefresh(); };
+$('#ecGradEnd').oninput=()=>{ normEndcard(EDL.settings).bg.end=$('#ecGradEnd').value; ecRefresh(); };
+$('#ecGradAngle').oninput=()=>{ normEndcard(EDL.settings).bg.angle=parseFloat($('#ecGradAngle').value)||170; ecRefresh(); };
+$('#ecBgColor').oninput=()=>{ normEndcard(EDL.settings).bg.color=$('#ecBgColor').value; ecRefresh(); };
+$('#ecLogoShow').onchange=()=>{ normEndcard(EDL.settings).logo.show=$('#ecLogoShow').checked; ecRefresh(); };
+$('#ecLogoScale').oninput=()=>{ normEndcard(EDL.settings).logo.scale=parseFloat($('#ecLogoScale').value); ecRefresh(); };
+$('#ecLogoX').oninput=()=>{ normEndcard(EDL.settings).logo.x=parseFloat($('#ecLogoX').value); ecRefresh(); };
+$('#ecLogoY').oninput=()=>{ normEndcard(EDL.settings).logo.y=parseFloat($('#ecLogoY').value); ecRefresh(); };
 
 /* ---------- save / render ---------- */
 $('#btnSave').onclick=()=>projSave();
@@ -427,18 +568,13 @@ function applyEDL(edl){
   EDL = edl || {};
   if(!EDL.settings) EDL.settings={};
   const s=EDL.settings;
-  if(!s.endcard) s.endcard=['MEOWIJUANA','CATNIP JOINTS','SHOP NOW'];
   if(!s.canvas) s.canvas='9x16'; if(s.captionSize==null) s.captionSize=0.058;
-  if(s.captionY==null) s.captionY=0.62; if(s.endcardDur==null) s.endcardDur=2.6;
+  if(s.captionY==null) s.captionY=0.62;
   if(!EDL.segments) EDL.segments=[];
+  normEndcard(s);   // migrate/normalize end-card settings
   const ms=$('#setMusic'); ms.innerHTML=MAN.music.map(m=>`<option ${m===s.music?'selected':''}>${m}</option>`).join('');
   if(!MAN.music.includes(s.music)) s.music=MAN.music[0]||'';
   $('#setMusic').value=s.music; $('#setCanvas').value=s.canvas;
-  $('#setEc1').value=s.endcard[0]||''; $('#setEc2').value=s.endcard[1]||''; $('#setEc3').value=s.endcard[2]||'';
-  const lg=$('#ecLogo');
-  if(MAN.logo){ lg.src=MAN.logo; lg.style.display='block'; $('#endcard .l1').style.display='none'; }
-  else { lg.style.display='none'; $('#endcard .l1').style.display=''; $('#endcard .l1').textContent=s.endcard[0]||''; }
-  $('#endcard .l2').textContent=s.endcard[1]||''; $('#endcard .l3').textContent=s.endcard[2]||'';
   sel = EDL.segments.length?0:-1;
   renderBin(); renderTimeline(); sizeStage();
   [...new Set(EDL.segments.map(s=>s.id))].forEach(getVid);  // preload timeline clips

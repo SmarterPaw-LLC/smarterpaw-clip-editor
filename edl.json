@@ -2,14 +2,54 @@
   "settings": {
     "canvas": "9x16",
     "music": "1076_smile.mp3",
-    "endcard": [
-      "MEOWIJUANA",
-      "CATNIP JOINTS",
-      "SHOP NOW"
-    ],
+    "endcard": {
+      "enabled": true,
+      "dur": 2.6,
+      "bg": {
+        "mode": "gradient",
+        "color": "#111111",
+        "start": "#f5e020",
+        "end": "#e87820",
+        "angle": 170
+      },
+      "logo": {
+        "show": true,
+        "scale": 0.8,
+        "x": 0.5,
+        "y": 0.3
+      },
+      "lines": [
+        {
+          "text": "",
+          "font": "meowijuana",
+          "color": "#f07830",
+          "size": 0.075,
+          "y": 0.3,
+          "button": false,
+          "bg": "#f07830"
+        },
+        {
+          "text": "CATNIP JOINTS",
+          "font": "cooper",
+          "color": "#257741",
+          "size": 0.05,
+          "y": 0.56,
+          "button": false,
+          "bg": "#f07830"
+        },
+        {
+          "text": "SHOP NOW",
+          "font": "cooper",
+          "color": "#ffffff",
+          "size": 0.05,
+          "y": 0.68,
+          "button": true,
+          "bg": "#f07830"
+        }
+      ]
+    },
     "captionSize": 0.058,
-    "captionY": 0.62,
-    "endcardDur": 2.6
+    "captionY": 0.62
   },
   "segments": [
     {

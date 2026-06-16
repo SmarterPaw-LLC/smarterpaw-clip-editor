@@ -30,3 +30,6 @@ projects/
 Thumbs.db
 .DS_Store
 desktop.ini
+
+# brand fonts (licensed)
+editor/fonts/
