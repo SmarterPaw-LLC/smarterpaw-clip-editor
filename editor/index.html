@@ -105,7 +105,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.3.0</span>
+  <span class="ver" id="appVer">v1.4.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button id="btnOverlays">✚ Overlays</button>
@@ -224,7 +224,7 @@
   <div class="modal-card">
     <div class="modal-hd"><b>✚ Overlays</b><button class="mini" id="ovClose">✕ Done</button></div>
     <div class="modal-body">
-      <div><button class="mini" id="ovAddText">＋ Text</button> <button class="mini" id="ovAddImage">＋ Image</button>
+      <div><button class="mini" id="ovAddText">＋ Text</button> <button class="mini" id="ovAddShape">＋ Shape</button> <button class="mini" id="ovAddImage">＋ Image</button>
         <input type="file" id="ovFile" accept="image/*" style="display:none"></div>
       <div style="font-size:11px;color:var(--mut)">Tip: scrub the timeline to where an element should appear, then drag it on the preview to position it.</div>
       <hr>
@@ -575,8 +575,10 @@ $('#ecLogoScale').oninput=()=>{ normEndcard(EDL.settings).logo.scale=parseFloat(
 $('#ecLogoX').oninput=()=>{ normEndcard(EDL.settings).logo.x=parseFloat($('#ecLogoX').value); ecRefresh(); };
 $('#ecLogoY').oninput=()=>{ normEndcard(EDL.settings).logo.y=parseFloat($('#ecLogoY').value); ecRefresh(); };
 
-/* ---------- overlays (free text / image elements) ---------- */
+/* ---------- overlays (free text / image / shape elements) ---------- */
 let ovEdit=false, ovSel=null;
+function hexA(hex,a){ hex=(hex||'#000000').replace('#',''); if(hex.length===3) hex=hex.split('').map(c=>c+c).join('');
+  const r=parseInt(hex.slice(0,2),16)||0,g=parseInt(hex.slice(2,4),16)||0,b=parseInt(hex.slice(4,6),16)||0; return `rgba(${r},${g},${b},${a==null?1:a})`; }
 function renderOverlays(time){
   const layer=$('#overlayLayer'); if(!layer||!EDL) return; layer.innerHTML='';
   const W=$('#stageWrap').clientWidth||360;
@@ -585,6 +587,11 @@ function renderOverlays(time){
     if(!(active || (ovEdit && o.id===ovSel))) return;
     let el;
     if(o.type==='image'){ el=document.createElement('img'); el.src=o.src?('/'+encodeURI(o.src)):''; el.style.width=((o.scale||0.3)*W)+'px'; el.style.height='auto'; }
+    else if(o.type==='shape'){ el=document.createElement('div'); el.style.boxSizing='border-box';
+      el.style.width=((o.w||0.5)*100)+'%'; el.style.height=((o.h||0.2)*100)+'%';
+      el.style.background=hexA(o.fill||'#000000', o.opacity!=null?o.opacity:0.5);
+      el.style.borderRadius=((o.radius||0.04)*W)+'px';
+      if((o.strokeW||0)>0) el.style.border=((o.strokeW)*W)+'px solid '+(o.stroke||'#ffffff'); }
     else { el=document.createElement('div'); el.textContent=o.text||''; el.style.fontFamily=FONTS[o.font]||FONTS.cooper; el.style.fontWeight='800'; el.style.lineHeight='1';
       el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.color=o.color||'#fff'; el.style.whiteSpace='nowrap';
       if(o.button){ el.style.background=o.bg||'#f07830'; const p=(o.size||0.06)*W; el.style.padding=(p*0.38)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.3)+'px'; }
@@ -607,7 +614,7 @@ function renderOvList(){
   const ovs=EDL.overlays||[];
   if(!ovs.length){ box.innerHTML='<div style="color:var(--mut);font-size:12px">No overlays yet — add Text or Image.</div>'; return; }
   ovs.forEach(o=>{ const row=document.createElement('div'); row.className='ecline'; if(o.id===ovSel) row.style.borderColor='var(--acc2)';
-    const lab=o.type==='image'?('🖼 '+(o.src||'').split('/').pop()):('🅣 '+((o.text||'').slice(0,16)||'text'));
+    const lab=o.type==='image'?('🖼 '+(o.src||'').split('/').pop()):(o.type==='shape'?'▭ shape':('🅣 '+((o.text||'').slice(0,16)||'text')));
     row.innerHTML=`<span class="ovsel" style="flex:1;cursor:pointer">${lab} <span style="color:var(--mut)">@${fmt(o.start)}–${fmt(o.start+(+o.dur||0))}s</span></span><button class="mini ovdel">✕</button>`;
     row.querySelector('.ovsel').onclick=()=>{ ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
     row.querySelector('.ovdel').onclick=()=>{ EDL.overlays=EDL.overlays.filter(x=>x.id!==o.id); if(ovSel===o.id) ovSel=null; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
@@ -625,6 +632,15 @@ function buildOvEditor(){
       <label>Color <input type="color" id="ovColor" value="${o.color}"></label></div>
       <div><label>Size <input type="range" id="ovSize" min="0.02" max="0.18" step="0.005" value="${o.size}"></label></div>
       <div><label class="ck"><input type="checkbox" id="ovBtn" ${o.button?'checked':''}> button</label> <input type="color" id="ovBg" value="${o.bg}" title="button color"></div>`;
+  } else if(o.type==='shape'){
+    h+=`<div class="sec">Shape (rounded rectangle)</div>
+      <div><label>Fill <input type="color" id="ovFill" value="${o.fill}"></label>
+        <label>Opacity <input type="range" id="ovOpacity" min="0" max="1" step="0.05" value="${o.opacity}"></label></div>
+      <div><label>Width <input type="range" id="ovW" min="0.05" max="1" step="0.01" value="${o.w}"></label>
+        <label>Height <input type="range" id="ovH" min="0.03" max="1" step="0.01" value="${o.h}"></label></div>
+      <div><label>Radius <input type="range" id="ovRadius" min="0" max="0.3" step="0.005" value="${o.radius}"></label></div>
+      <div><label>Border <input type="range" id="ovStrokeW" min="0" max="0.03" step="0.002" value="${o.strokeW}"></label>
+        <input type="color" id="ovStroke" value="${o.stroke}" title="border color"></div>`;
   } else {
     h+=`<div class="sec">Image</div><div><label>Size <input type="range" id="ovScale" min="0.05" max="1" step="0.01" value="${o.scale}"></label>
       <button class="mini" id="ovReplace">Replace…</button></div>`;
@@ -634,6 +650,7 @@ function buildOvEditor(){
   if($('#ovFont')) $('#ovFont').value=o.font;
   const upd=()=>{ o.start=parseFloat($('#ovStart').value)||0; o.dur=parseFloat($('#ovDur').value)||1;
     if(o.type==='text'){ o.text=$('#ovText').value; o.font=$('#ovFont').value; o.color=$('#ovColor').value; o.size=parseFloat($('#ovSize').value)||0.06; o.button=$('#ovBtn').checked; o.bg=$('#ovBg').value; }
+    else if(o.type==='shape'){ o.fill=$('#ovFill').value; o.opacity=parseFloat($('#ovOpacity').value); o.w=parseFloat($('#ovW').value)||0.5; o.h=parseFloat($('#ovH').value)||0.2; o.radius=parseFloat($('#ovRadius').value)||0; o.strokeW=parseFloat($('#ovStrokeW').value)||0; o.stroke=$('#ovStroke').value; }
     else o.scale=parseFloat($('#ovScale').value)||0.3;
     renderOverlays(playhead); renderOvList(); };
   box.querySelectorAll('input,select').forEach(el=>{ el.oninput=upd; el.onchange=upd; });
@@ -647,8 +664,10 @@ function addTextOverlay(){ EDL.overlays=EDL.overlays||[]; const o={id:uid(),type
   EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 function addImageOverlay(){ pickImage(src=>{ EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'image',src,scale:0.3,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }); }
+function addShapeOverlay(){ EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'shape',w:0.6,h:0.18,fill:'#000000',opacity:0.45,radius:0.04,stroke:'#ffffff',strokeW:0,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
+  EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 $('#btnOverlays').onclick=openOvModal; $('#ovClose').onclick=closeOvModal;
-$('#ovAddText').onclick=addTextOverlay; $('#ovAddImage').onclick=addImageOverlay;
+$('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay; $('#ovAddImage').onclick=addImageOverlay;
 
 /* ---------- save / render ---------- */
 $('#btnSave').onclick=()=>projSave();

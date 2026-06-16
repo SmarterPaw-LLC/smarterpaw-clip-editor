@@ -322,47 +322,75 @@ def list_assets():
     return out
 
 
+def build_shape_png(o, W, H, out):
+    """Rounded rectangle (fill+opacity, optional border) -> transparent PNG."""
+    from PIL import Image, ImageDraw
+    sw = max(1, int(W * float(o.get("w", 0.5))))
+    sh = max(1, int(H * float(o.get("h", 0.2))))
+    img = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    rad = max(0, min(int(W * float(o.get("radius", 0.04))), min(sw, sh) // 2))
+    alpha = int(max(0.0, min(1.0, float(o.get("opacity", 0.5)))) * 255)
+    fill = _rgba(o.get("fill", "#000000"), alpha)
+    bw = max(0, int(W * float(o.get("strokeW", 0))))
+    if bw > 0:
+        d.rounded_rectangle([bw // 2, bw // 2, sw - 1 - bw // 2, sh - 1 - bw // 2],
+                            radius=rad, fill=fill, outline=_rgba(o.get("stroke", "#ffffff"), 255), width=bw)
+    else:
+        d.rounded_rectangle([0, 0, sw - 1, sh - 1], radius=rad, fill=fill)
+    img.save(out)
+
+
 def apply_overlays(silent, overlays, W, H, tmp):
-    """Composite free-floating text/image overlays over the full timeline (global time)."""
-    overlays = [o for o in (overlays or []) if isinstance(o, dict)]
-    text_ovs = [o for o in overlays if o.get("type") == "text" and (o.get("text") or "").strip()]
-    img_ovs = [o for o in overlays if o.get("type") == "image" and o.get("src")]
-    if not text_ovs and not img_ovs:
+    """Composite free-floating text/image/shape overlays over the full timeline (global time),
+    preserving list order as z-order (later = on top)."""
+    overlays = [o for o in (overlays or []) if isinstance(o, dict) and o.get("type") in ("text", "image", "shape")]
+    if not overlays:
         return silent, None
     inputs = ["-i", silent]
     fc = []
     last = "0:v"
-    if text_ovs:
-        dts = []
-        for j, o in enumerate(text_ovs):
-            tf = os.path.join(tmp, f"ov_{j}.txt")
+    ii = 1  # next ffmpeg input index for image/shape files
+    for k, o in enumerate(overlays):
+        t = o.get("type")
+        s = float(o.get("start", 0)); e = s + float(o.get("dur", 3))
+        ox, oy = float(o.get("x", 0.5)), float(o.get("y", 0.5))
+        en = f"enable='between(t,{s},{e})'"
+        if t == "text":
+            if not (o.get("text") or "").strip():
+                continue
+            tf = os.path.join(tmp, f"ov_{k}.txt")
             with open(tf, "w", encoding="utf-8") as fh:
                 fh.write(o["text"])
             ff = esc_path(_font_path(o.get("font", "cooper")))
             size = max(8, int(W * float(o.get("size", 0.06))))
-            s = float(o.get("start", 0)); e = s + float(o.get("dur", 3))
-            ox, oy = float(o.get("x", 0.5)), float(o.get("y", 0.5))
             col = (o.get("color", "#ffffff") or "#ffffff").replace("#", "0x")
             common = (f"fontfile='{ff}':textfile='{esc_path(tf)}':fontcolor={col}:fontsize={size}:"
-                      f"x=w*{ox}-text_w/2:y=h*{oy}-text_h/2:enable='between(t,{s},{e})'")
+                      f"x=w*{ox}-text_w/2:y=h*{oy}-text_h/2:{en}")
             if o.get("button"):
                 bgc = (o.get("bg", "#f07830") or "#f07830").replace("#", "0x")
-                dts.append(f"drawtext={common}:box=1:boxcolor={bgc}:boxborderw={int(size*0.4)}")
+                dt = f"drawtext={common}:box=1:boxcolor={bgc}:boxborderw={int(size*0.4)}"
             else:
-                dts.append(f"drawtext={common}:borderw=6:bordercolor=black@0.6")
-        fc.append(f"[{last}]" + ",".join(dts) + "[vt]"); last = "vt"
-    ii = 1
-    for k, o in enumerate(img_ovs):
-        path = os.path.join(PROJ, *o["src"].split("/"))
-        if not os.path.exists(path):
-            continue
-        inputs += ["-i", path]
-        iw = max(1, int(W * float(o.get("scale", 0.3))))
-        s = float(o.get("start", 0)); e = s + float(o.get("dur", 3))
-        ox, oy = float(o.get("x", 0.5)), float(o.get("y", 0.5))
-        fc.append(f"[{ii}:v]scale={iw}:-1[oi{k}]")
-        fc.append(f"[{last}][oi{k}]overlay=x=W*{ox}-w/2:y=H*{oy}-h/2:enable='between(t,{s},{e})'[vo{k}]")
-        last = f"vo{k}"; ii += 1
+                dt = f"drawtext={common}:borderw=6:bordercolor=black@0.6"
+            fc.append(f"[{last}]{dt}[v{k}]"); last = f"v{k}"
+        else:
+            if t == "shape":
+                p = os.path.join(tmp, f"shape_{k}.png")
+                build_shape_png(o, W, H, p)
+                scale_w = None
+            else:
+                p = os.path.join(PROJ, *o["src"].split("/"))
+                if not os.path.exists(p):
+                    continue
+                scale_w = max(1, int(W * float(o.get("scale", 0.3))))
+            inputs += ["-i", p]
+            if scale_w:
+                fc.append(f"[{ii}:v]scale={scale_w}:-1[oi{k}]")
+                srclbl = f"oi{k}"
+            else:
+                srclbl = f"{ii}:v"
+            fc.append(f"[{last}][{srclbl}]overlay=x=W*{ox}-w/2:y=H*{oy}-h/2:{en}[v{k}]")
+            last = f"v{k}"; ii += 1
     if not fc:
         return silent, None
     out = os.path.join(tmp, "overlaid.mp4")
