@@ -107,6 +107,7 @@ def default_edl():
         "settings": {
             "canvas": "9x16", "music": "1076_smile.mp3",
             "endcard": ["MEOWIJUANA", "CATNIP JOINTS", "SHOP NOW"],
+            "logo": "logo.png",
             "captionSize": 0.058, "captionY": 0.62, "endcardDur": ENDCARD_DUR,
         },
         "segments": [
@@ -257,15 +258,32 @@ def render(edl):
         # end card
         ec = os.path.join(tmp, "seg_99_endcard.mp4")
         el = s.get("endcard", ["MEOWIJUANA", "CATNIP JOINTS", "SHOP NOW"])
-        f1, f2, f3 = int(W * 0.085), int(W * 0.048), int(W * 0.052)
-        y1 = int(H * 0.40); y2 = y1 + int(f1 * 1.15); y3 = int(H * 0.60)
-        ecvf = (
-            f"drawtext=fontfile='{FONT}':text='{el[0]}':fontcolor=white:fontsize={f1}:x=(w-text_w)/2:y={y1},"
-            f"drawtext=fontfile='{FONT}':text='{el[1]}':fontcolor=0xF5A623:fontsize={f2}:x=(w-text_w)/2:y={y2},"
-            f"drawtext=fontfile='{FONT}':text='{el[2]}':fontcolor=black:fontsize={f3}:box=1:boxcolor=0xF5A623:"
-            f"boxborderw=26:x=(w-text_w)/2:y={y3},format=yuv420p")
-        r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi",
-                 "-i", f"color=c=0x111111:s={W}x{H}:r=30:d={endcard_dur}", "-vf", ecvf] + ENC + [ec])
+        el = (el + ["", "", ""])[:3]
+        f2, f3 = int(W * 0.046), int(W * 0.052)
+        logo_name = s.get("logo", "logo.png")
+        logo_path = os.path.join(PROJ, os.path.basename(logo_name)) if logo_name else ""
+        sub_t = el[1].replace("'", "")
+        btn_t = el[2].replace("'", "")
+        if logo_path and os.path.exists(logo_path):
+            lw = int(W * 0.80); ly = int(H * 0.27)
+            sub_y = int(H * 0.55); btn_y = int(H * 0.66)
+            fc = (f"[1:v]scale={lw}:-1[lg];[0:v][lg]overlay=(W-w)/2:{ly}[bg];"
+                  f"[bg]drawtext=fontfile='{FONT}':text='{sub_t}':fontcolor=0xF5A623:fontsize={f2}:x=(w-text_w)/2:y={sub_y},"
+                  f"drawtext=fontfile='{FONT}':text='{btn_t}':fontcolor=black:fontsize={f3}:box=1:boxcolor=0xF5A623:"
+                  f"boxborderw=26:x=(w-text_w)/2:y={btn_y},format=yuv420p[v]")
+            r = run([FFMPEG, "-y", "-loglevel", "error",
+                     "-f", "lavfi", "-t", str(endcard_dur), "-i", f"color=c=0x111111:s={W}x{H}:r=30",
+                     "-loop", "1", "-t", str(endcard_dur), "-i", logo_path,
+                     "-filter_complex", fc, "-map", "[v]"] + ENC + [ec])
+        else:
+            f1 = int(W * 0.085); y1 = int(H * 0.40); y2 = y1 + int(f1 * 1.15); y3 = int(H * 0.60)
+            ecvf = (
+                f"drawtext=fontfile='{FONT}':text='{el[0]}':fontcolor=white:fontsize={f1}:x=(w-text_w)/2:y={y1},"
+                f"drawtext=fontfile='{FONT}':text='{sub_t}':fontcolor=0xF5A623:fontsize={f2}:x=(w-text_w)/2:y={y2},"
+                f"drawtext=fontfile='{FONT}':text='{btn_t}':fontcolor=black:fontsize={f3}:box=1:boxcolor=0xF5A623:"
+                f"boxborderw=26:x=(w-text_w)/2:y={y3},format=yuv420p")
+            r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi",
+                     "-i", f"color=c=0x111111:s={W}x{H}:r=30:d={endcard_dur}", "-vf", ecvf] + ENC + [ec])
         if r.returncode != 0:
             return {"ok": False, "log": f"endcard failed:\n{r.stderr[-1500:]}"}
         lines.append("file '" + ec.replace("\\", "/") + "'")
@@ -333,8 +351,13 @@ class Handler(BaseHTTPRequestHandler):
             for c in clips:
                 c["thumb"] = "/editor/thumbs/" + c["id"] + ".jpg"
                 c.pop("file", None)
+            logo = None
+            for cand in ("logo.png", "logo.jpg", "logo.jpeg", "logo.webp"):
+                if os.path.exists(os.path.join(PROJ, cand)):
+                    logo = "/" + cand
+                    break
             return self._json({"clips": clips, "music": list_music(),
-                               "canvases": list(CANVAS.keys())})
+                               "canvases": list(CANVAS.keys()), "logo": logo})
         if path == "/api/edl":
             return self._json(load_edl())
         if path == "/api/projects":

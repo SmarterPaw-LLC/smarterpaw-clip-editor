@@ -11,6 +11,12 @@ editor/thumbs/
 *.mov
 *.webm
 
+# brand logo used for the end card (supply your own)
+/logo.png
+/logo.jpg
+/logo.jpeg
+/logo.webp
+
 # --- Python ---
 __pycache__/
 *.pyc
