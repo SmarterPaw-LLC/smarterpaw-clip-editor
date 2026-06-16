@@ -31,7 +31,22 @@
   .projbar .sp { flex:1; }
   .projbar .cur { font-size:12px; color:var(--acc); font-weight:700; }
   .projbar select { min-width:160px; }
-  .wrap { display:grid; grid-template-columns:240px 1fr 360px; gap:12px; padding:12px; height:calc(100vh - 99px); }
+  .wrap { display:flex; flex-direction:column; gap:10px; padding:10px 12px; height:calc(100vh - 99px); }
+  .topRow { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:220px 1fr 340px; gap:12px; }
+  #tlPanel { flex:0 0 auto; height:200px; background:var(--panel); border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; overflow:hidden; }
+  #tlPanel h2 { font-size:12px; text-transform:uppercase; letter-spacing:.6px; color:var(--mut); margin:0; padding:7px 12px; border-bottom:1px solid var(--line); display:flex; gap:10px; align-items:center; }
+  #tlTracksWrap { position:relative; flex:1; overflow:auto; }
+  #tlRuler { height:18px; position:relative; background:var(--panel2); border-bottom:1px solid var(--line); }
+  #tlRuler .tick { position:absolute; top:0; bottom:0; border-left:1px solid var(--line); padding-left:3px; font-size:9px; color:var(--mut); }
+  .trk { position:relative; height:28px; border-bottom:1px solid var(--line); }
+  .trk .lab { position:absolute; left:4px; top:50%; transform:translateY(-50%); font-size:9px; color:var(--mut); z-index:3; pointer-events:none; background:rgba(21,23,28,.7); padding:0 3px; border-radius:3px; }
+  .blk { position:absolute; top:3px; bottom:3px; border-radius:4px; font-size:10px; color:#fff; overflow:hidden; white-space:nowrap; cursor:grab; box-sizing:border-box; padding:2px 6px; min-width:8px; }
+  .blk.clip { background:#34415a; box-shadow:inset 0 0 0 1px #5b8cff44; cursor:pointer; }
+  .blk.endcard { background:#4a3f1a; box-shadow:inset 0 0 0 1px var(--acc); cursor:pointer; }
+  .blk.ov-text { background:#2c6e49; } .blk.ov-shape { background:#5d539e; } .blk.ov-image { background:#7a5230; }
+  .blk.sel { box-shadow:0 0 0 2px var(--acc2); z-index:2; }
+  .blk .hL,.blk .hR { position:absolute; top:0; bottom:0; width:7px; cursor:ew-resize; background:rgba(255,255,255,.18); } .blk .hL{left:0} .blk .hR{right:0}
+  #tlPlayhead { position:absolute; top:0; bottom:0; width:2px; background:#ff5a5a; pointer-events:none; z-index:6; }
   .col { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:auto; }
   .col h2 { font-size:12px; text-transform:uppercase; letter-spacing:.6px; color:var(--mut);
             margin:0; padding:10px 12px; position:sticky; top:0; background:var(--panel); border-bottom:1px solid var(--line); z-index:2; }
@@ -105,7 +120,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.4.0</span>
+  <span class="ver" id="appVer">v1.5.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button id="btnOverlays">✚ Overlays</button>
@@ -131,6 +146,7 @@
 </div>
 
 <div class="wrap">
+  <div class="topRow">
   <!-- SOURCE BIN -->
   <div class="col" id="binCol">
     <h2>Source clips</h2>
@@ -174,9 +190,9 @@
     </div>
   </div>
 
-  <!-- TIMELINE + SETTINGS -->
+  <!-- CLIPS + SETTINGS -->
   <div class="col" id="tlCol">
-    <h2>Timeline</h2>
+    <h2>Clips</h2>
     <div id="timeline"></div>
     <div class="settings">
       <div class="row"><label>Canvas</label>
@@ -186,6 +202,15 @@
       <div class="row"><label>End card</label><button class="mini" id="btnEndcard">🎬 Edit end card…</button></div>
     </div>
     <div class="status" id="status">Loading…</div>
+  </div>
+  </div><!-- /topRow -->
+  <div id="tlPanel">
+    <h2>Timeline <span style="color:var(--mut);font-weight:400;text-transform:none;letter-spacing:0">— click to scrub · drag overlay bars to move/resize</span></h2>
+    <div id="tlTracksWrap">
+      <div id="tlRuler"></div>
+      <div id="tlTracks"></div>
+      <div id="tlPlayhead"></div>
+    </div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
@@ -400,6 +425,7 @@ function renderTimeline(){
     tl.appendChild(el);
   });
   updateTotal();
+  renderTracks();
 }
 function updateTotal(){ const t=totalDur(); $('#totalPill').textContent=fmt(t)+'s · '+EDL.settings.canvas;
   if(playhead>t) playhead=0;
@@ -439,7 +465,7 @@ function seekToPlayhead(){
       if(v){ showVid(last.id); applyFraming(last,v); try{v.currentTime=(+last.in||0)+(+last.dur||0)+(playhead-acc);}catch(e){} } }
     buildEndcard(ec); $('#endcard').style.display='flex';
   } else { $('#endcard').style.display='none'; }
-  renderOverlays(playhead);
+  renderOverlays(playhead); positionPlayhead();
 }
 
 // Play one segment's [in, in+dur] using that clip's OWN preloaded, muted element.
@@ -494,7 +520,7 @@ function playTimeline(){
         else if(ec.bg.mode==='transparent'){ const a=activeVid(); if(a&&a.paused){ const p=a.play(); if(p&&p.catch)p.catch(()=>{}); } }
       }
       if(e>=total){ playhead=0; stop(); $('#scrub').value=0; $('#tlTime').textContent='0.0 / '+fmt(total)+'s'; }
-      renderOverlays(playhead);
+      renderOverlays(playhead); positionPlayhead();
       return;
     }
     let idx=0; for(let k=0;k<bounds.length;k++){ if(e>=bounds[k].a && e<bounds[k].b){ idx=k; break; } if(k===bounds.length-1) idx=k; }
@@ -509,7 +535,7 @@ function playTimeline(){
       if(Math.abs(v.currentTime-want)>0.35){ try{v.currentTime=Math.max(0,want);}catch(_){} }
       if(v.paused){ const p=v.play(); if(p&&p.catch)p.catch(()=>{}); }
     }
-    renderOverlays(playhead);
+    renderOverlays(playhead); positionPlayhead();
   };
   clearInterval(clockTimer); clockTimer=setInterval(tick, 33); tick();   // setInterval keeps running even if the tab loses focus
 }
@@ -612,13 +638,14 @@ function closeOvModal(){ ovEdit=false; ovSel=null; $('#ovModal').style.display='
 function renderOvList(){
   const box=$('#ovList'); if(!box) return; box.innerHTML='';
   const ovs=EDL.overlays||[];
-  if(!ovs.length){ box.innerHTML='<div style="color:var(--mut);font-size:12px">No overlays yet — add Text or Image.</div>'; return; }
+  if(!ovs.length){ box.innerHTML='<div style="color:var(--mut);font-size:12px">No overlays yet — add Text, Shape, or Image.</div>'; renderTracks(); return; }
   ovs.forEach(o=>{ const row=document.createElement('div'); row.className='ecline'; if(o.id===ovSel) row.style.borderColor='var(--acc2)';
     const lab=o.type==='image'?('🖼 '+(o.src||'').split('/').pop()):(o.type==='shape'?'▭ shape':('🅣 '+((o.text||'').slice(0,16)||'text')));
     row.innerHTML=`<span class="ovsel" style="flex:1;cursor:pointer">${lab} <span style="color:var(--mut)">@${fmt(o.start)}–${fmt(o.start+(+o.dur||0))}s</span></span><button class="mini ovdel">✕</button>`;
     row.querySelector('.ovsel').onclick=()=>{ ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
     row.querySelector('.ovdel').onclick=()=>{ EDL.overlays=EDL.overlays.filter(x=>x.id!==o.id); if(ovSel===o.id) ovSel=null; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
     box.appendChild(row); });
+  renderTracks();
 }
 function buildOvEditor(){
   const box=$('#ovEditor'); if(!box) return; const o=(EDL.overlays||[]).find(x=>x.id===ovSel);
@@ -668,6 +695,51 @@ function addShapeOverlay(){ EDL.overlays=EDL.overlays||[]; const o={id:uid(),typ
   EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 $('#btnOverlays').onclick=openOvModal; $('#ovClose').onclick=closeOvModal;
 $('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay; $('#ovAddImage').onclick=addImageOverlay;
+
+/* ---------- bottom timeline tracks ---------- */
+function positionPlayhead(){ const ph=$('#tlPlayhead'); if(!ph) return; const total=totalDur()||1; ph.style.left=(Math.min(playhead,total)/total*100)+'%'; }
+function renderTracks(){
+  const tr=$('#tlTracks'), ruler=$('#tlRuler'); if(!tr||!EDL) return;
+  const total=totalDur()||1; const ec=normEndcard(EDL.settings); const vidTotal=total-(ec.enabled?ec.dur:0);
+  ruler.innerHTML=''; const step= total>40?10:(total>20?5:(total>8?2:1));
+  for(let s=0;s<=total+0.001;s+=step){ const t=document.createElement('div'); t.className='tick'; t.style.left=(s/total*100)+'%'; t.textContent=s+'s'; ruler.appendChild(t); }
+  tr.innerHTML='';
+  const ct=document.createElement('div'); ct.className='trk'; let acc=0;
+  EDL.segments.forEach((sg,i)=>{ const d=Math.max(0.05,+sg.dur||1); const b=document.createElement('div'); b.className='blk clip'+(i===sel?' sel':'');
+    b.style.left=(acc/total*100)+'%'; b.style.width=(d/total*100)+'%'; const c=MAN.byId[sg.id];
+    b.textContent=(i+1)+'. '+(((c&&c.label)||sg.id).slice(0,16)); b.title=b.textContent;
+    b.onclick=ev=>{ ev.stopPropagation(); selectSeg(i); }; ct.appendChild(b); acc+=d; });
+  if(ec.enabled){ const eb=document.createElement('div'); eb.className='blk endcard'; eb.style.left=(vidTotal/total*100)+'%'; eb.style.width=(ec.dur/total*100)+'%'; eb.textContent='End card'; eb.title='End card'; eb.onclick=ev=>{ ev.stopPropagation(); openEcModal(); }; ct.appendChild(eb); }
+  const cl=document.createElement('div'); cl.className='lab'; cl.textContent='Clips'; ct.appendChild(cl); tr.appendChild(ct);
+  (EDL.overlays||[]).forEach(o=>{ const row=document.createElement('div'); row.className='trk';
+    const b=document.createElement('div'); b.className='blk ov-'+o.type+(o.id===ovSel?' sel':'');
+    b.style.left=(o.start/total*100)+'%'; b.style.width=((+o.dur||0)/total*100)+'%';
+    b.appendChild(document.createTextNode(o.type==='image'?'🖼 image':(o.type==='shape'?'▭ shape':('🅣 '+(o.text||'text')))));
+    const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR'; b.appendChild(hL); b.appendChild(hR);
+    ovBarInteract(b,hL,hR,o,total); row.appendChild(b); tr.appendChild(row); });
+  positionPlayhead();
+}
+function ovBarInteract(b,hL,hR,o,total){
+  const areaW=()=>($('#tlTracks').getBoundingClientRect().width||1);
+  b.onclick=ev=>{ ev.stopPropagation(); ovSel=o.id; if(!ovEdit) openOvModal(); else { renderOvList(); buildOvEditor(); } renderOverlays(playhead); renderTracks(); };
+  const drag=mode=>ev=>{ ev.stopPropagation(); ev.preventDefault(); ovSel=o.id; const x0=ev.clientX, s0=o.start, d0=+o.dur||0, w=areaW();
+    const mv=e=>{ const dt=(e.clientX-x0)/w*total;
+      if(mode==='move') o.start=Math.max(0,s0+dt);
+      else if(mode==='r') o.dur=Math.max(0.2,d0+dt);
+      else { const ns=Math.max(0,Math.min(s0+dt,s0+d0-0.2)); o.dur=d0+(s0-ns); o.start=ns; }
+      renderTracks(); renderOverlays(playhead); if(ovEdit&&ovSel===o.id) buildOvEditor(); };
+    const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); };
+    window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up); };
+  b.onpointerdown=drag('move'); hL.onpointerdown=drag('l'); hR.onpointerdown=drag('r');
+}
+$('#tlTracksWrap').addEventListener('pointerdown', ev=>{
+  if(ev.target.closest('.blk')) return;
+  const r=$('#tlTracks').getBoundingClientRect(); const total=totalDur()||1;
+  const setPH=e=>{ stop(); playhead=Math.max(0,Math.min(total,(e.clientX-r.left)/r.width*total)); seekToPlayhead(); positionPlayhead(); };
+  setPH(ev);
+  const up=()=>{ window.removeEventListener('pointermove',setPH); window.removeEventListener('pointerup',up); };
+  window.addEventListener('pointermove',setPH); window.addEventListener('pointerup',up);
+});
 
 /* ---------- save / render ---------- */
 $('#btnSave').onclick=()=>projSave();

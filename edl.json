@@ -3,7 +3,7 @@
     "canvas": "9x16",
     "music": "1076_smile.mp3",
     "endcard": {
-      "enabled": true,
+      "enabled": false,
       "dur": 2.6,
       "bg": {
         "mode": "gradient",
@@ -49,47 +49,48 @@
       ]
     },
     "captionSize": 0.058,
-    "captionY": 0.62
+    "captionY": 0.62,
+    "endcardDur": 2.6
   },
   "segments": [
     {
       "id": "8bjuag2ceXA",
-      "in": 1.0,
+      "in": 1,
       "dur": 2.6,
       "cap": "when the joints come out",
-      "zoom": 1.0,
+      "zoom": 1,
       "anchor": "center"
     },
     {
       "id": "J22p8Etnkrc",
-      "in": 1.0,
-      "dur": 2.0,
+      "in": 1,
+      "dur": 2,
       "cap": "your cats new obsession",
-      "zoom": 1.0,
+      "zoom": 1,
       "anchor": "center"
     },
     {
       "id": "8bjuag2ceXA",
-      "in": 5.5,
-      "dur": 1.6,
+      "in": 23.5,
+      "dur": 3.7,
       "cap": "they cant get enough",
-      "zoom": 1.0,
+      "zoom": 1,
       "anchor": "center"
     },
     {
       "id": "J22p8Etnkrc",
       "in": 17.5,
-      "dur": 1.6,
+      "dur": 6.6,
       "cap": "every single cat",
-      "zoom": 1.0,
+      "zoom": 1,
       "anchor": "center"
     },
     {
       "id": "8bjuag2ceXA",
-      "in": 12.5,
-      "dur": 1.4,
+      "in": 6.6,
+      "dur": 3.2,
       "cap": "real catnip they play with",
-      "zoom": 1.0,
+      "zoom": 1,
       "anchor": "center"
     },
     {
@@ -97,17 +98,44 @@
       "in": 29.5,
       "dur": 2.3,
       "cap": "then total zen",
-      "zoom": 1.0,
+      "zoom": 1,
       "anchor": "center"
     },
     {
       "id": "8bjuag2ceXA",
-      "in": 39.0,
-      "dur": 3.2,
+      "in": 44.55,
+      "dur": 6.75,
       "cap": "",
-      "zoom": 1.0,
+      "zoom": 1,
       "anchor": "center"
     }
   ],
-  "overlays": []
+  "name": "Rollies Hero",
+  "overlays": [
+    {
+      "id": "ov1781648032959555",
+      "type": "image",
+      "src": "assets/logo.png",
+      "scale": 0.77,
+      "x": 0.5142857142857142,
+      "y": 0.12857142857142856,
+      "start": 24.54,
+      "dur": 3
+    },
+    {
+      "id": "ov1781648085764529",
+      "type": "shape",
+      "w": 0.87,
+      "h": 0.18,
+      "fill": "#ffffff",
+      "opacity": 1,
+      "radius": 0.04,
+      "stroke": "#ffffff",
+      "strokeW": 0,
+      "x": 0.5174603174603175,
+      "y": 0.14107142857142857,
+      "start": 26.05,
+      "dur": 3
+    }
+  ]
 }
