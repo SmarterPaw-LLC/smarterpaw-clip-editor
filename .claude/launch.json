@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "meowi-editor",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["editor/server.py"],
+      "port": 8765
+    }
+  ]
+}

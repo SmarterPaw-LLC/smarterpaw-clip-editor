@@ -1,0 +1,72 @@
+{
+  "settings": {
+    "canvas": "9x16",
+    "music": "1076_smile.mp3",
+    "endcard": [
+      "MEOWIJUANA",
+      "CATNIP JOINTS",
+      "SHOP NOW"
+    ],
+    "captionSize": 0.058,
+    "captionY": 0.62,
+    "endcardDur": 2.6
+  },
+  "segments": [
+    {
+      "id": "8bjuag2ceXA",
+      "in": 1.0,
+      "dur": 2.6,
+      "cap": "when the joints come out",
+      "zoom": 1.0,
+      "anchor": "center"
+    },
+    {
+      "id": "J22p8Etnkrc",
+      "in": 1.0,
+      "dur": 2.0,
+      "cap": "your cats new obsession",
+      "zoom": 1.0,
+      "anchor": "center"
+    },
+    {
+      "id": "8bjuag2ceXA",
+      "in": 5.5,
+      "dur": 1.6,
+      "cap": "they cant get enough",
+      "zoom": 1.0,
+      "anchor": "center"
+    },
+    {
+      "id": "J22p8Etnkrc",
+      "in": 17.5,
+      "dur": 1.6,
+      "cap": "every single cat",
+      "zoom": 1.0,
+      "anchor": "center"
+    },
+    {
+      "id": "8bjuag2ceXA",
+      "in": 12.5,
+      "dur": 1.4,
+      "cap": "real catnip they play with",
+      "zoom": 1.0,
+      "anchor": "center"
+    },
+    {
+      "id": "J22p8Etnkrc",
+      "in": 29.5,
+      "dur": 2.3,
+      "cap": "then total zen",
+      "zoom": 1.0,
+      "anchor": "center"
+    },
+    {
+      "id": "8bjuag2ceXA",
+      "in": 39.0,
+      "dur": 3.2,
+      "cap": "",
+      "zoom": 1.0,
+      "anchor": "center"
+    }
+  ]
+}
