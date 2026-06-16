@@ -12,6 +12,8 @@
   header { display:flex; align-items:center; gap:14px; padding:10px 16px; background:var(--panel);
            border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
   header h1 { font-size:15px; margin:0; font-weight:700; letter-spacing:.2px; }
+  header .ver { font-size:11px; color:var(--mut); border:1px solid var(--line); border-radius:20px;
+                padding:2px 8px; font-variant-numeric:tabular-nums; }
   header .sp { flex:1; }
   button { background:var(--panel2); color:var(--txt); border:1px solid var(--line); border-radius:7px;
            padding:7px 12px; cursor:pointer; font-size:13px; }
@@ -43,7 +45,7 @@
   .center { display:flex; flex-direction:column; align-items:center; gap:10px; padding:12px; overflow:auto; }
   #stageWrap { position:relative; background:#000; border-radius:10px; overflow:hidden; box-shadow:0 6px 24px #0008; }
   #stage { display:block; width:100%; height:100%; }
-  #stageVid { width:100%; height:100%; object-fit:cover; display:block; background:#000; }
+  .clipvid { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:none; background:#000; }
   #capOverlay { position:absolute; left:6%; right:6%; text-align:center; color:#fff; font-weight:800;
                 pointer-events:none; line-height:1.15; }
   #capOverlay span { background:rgba(0,0,0,.34); box-shadow:0 0 0 6px rgba(0,0,0,.34);
@@ -84,6 +86,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
+  <span class="ver" id="appVer">v1.0.1</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnReload">Reload clips</button>
@@ -117,7 +120,7 @@
   <!-- PREVIEW / TRIMMER -->
   <div class="col center">
     <div id="stageWrap">
-      <video id="stageVid" playsinline></video>
+      <!-- one <video class="clipvid"> per clip is injected here -->
       <div id="capOverlay"><span></span></div>
       <div id="endcard"><img id="ecLogo" alt=""><div class="l1">MEOWIJUANA</div><div class="l2">CATNIP JOINTS</div><div class="l3">SHOP NOW</div></div>
     </div>
@@ -174,9 +177,23 @@ const api = (u,o) => fetch(u,o).then(r=>r.json());
 let MAN = {clips:[], byId:{}, music:[]};
 let EDL = null;
 let sel = -1;          // selected segment index
-let curClipId = null;  // clip currently loaded in <video>
-const vid = $('#stageVid');
+const stage = $('#stageWrap');
+const vids = {};       // clip id -> its own preloaded, muted <video> element
+let activeId = null;   // currently visible clip id
 const ASPECT = {'9x16':[9,16], '4x5':[4,5], '16x9':[16,9]};
+function getVid(id){
+  if(vids[id]) return vids[id];
+  const c=MAN.byId[id]; if(!c) return null;
+  const v=document.createElement('video');
+  v.className='clipvid'; v.muted=true; v.playsInline=true; v.preload='auto'; v.src=c.url;
+  v.addEventListener('timeupdate',()=>{ if(!tlPlaying && activeId===id){ $('#vidTime').textContent=fmt(v.currentTime)+'s'; $('#scrub').value=v.currentTime; }});
+  stage.insertBefore(v, $('#capOverlay')); vids[id]=v; return v;
+}
+function showVid(id){ for(const k in vids) vids[k].style.display=(k===id)?'block':'none'; activeId=id; }
+function activeVid(){ return vids[activeId]||null; }
+function withClip(id, cb){ const v=getVid(id); if(!v){ if(cb)cb(null); return; }
+  if(v.readyState>=1){ $('#scrub').max=v.duration||(MAN.byId[id]||{}).dur||10; if(cb)cb(v); }
+  else v.addEventListener('loadedmetadata', function h(){ v.removeEventListener('loadedmetadata',h); $('#scrub').max=v.duration||(MAN.byId[id]||{}).dur||10; if(cb)cb(v); }); }
 
 function toast(m){ const t=$('#toast'); t.textContent=m; t.style.display='block'; clearTimeout(t._t); t._t=setTimeout(()=>t.style.display='none',2200); }
 function fmt(n){ return (Math.round(n*10)/10).toFixed(1); }
@@ -196,20 +213,11 @@ function sizeStage(){
 }
 
 function anchorPos(a){ return {center:'50% 50%',top:'50% 0%',bottom:'50% 100%',left:'0% 50%',right:'100% 50%'}[a]||'50% 50%'; }
-function applyFraming(seg){
+function applyFraming(seg, v){ v=v||vids[activeId]; if(!v) return;
   const pos=anchorPos(seg.anchor); const z=Math.max(seg.zoom||1,1);
-  vid.style.objectPosition=pos; vid.style.transformOrigin=pos;
-  vid.style.transform = z>1?`scale(${z})`:'none';
+  v.style.objectPosition=pos; v.style.transformOrigin=pos; v.style.transform = z>1?`scale(${z})`:'none';
 }
 function showCap(text){ const o=$('#capOverlay'); if(text&&text.trim()){ o.querySelector('span').textContent=text; o.style.display='block'; } else { o.style.display='none'; } }
-
-function loadClip(id, cb){
-  const c=MAN.byId[id]; if(!c){ if(cb)cb(); return; }
-  if(curClipId===id){ if(cb)cb(); return; }
-  curClipId=id; vid.src=c.url;
-  vid.addEventListener('loadedmetadata', function h(){ vid.removeEventListener('loadedmetadata',h);
-    $('#scrub').max=c.dur||vid.duration||10; if(cb)cb(); });
-}
 
 /* ---------- bin ---------- */
 function renderBin(){
@@ -221,7 +229,7 @@ function renderBin(){
     d.innerHTML=`<img src="${c.thumb}" loading="lazy"><div class="meta"><b>${c.label}</b>
       <span>${c.id} · ${fmt(c.dur)}s · ${c.w}×${c.h}</span></div>`;
     d.onclick=()=>{ stop(); sel=-1; renderTimeline(); $('#trimName').textContent=c.label;
-      loadClip(c.id, ()=>{ vid.currentTime=0; applyFraming({anchor:'center',zoom:1}); showCap(''); });
+      withClip(c.id, v=>{ if(!v) return; showVid(c.id); applyFraming({anchor:'center',zoom:1}, v); try{v.currentTime=0;}catch(e){} showCap(''); });
       $('#btnAddSel').dataset.id=c.id; };
     bin.appendChild(d);
   });
@@ -270,37 +278,37 @@ function loadSegIntoTrim(){
   if(sel<0||!EDL.segments[sel]) return; const s=EDL.segments[sel]; const c=MAN.byId[s.id];
   $('#trimName').textContent=c?c.label:s.id;
   $('#inIn').value=s.in; $('#inDur').value=s.dur; $('#inZoom').value=s.zoom||1; $('#inAnchor').value=s.anchor||'center';
-  loadClip(s.id, ()=>{ vid.currentTime=s.in; applyFraming(s); showCap(s.cap); });
+  withClip(s.id, v=>{ if(!v) return; showVid(s.id); applyFraming(s, v); try{v.currentTime=s.in;}catch(e){} showCap(s.cap); });
 }
 
 /* ---------- playback ---------- */
 const music = new Audio();
 let tlPlaying=false, pbToken=0, segRaf=null, clockRaf=null, segTO=null;
 function stop(){ tlPlaying=false; pbToken++; cancelAnimationFrame(segRaf); cancelAnimationFrame(clockRaf); clearTimeout(segTO);
-  vid.onseeked=null; try{vid.pause();}catch(e){} music.pause();
+  const v=activeVid(); if(v){ v.onseeked=null; try{v.pause();}catch(e){} } music.pause();
   $('#endcard').style.display='none'; $('#btnPlayTl').textContent='▶ Play timeline'; }
 
-// Play one segment's [in, in+dur] range cleanly: wait for the seek to land, then play,
-// and end exactly at the out-point. A token cancels any stale async callbacks.
+// Play one segment's [in, in+dur] using that clip's OWN preloaded, muted element.
+// No src-swapping (which interrupts play()); we just seek + show + play that element.
 function playRange(seg, onDone){
-  cancelAnimationFrame(segRaf); clearTimeout(segTO); vid.onseeked=null;
+  cancelAnimationFrame(segRaf); clearTimeout(segTO);
   const my=++pbToken;
+  const v=getVid(seg.id);
   const start=Math.max(0,+seg.in||0), dur=Math.max(0.05,+seg.dur||1), end=start+dur;
   let done=false;
-  const finish=()=>{ if(done||my!==pbToken) return; done=true; clearTimeout(segTO); cancelAnimationFrame(segRaf); try{vid.pause();}catch(e){} if(onDone) onDone(); };
-  // master backstop armed immediately: timeline always advances even if load/seek/play stalls
-  segTO=setTimeout(finish, dur*1000+1500);
+  const finish=()=>{ if(done||my!==pbToken) return; done=true; clearTimeout(segTO); cancelAnimationFrame(segRaf); if(v){try{v.pause();}catch(e){}} if(onDone) onDone(); };
+  segTO=setTimeout(finish, dur*1000+1200);   // backstop so the timeline never stalls
+  if(!v){ return; }
   const watch=()=>{ if(my!==pbToken) return;
-    if(vid.currentTime>=end-0.03 || vid.ended){ finish(); return; }
+    if(v.currentTime>=end-0.03 || v.ended){ finish(); return; }
     segRaf=requestAnimationFrame(watch); };
-  const go=()=>{ if(my!==pbToken) return; vid.onseeked=null; showCap(seg.cap);
-    const p=vid.play(); if(p&&p.catch) p.catch(()=>{}); segRaf=requestAnimationFrame(watch); };
-  const begin=()=>{ if(my!==pbToken) return; applyFraming(seg);
-    if(Math.abs(vid.currentTime-start)>0.06){ vid.onseeked=go; try{vid.currentTime=start;}catch(e){ go(); } }
+  const go=()=>{ if(my!==pbToken) return; v.onseeked=null; applyFraming(seg, v); showVid(seg.id); showCap(seg.cap);
+    const p=v.play(); if(p&&p.catch) p.catch(()=>{}); segRaf=requestAnimationFrame(watch); };
+  const seekThenGo=()=>{ if(my!==pbToken) return;
+    if(Math.abs(v.currentTime-start)>0.06){ v.onseeked=()=>{ v.onseeked=null; go(); }; try{v.currentTime=start;}catch(e){ go(); } }
     else go(); };
-  loadClip(seg.id, ()=>{ if(my!==pbToken) return;
-    if(vid.readyState>=1) begin();
-    else vid.addEventListener('loadeddata', function h(){ vid.removeEventListener('loadeddata',h); begin(); }); });
+  if(v.readyState>=1) seekThenGo();
+  else v.addEventListener('loadedmetadata', function h(){ v.removeEventListener('loadedmetadata',h); seekThenGo(); });
 }
 
 function playTimeline(){
@@ -313,7 +321,7 @@ function playTimeline(){
     $('#tlTime').textContent=fmt(Math.min(e,total))+' / '+fmt(total)+'s'; clockRaf=requestAnimationFrame(clk); })();
   let i=0;
   const advance=()=>{ if(!tlPlaying) return; i++;
-    if(i>=EDL.segments.length){ vid.pause(); showCap('');
+    if(i>=EDL.segments.length){ const v=activeVid(); if(v)v.pause(); showCap('');
       $('#endcard .l2').textContent=EDL.settings.endcard[1]||''; $('#endcard .l3').textContent=EDL.settings.endcard[2]||'';
       $('#endcard').style.display='flex';
       setTimeout(()=>{ if(tlPlaying) stop(); }, (EDL.settings.endcardDur||2.6)*1000); return; }
@@ -322,16 +330,15 @@ function playTimeline(){
 }
 
 /* ---------- trimmer controls ---------- */
-vid.addEventListener('timeupdate', ()=>{ if(!tlPlaying){ $('#vidTime').textContent=fmt(vid.currentTime)+'s'; $('#scrub').value=vid.currentTime; }});
-$('#scrub').oninput=e=>{ stop(); vid.currentTime=parseFloat(e.target.value); };
+$('#scrub').oninput=e=>{ stop(); const v=activeVid(); if(v){ try{v.currentTime=parseFloat(e.target.value);}catch(err){} } };
 $('#btnPlaySeg').onclick=()=>{ if(sel<0) return toast('Select a segment first'); stop(); playRange(EDL.segments[sel], ()=>{}); };
-$('#btnSetIn').onclick=()=>{ if(sel<0) return toast('Select a segment first'); EDL.segments[sel].in=Math.round(vid.currentTime*100)/100; loadSegIntoTrim(); renderTimeline(); };
-$('#btnSetOut').onclick=()=>{ if(sel<0) return toast('Select a segment first'); const s=EDL.segments[sel]; const d=Math.round((vid.currentTime-s.in)*100)/100; if(d>0){ s.dur=d; loadSegIntoTrim(); renderTimeline(); } else toast('Playhead must be after IN'); };
+$('#btnSetIn').onclick=()=>{ if(sel<0) return toast('Select a segment first'); const v=activeVid(); if(!v) return; EDL.segments[sel].in=Math.round(v.currentTime*100)/100; loadSegIntoTrim(); renderTimeline(); };
+$('#btnSetOut').onclick=()=>{ if(sel<0) return toast('Select a segment first'); const v=activeVid(); if(!v) return; const s=EDL.segments[sel]; const d=Math.round((v.currentTime-s.in)*100)/100; if(d>0){ s.dur=d; loadSegIntoTrim(); renderTimeline(); } else toast('Playhead must be after IN'); };
 ['inIn','inDur','inZoom','inAnchor'].forEach(id=>{ $('#'+id).onchange=()=>{ if(sel<0) return; const s=EDL.segments[sel];
   s.in=parseFloat($('#inIn').value)||0; s.dur=parseFloat($('#inDur').value)||1; s.zoom=parseFloat($('#inZoom').value)||1; s.anchor=$('#inAnchor').value;
   applyFraming(s); renderTimeline(); }; });
 $('#btnAddSel').onclick=()=>{ const id=$('#btnAddSel').dataset.id || (sel>=0&&EDL.segments[sel].id); if(!id) return toast('Click a clip first');
-  EDL.segments.push({id, in:Math.round(vid.currentTime*100)/100||0, dur:2.0, cap:'', zoom:1, anchor:'center'}); sel=EDL.segments.length-1; renderTimeline(); selectSeg(sel); toast('Segment added'); };
+  const v=activeVid(); EDL.segments.push({id, in: v?Math.round(v.currentTime*100)/100:0, dur:2.0, cap:'', zoom:1, anchor:'center'}); sel=EDL.segments.length-1; renderTimeline(); selectSeg(sel); toast('Segment added'); };
 
 /* ---------- settings ---------- */
 $('#setCanvas').onchange=e=>{ EDL.settings.canvas=e.target.value; sizeStage(); updateTotal(); };
@@ -374,6 +381,7 @@ function applyEDL(edl){
   $('#endcard .l2').textContent=s.endcard[1]||''; $('#endcard .l3').textContent=s.endcard[2]||'';
   sel = EDL.segments.length?0:-1;
   renderBin(); renderTimeline(); sizeStage();
+  [...new Set(EDL.segments.map(s=>s.id))].forEach(getVid);  // preload timeline clips
   if(sel>=0) selectSeg(0); else stop();
 }
 function setCur(p){ curProj=p; $('#projCur').textContent = p ? ('● '+p.name) : '○ unsaved'; }
