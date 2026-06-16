@@ -322,6 +322,28 @@ def list_assets():
     return out
 
 
+def _with_shadow(img, o, W):
+    """Return img (RGBA) with a drop shadow composited behind it, per o['shadow']."""
+    sh = o.get("shadow") or {}
+    if not sh.get("on"):
+        return img
+    from PIL import Image, ImageFilter
+    dx = int(W * float(sh.get("dx", 0.004))); dy = int(W * float(sh.get("dy", 0.006)))
+    blur = max(0, int(W * float(sh.get("blur", 0.01))))
+    op = int(max(0.0, min(1.0, float(sh.get("opacity", 0.5)))) * 255)
+    col = _rgba(sh.get("color", "#000000"), 255)
+    pad = blur * 3 + max(abs(dx), abs(dy)) + 2
+    base = Image.new("RGBA", (img.width + 2 * pad, img.height + 2 * pad), (0, 0, 0, 0))
+    alpha = img.split()[3].point(lambda a: int(a * op / 255))
+    shadow = Image.new("RGBA", img.size, (col[0], col[1], col[2], 0)); shadow.putalpha(alpha)
+    layer = Image.new("RGBA", base.size, (0, 0, 0, 0)); layer.paste(shadow, (pad + dx, pad + dy), shadow)
+    if blur > 0:
+        layer = layer.filter(ImageFilter.GaussianBlur(blur))
+    base = Image.alpha_composite(base, layer)
+    base.alpha_composite(img, (pad, pad))
+    return base
+
+
 def build_shape_png(o, W, H, out):
     """Rounded rectangle (fill+opacity, optional border) -> transparent PNG."""
     from PIL import Image, ImageDraw
@@ -338,7 +360,7 @@ def build_shape_png(o, W, H, out):
                             radius=rad, fill=fill, outline=_rgba(o.get("stroke", "#ffffff"), 255), width=bw)
     else:
         d.rounded_rectangle([0, 0, sw - 1, sh - 1], radius=rad, fill=fill)
-    img.save(out)
+    _with_shadow(img, o, W).save(out)
 
 
 def apply_overlays(silent, overlays, W, H, tmp):
@@ -371,8 +393,14 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 ai = f"min(1,(t-{s})/{fi})" if fi > 0 else "1"
                 ao = f"min(1,({e}-t)/{fo})" if fo > 0 else "1"
                 alpha = f":alpha='max(0,min({ai},{ao}))'"
+            sh = o.get("shadow") or {}
+            shopt = ""
+            if sh.get("on"):
+                sdx = int(W * float(sh.get("dx", 0.004))); sdy = int(W * float(sh.get("dy", 0.006)))
+                sop = float(sh.get("opacity", 0.5)); scol = (sh.get("color", "#000000") or "#000000").replace("#", "0x")
+                shopt = f":shadowx={sdx}:shadowy={sdy}:shadowcolor={scol}@{sop}"
             common = (f"fontfile='{ff}':textfile='{esc_path(tf)}':fontcolor={col}:fontsize={size}:"
-                      f"x=w*{ox}-text_w/2:y=h*{oy}-text_h/2:{en}{alpha}")
+                      f"x=w*{ox}-text_w/2:y=h*{oy}-text_h/2:{en}{alpha}{shopt}")
             if o.get("button"):
                 bgc = (o.get("bg", "#f07830") or "#f07830").replace("#", "0x")
                 dt = f"drawtext={common}:box=1:boxcolor={bgc}:boxborderw={int(size*0.4)}"
@@ -388,7 +416,14 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 p = os.path.join(PROJ, *o["src"].split("/"))
                 if not os.path.exists(p):
                     continue
-                scale_w = max(1, int(W * float(o.get("scale", 0.3))))
+                if (o.get("shadow") or {}).get("on"):
+                    from PIL import Image
+                    im = Image.open(p).convert("RGBA")
+                    tw = max(1, int(W * float(o.get("scale", 0.3)))); th = max(1, int(im.height * tw / im.width))
+                    im = _with_shadow(im.resize((tw, th)), o, W)
+                    p = os.path.join(tmp, f"img_{k}.png"); im.save(p); scale_w = None
+                else:
+                    scale_w = max(1, int(W * float(o.get("scale", 0.3))))
             fi = float(o.get("fadeIn", 0) or 0); fo = float(o.get("fadeOut", 0) or 0)
             inputs += ["-loop", "1", "-t", str(e), "-i", p]
             filt = []

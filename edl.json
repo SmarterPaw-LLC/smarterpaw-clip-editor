@@ -116,18 +116,47 @@
     {
       "id": "t1",
       "type": "text",
-      "text": "FADE TEST",
+      "text": "SHADOW",
       "font": "cooper",
       "color": "#ffffff",
-      "size": 0.08,
+      "size": 0.1,
       "x": 0.5,
-      "y": 0.3,
-      "start": 3.0,
-      "dur": 3.0,
-      "fadeIn": 1.0,
-      "fadeOut": 1.0,
+      "y": 0.25,
+      "start": 0.3,
+      "dur": 5,
       "button": false,
-      "bg": "#f07830"
+      "bg": "#f07830",
+      "shadow": {
+        "on": true,
+        "color": "#000000",
+        "blur": 0.012,
+        "dx": 0.006,
+        "dy": 0.01,
+        "opacity": 0.8
+      }
+    },
+    {
+      "id": "s1",
+      "type": "shape",
+      "w": 0.5,
+      "h": 0.2,
+      "fill": "#f07830",
+      "opacity": 1,
+      "radius": 0.06,
+      "stroke": "#fff",
+      "strokeW": 0,
+      "x": 0.5,
+      "y": 0.6,
+      "start": 0.3,
+      "dur": 5,
+      "shadow": {
+        "on": true,
+        "color": "#000000",
+        "blur": 0.02,
+        "dx": 0.008,
+        "dy": 0.012,
+        "opacity": 0.6
+      }
     }
   ]
 }
