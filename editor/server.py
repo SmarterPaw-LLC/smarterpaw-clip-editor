@@ -365,8 +365,14 @@ def apply_overlays(silent, overlays, W, H, tmp):
             ff = esc_path(_font_path(o.get("font", "cooper")))
             size = max(8, int(W * float(o.get("size", 0.06))))
             col = (o.get("color", "#ffffff") or "#ffffff").replace("#", "0x")
+            fi = float(o.get("fadeIn", 0) or 0); fo = float(o.get("fadeOut", 0) or 0)
+            alpha = ""
+            if fi > 0 or fo > 0:
+                ai = f"min(1,(t-{s})/{fi})" if fi > 0 else "1"
+                ao = f"min(1,({e}-t)/{fo})" if fo > 0 else "1"
+                alpha = f":alpha='max(0,min({ai},{ao}))'"
             common = (f"fontfile='{ff}':textfile='{esc_path(tf)}':fontcolor={col}:fontsize={size}:"
-                      f"x=w*{ox}-text_w/2:y=h*{oy}-text_h/2:{en}")
+                      f"x=w*{ox}-text_w/2:y=h*{oy}-text_h/2:{en}{alpha}")
             if o.get("button"):
                 bgc = (o.get("bg", "#f07830") or "#f07830").replace("#", "0x")
                 dt = f"drawtext={common}:box=1:boxcolor={bgc}:boxborderw={int(size*0.4)}"
@@ -383,13 +389,18 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 if not os.path.exists(p):
                     continue
                 scale_w = max(1, int(W * float(o.get("scale", 0.3))))
-            inputs += ["-i", p]
+            fi = float(o.get("fadeIn", 0) or 0); fo = float(o.get("fadeOut", 0) or 0)
+            inputs += ["-loop", "1", "-t", str(e), "-i", p]
+            filt = []
             if scale_w:
-                fc.append(f"[{ii}:v]scale={scale_w}:-1[oi{k}]")
-                srclbl = f"oi{k}"
-            else:
-                srclbl = f"{ii}:v"
-            fc.append(f"[{last}][{srclbl}]overlay=x=W*{ox}-w/2:y=H*{oy}-h/2:{en}[v{k}]")
+                filt.append(f"scale={scale_w}:-1")
+            filt.append("format=rgba")
+            if fi > 0:
+                filt.append(f"fade=t=in:st={s}:d={fi}:alpha=1")
+            if fo > 0:
+                filt.append(f"fade=t=out:st={max(0,e-fo)}:d={fo}:alpha=1")
+            fc.append(f"[{ii}:v]" + ",".join(filt) + f"[oi{k}]")
+            fc.append(f"[{last}][oi{k}]overlay=x=W*{ox}-w/2:y=H*{oy}-h/2:{en}[v{k}]")
             last = f"v{k}"; ii += 1
     if not fc:
         return silent, None
@@ -437,6 +448,11 @@ def render(edl):
             cx, cy = crop_xy(seg.get("anchor", "center"), W, H)
             base = f"scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={W}:{H}:{cx}:{cy},setsar=1,fps=30,format=yuv420p"
             dur = float(seg["dur"])
+            sfi = float(seg.get("fadeIn", 0) or 0); sfo = float(seg.get("fadeOut", 0) or 0)
+            if sfi > 0:
+                base += f",fade=t=in:st=0:d={sfi}"
+            if sfo > 0:
+                base += f",fade=t=out:st={max(0,dur-sfo)}:d={sfo}"
             is_last = (idx == len(segs) - 1)
             cap = (seg.get("cap") or "").strip()
             cap_dt = ""

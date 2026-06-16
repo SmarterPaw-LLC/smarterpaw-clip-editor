@@ -122,7 +122,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.5.1</span>
+  <span class="ver" id="appVer">v1.6.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button id="btnOverlays">✚ Overlays</button>
@@ -280,7 +280,7 @@ function getVid(id){
   v.addEventListener('timeupdate',()=>{ if(!tlPlaying && activeId===id){ $('#vidTime').textContent=fmt(v.currentTime)+'s'; }});
   stage.insertBefore(v, $('#capOverlay')); vids[id]=v; return v;
 }
-function showVid(id){ for(const k in vids) vids[k].style.display=(k===id)?'block':'none'; activeId=id; }
+function showVid(id){ for(const k in vids) vids[k].style.display=(k===id)?'block':'none'; activeId=id; if(vids[id]) vids[id].style.opacity=1; }
 function activeVid(){ return vids[activeId]||null; }
 function withClip(id, cb){ const v=getVid(id); if(!v){ if(cb)cb(null); return; }
   if(v.readyState>=1){ if(cb)cb(v); }
@@ -396,6 +396,8 @@ function renderTimeline(){
         <label>zoom<input type="number" step="0.05" min="1" data-f="zoom" value="${s.zoom||1}"></label>
         <label>anchor<select data-f="anchor">${['center','top','bottom','left','right'].map(a=>`<option ${a===(s.anchor||'center')?'selected':''}>${a}</option>`).join('')}</select></label>
       </div>
+      <div class="nums"><label>fade in<input type="number" step="0.1" min="0" data-f="fadeIn" value="${s.fadeIn||0}"></label>
+        <label>fade out<input type="number" step="0.1" min="0" data-f="fadeOut" value="${s.fadeOut||0}"></label></div>
       <input class="cap" type="text" data-f="cap" placeholder="caption (blank = none)" value="${(s.cap||'').replace(/"/g,'&quot;')}">
       <div class="cscrub-row">
         <button class="mini cbtn" data-sa="play" title="Play this segment in the preview">▶</button>
@@ -409,7 +411,7 @@ function renderTimeline(){
       </div>`;
     el.querySelector('.hd').onclick=()=>selectSeg(i);
     el.querySelectorAll('[data-f]').forEach(inp=>{
-      inp.onchange=()=>{ let v=inp.value; if(['in','dur','zoom'].includes(inp.dataset.f)) v=parseFloat(v)||0;
+      inp.onchange=()=>{ let v=inp.value; if(['in','dur','zoom','fadeIn','fadeOut'].includes(inp.dataset.f)) v=parseFloat(v)||0;
         EDL.segments[i][inp.dataset.f]=v; updateTotal(); if(i===sel) loadSegIntoTrim(); };
     });
     el.querySelectorAll('[data-a]').forEach(b=>{ b.onclick=()=>segAction(b.dataset.a,i); });
@@ -537,6 +539,10 @@ function playTimeline(){
       if(Math.abs(v.currentTime-want)>0.35){ try{v.currentTime=Math.max(0,want);}catch(_){} }
       if(v.paused){ const p=v.play(); if(p&&p.catch)p.catch(()=>{}); }
     }
+    if(v){ const lt=e-bd.a, dd=Math.max(0.05,+s.dur||1); let op=1; const fi=+s.fadeIn||0, fo=+s.fadeOut||0;  // segment fade preview
+      if(fi>0 && lt<fi) op=Math.max(0,lt/fi);
+      if(fo>0 && lt>dd-fo) op=Math.min(op,Math.max(0,(dd-lt)/fo));
+      v.style.opacity=op; }
     renderOverlays(playhead); positionPlayhead();
   };
   clearInterval(clockTimer); clockTimer=setInterval(tick, 33); tick();   // setInterval keeps running even if the tab loses focus
@@ -625,6 +631,10 @@ function renderOverlays(time){
       if(o.button){ el.style.background=o.bg||'#f07830'; const p=(o.size||0.06)*W; el.style.padding=(p*0.38)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.3)+'px'; }
       else el.style.textShadow='0 2px 6px rgba(0,0,0,.6)'; }
     el.style.position='absolute'; el.style.left=((o.x||0.5)*100)+'%'; el.style.top=((o.y||0.5)*100)+'%'; el.style.transform='translate(-50%,-50%)';
+    if(active){ let op=1; const fi=+o.fadeIn||0, fo=+o.fadeOut||0, dd=+o.dur||0;
+      if(fi>0 && time<o.start+fi) op=Math.max(0,(time-o.start)/fi);
+      if(fo>0 && time>o.start+dd-fo) op=Math.min(op,Math.max(0,(o.start+dd-time)/fo));
+      el.style.opacity=op; }
     if(ovEdit){ el.style.pointerEvents='auto'; el.style.cursor='move'; if(o.id===ovSel){ el.style.outline='2px dashed #5b8cff'; el.style.outlineOffset='3px'; } dragify(el,o); }
     layer.appendChild(el);
   });
@@ -674,10 +684,13 @@ function buildOvEditor(){
     h+=`<div class="sec">Image</div><div><label>Size <input type="range" id="ovScale" min="0.05" max="1" step="0.01" value="${o.scale}"></label>
       <button class="mini" id="ovReplace">Replace…</button></div>`;
   }
-  h+=`<div style="color:var(--mut);font-size:11px;margin-top:6px">Drag the element on the preview to position it.</div>`;
+  h+=`<div class="sec">Animation</div><div><label>Fade in <input type="number" id="ovFi" step="0.1" min="0" style="width:54px" value="${o.fadeIn||0}"> s</label>
+    <label>Fade out <input type="number" id="ovFo" step="0.1" min="0" style="width:54px" value="${o.fadeOut||0}"> s</label></div>`;
+  h+=`<div style="color:var(--mut);font-size:11px;margin-top:6px">Drag the element on the preview to position it · drag its bar on the timeline to move/restack.</div>`;
   box.innerHTML=h;
   if($('#ovFont')) $('#ovFont').value=o.font;
   const upd=()=>{ o.start=parseFloat($('#ovStart').value)||0; o.dur=parseFloat($('#ovDur').value)||1;
+    o.fadeIn=parseFloat($('#ovFi').value)||0; o.fadeOut=parseFloat($('#ovFo').value)||0;
     if(o.type==='text'){ o.text=$('#ovText').value; o.font=$('#ovFont').value; o.color=$('#ovColor').value; o.size=parseFloat($('#ovSize').value)||0.06; o.button=$('#ovBtn').checked; o.bg=$('#ovBg').value; }
     else if(o.type==='shape'){ o.fill=$('#ovFill').value; o.opacity=parseFloat($('#ovOpacity').value); o.w=parseFloat($('#ovW').value)||0.5; o.h=parseFloat($('#ovH').value)||0.2; o.radius=parseFloat($('#ovRadius').value)||0; o.strokeW=parseFloat($('#ovStrokeW').value)||0; o.stroke=$('#ovStroke').value; }
     else o.scale=parseFloat($('#ovScale').value)||0.3;
@@ -708,7 +721,6 @@ function renderTracks(){
   tr.innerHTML='';
   // overlay lanes ON TOP — reverse array order so the top lane is the topmost layer (drawn last)
   (EDL.overlays||[]).slice().reverse().forEach(o=>{ const row=document.createElement('div'); row.className='trk'; row.dataset.ovid=o.id;
-    const grip=document.createElement('div'); grip.className='grip'; grip.textContent='⠿'; grip.title='Drag up/down to reorder this layer'; laneReorder(grip,o); row.appendChild(grip);
     const b=document.createElement('div'); b.className='blk ov-'+o.type+(o.id===ovSel?' sel':'');
     b.style.left=(o.start/total*100)+'%'; b.style.width=((+o.dur||0)/total*100)+'%';
     b.appendChild(document.createTextNode(o.type==='image'?'🖼 image':(o.type==='shape'?'▭ shape':('🅣 '+(o.text||'text')))));
@@ -719,21 +731,24 @@ function renderTracks(){
   EDL.segments.forEach((sg,i)=>{ const d=Math.max(0.05,+sg.dur||1); const b=document.createElement('div'); b.className='blk clip'+(i===sel?' sel':'');
     b.style.left=(acc/total*100)+'%'; b.style.width=(d/total*100)+'%'; const c=MAN.byId[sg.id];
     b.textContent=(i+1)+'. '+(((c&&c.label)||sg.id).slice(0,16)); b.title=b.textContent;
-    b.onclick=ev=>{ ev.stopPropagation(); selectSeg(i); }; ct.appendChild(b); acc+=d; });
+    clipDrag(b,i); ct.appendChild(b); acc+=d; });
   if(ec.enabled){ const eb=document.createElement('div'); eb.className='blk endcard'; eb.style.left=(vidTotal/total*100)+'%'; eb.style.width=(ec.dur/total*100)+'%'; eb.textContent='End card'; eb.title='End card'; eb.onclick=ev=>{ ev.stopPropagation(); openEcModal(); }; ct.appendChild(eb); }
   const cl=document.createElement('div'); cl.className='lab'; cl.textContent='Clips'; ct.appendChild(cl); tr.appendChild(ct);
   positionPlayhead();
 }
-// vertical drag of a lane grip = reorder layer z-order (top lane = on top)
-function laneReorder(grip,o){
-  grip.onpointerdown=ev=>{ ev.stopPropagation(); ev.preventDefault();
-    const move=e=>{ const lanes=[...document.querySelectorAll('#tlTracks .trk[data-ovid]')]; if(!lanes.length) return;
-      let ti=lanes.length-1;
-      for(let i=0;i<lanes.length;i++){ const r=lanes[i].getBoundingClientRect(); if(e.clientY < r.top+r.height/2){ ti=i; break; } }
-      const disp=EDL.overlays.slice().reverse(); const from=disp.findIndex(x=>x.id===o.id);
-      if(from>=0 && ti!==from){ disp.splice(ti,0,disp.splice(from,1)[0]); EDL.overlays=disp.slice().reverse(); renderTracks(); renderOverlays(playhead); } };
-    const up=()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); if(ovEdit) renderOvList(); };
-    window.addEventListener('pointermove',move); window.addEventListener('pointerup',up);
+// drag a clip block left/right to resequence it; click selects
+function clipDrag(b,idx){
+  const seg=EDL.segments[idx];
+  b.onpointerdown=ev=>{ if(ev.target.closest('.hL,.hR')) return; ev.stopPropagation();
+    const area=$('#tlTracks').getBoundingClientRect(); const total=totalDur()||1; let moved=false; const x0=ev.clientX;
+    const mv=e=>{ if(!moved && Math.abs(e.clientX-x0)<5) return; moved=true;
+      const pt=Math.max(0,Math.min(total,(e.clientX-area.left)/area.width*total));
+      let acc=0, ti=EDL.segments.length-1;
+      for(let i=0;i<EDL.segments.length;i++){ const d=Math.max(0.05,+EDL.segments[i].dur||1); if(pt<acc+d){ ti=i; break; } acc+=d; }
+      const cur=EDL.segments.indexOf(seg);
+      if(cur>=0 && ti!==cur){ EDL.segments.splice(ti,0,EDL.segments.splice(cur,1)[0]); sel=ti; renderTimeline(); } };
+    const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); if(!moved) selectSeg(idx); };
+    window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up);
   };
 }
 function ovBarInteract(b,hL,hR,o,total){
@@ -741,11 +756,16 @@ function ovBarInteract(b,hL,hR,o,total){
   b.onclick=ev=>{ ev.stopPropagation(); ovSel=o.id; if(!ovEdit) openOvModal(); else { renderOvList(); buildOvEditor(); } renderOverlays(playhead); renderTracks(); };
   const drag=mode=>ev=>{ ev.stopPropagation(); ev.preventDefault(); ovSel=o.id; const x0=ev.clientX, s0=o.start, d0=+o.dur||0, w=areaW();
     const mv=e=>{ const dt=(e.clientX-x0)/w*total;
-      if(mode==='move') o.start=Math.max(0,s0+dt);
+      if(mode==='move'){ o.start=Math.max(0,s0+dt);
+        // vertical: move to another channel (reorder layer z-order)
+        const lanes=[...document.querySelectorAll('#tlTracks .trk[data-ovid]')];
+        let ti=lanes.length-1; for(let i=0;i<lanes.length;i++){ const r=lanes[i].getBoundingClientRect(); if(e.clientY<r.top+r.height/2){ ti=i; break; } }
+        const disp=EDL.overlays.slice().reverse(); const from=disp.findIndex(x=>x.id===o.id);
+        if(from>=0 && ti!==from){ disp.splice(ti,0,disp.splice(from,1)[0]); EDL.overlays=disp.slice().reverse(); } }
       else if(mode==='r') o.dur=Math.max(0.2,d0+dt);
       else { const ns=Math.max(0,Math.min(s0+dt,s0+d0-0.2)); o.dur=d0+(s0-ns); o.start=ns; }
       renderTracks(); renderOverlays(playhead); if(ovEdit&&ovSel===o.id) buildOvEditor(); };
-    const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); };
+    const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); if(ovEdit) renderOvList(); };
     window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up); };
   b.onpointerdown=drag('move'); hL.onpointerdown=drag('l'); hR.onpointerdown=drag('r');
 }

@@ -59,7 +59,8 @@
       "dur": 2.6,
       "cap": "when the joints come out",
       "zoom": 1,
-      "anchor": "center"
+      "anchor": "center",
+      "fadeIn": 1.2
     },
     {
       "id": "J22p8Etnkrc",
@@ -113,29 +114,20 @@
   "name": "Rollies Hero",
   "overlays": [
     {
-      "id": "ov1781648032959555",
-      "type": "image",
-      "src": "assets/logo.png",
-      "scale": 0.77,
-      "x": 0.5142857142857142,
-      "y": 0.12857142857142856,
-      "start": 24.54,
-      "dur": 3
-    },
-    {
-      "id": "ov1781648085764529",
-      "type": "shape",
-      "w": 0.87,
-      "h": 0.18,
-      "fill": "#ffffff",
-      "opacity": 1,
-      "radius": 0.04,
-      "stroke": "#ffffff",
-      "strokeW": 0,
-      "x": 0.5174603174603175,
-      "y": 0.14107142857142857,
-      "start": 26.05,
-      "dur": 3
+      "id": "t1",
+      "type": "text",
+      "text": "FADE TEST",
+      "font": "cooper",
+      "color": "#ffffff",
+      "size": 0.08,
+      "x": 0.5,
+      "y": 0.3,
+      "start": 3.0,
+      "dur": 3.0,
+      "fadeIn": 1.0,
+      "fadeOut": 1.0,
+      "button": false,
+      "bg": "#f07830"
     }
   ]
 }
