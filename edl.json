@@ -108,5 +108,6 @@
       "zoom": 1.0,
       "anchor": "center"
     }
-  ]
+  ],
+  "overlays": []
 }

@@ -54,6 +54,7 @@
                      padding:.05em .15em; -webkit-text-stroke:2px rgba(0,0,0,.9); paint-order:stroke fill; }
   #endcard { position:absolute; inset:0; background:#111; display:none; flex-direction:column;
              align-items:center; justify-content:center; gap:2%; }
+  #overlayLayer { position:absolute; inset:0; pointer-events:none; }
   #endcard img#ecLogo { width:80%; height:auto; display:none; margin-bottom:5%; }
   #endcard .l1 { color:#fff; font-weight:800; } #endcard .l2 { color:var(--acc); font-weight:800; }
   #endcard .l3 { color:#111; background:var(--acc); font-weight:800; padding:.25em .7em; border-radius:7px; margin-top:4%; }
@@ -104,9 +105,10 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.2.2</span>
+  <span class="ver" id="appVer">v1.3.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
+  <button id="btnOverlays">✚ Overlays</button>
   <button class="ghost" id="btnReload">Reload clips</button>
   <button id="btnSave">Save</button>
   <button class="primary" id="btnRender">▶ Render MP4</button>
@@ -141,6 +143,7 @@
       <!-- one <video class="clipvid"> per clip is injected here -->
       <div id="capOverlay"><span></span></div>
       <div id="endcard"><img id="ecLogo" alt=""><div id="ecLines"></div></div>
+      <div id="overlayLayer"></div>
     </div>
     <div class="transport">
       <button id="btnPlayTl" class="primary">▶ Play timeline</button>
@@ -213,6 +216,21 @@
       <hr>
       <div class="sec">Text lines</div>
       <div id="ecLinesEditor" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+  </div>
+</div>
+
+<div id="ovModal" class="modal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-hd"><b>✚ Overlays</b><button class="mini" id="ovClose">✕ Done</button></div>
+    <div class="modal-body">
+      <div><button class="mini" id="ovAddText">＋ Text</button> <button class="mini" id="ovAddImage">＋ Image</button>
+        <input type="file" id="ovFile" accept="image/*" style="display:none"></div>
+      <div style="font-size:11px;color:var(--mut)">Tip: scrub the timeline to where an element should appear, then drag it on the preview to position it.</div>
+      <hr>
+      <div id="ovList" style="display:flex;flex-direction:column;gap:6px"></div>
+      <hr>
+      <div id="ovEditor"></div>
     </div>
   </div>
 </div>
@@ -421,6 +439,7 @@ function seekToPlayhead(){
       if(v){ showVid(last.id); applyFraming(last,v); try{v.currentTime=(+last.in||0)+(+last.dur||0)+(playhead-acc);}catch(e){} } }
     buildEndcard(ec); $('#endcard').style.display='flex';
   } else { $('#endcard').style.display='none'; }
+  renderOverlays(playhead);
 }
 
 // Play one segment's [in, in+dur] using that clip's OWN preloaded, muted element.
@@ -475,6 +494,7 @@ function playTimeline(){
         else if(ec.bg.mode==='transparent'){ const a=activeVid(); if(a&&a.paused){ const p=a.play(); if(p&&p.catch)p.catch(()=>{}); } }
       }
       if(e>=total){ playhead=0; stop(); $('#scrub').value=0; $('#tlTime').textContent='0.0 / '+fmt(total)+'s'; }
+      renderOverlays(playhead);
       return;
     }
     let idx=0; for(let k=0;k<bounds.length;k++){ if(e>=bounds[k].a && e<bounds[k].b){ idx=k; break; } if(k===bounds.length-1) idx=k; }
@@ -489,6 +509,7 @@ function playTimeline(){
       if(Math.abs(v.currentTime-want)>0.35){ try{v.currentTime=Math.max(0,want);}catch(_){} }
       if(v.paused){ const p=v.play(); if(p&&p.catch)p.catch(()=>{}); }
     }
+    renderOverlays(playhead);
   };
   clearInterval(clockTimer); clockTimer=setInterval(tick, 33); tick();   // setInterval keeps running even if the tab loses focus
 }
@@ -554,6 +575,81 @@ $('#ecLogoScale').oninput=()=>{ normEndcard(EDL.settings).logo.scale=parseFloat(
 $('#ecLogoX').oninput=()=>{ normEndcard(EDL.settings).logo.x=parseFloat($('#ecLogoX').value); ecRefresh(); };
 $('#ecLogoY').oninput=()=>{ normEndcard(EDL.settings).logo.y=parseFloat($('#ecLogoY').value); ecRefresh(); };
 
+/* ---------- overlays (free text / image elements) ---------- */
+let ovEdit=false, ovSel=null;
+function renderOverlays(time){
+  const layer=$('#overlayLayer'); if(!layer||!EDL) return; layer.innerHTML='';
+  const W=$('#stageWrap').clientWidth||360;
+  (EDL.overlays||[]).forEach(o=>{
+    const active = time>=o.start && time < o.start+(+o.dur||0);
+    if(!(active || (ovEdit && o.id===ovSel))) return;
+    let el;
+    if(o.type==='image'){ el=document.createElement('img'); el.src=o.src?('/'+encodeURI(o.src)):''; el.style.width=((o.scale||0.3)*W)+'px'; el.style.height='auto'; }
+    else { el=document.createElement('div'); el.textContent=o.text||''; el.style.fontFamily=FONTS[o.font]||FONTS.cooper; el.style.fontWeight='800'; el.style.lineHeight='1';
+      el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.color=o.color||'#fff'; el.style.whiteSpace='nowrap';
+      if(o.button){ el.style.background=o.bg||'#f07830'; const p=(o.size||0.06)*W; el.style.padding=(p*0.38)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.3)+'px'; }
+      else el.style.textShadow='0 2px 6px rgba(0,0,0,.6)'; }
+    el.style.position='absolute'; el.style.left=((o.x||0.5)*100)+'%'; el.style.top=((o.y||0.5)*100)+'%'; el.style.transform='translate(-50%,-50%)';
+    if(ovEdit){ el.style.pointerEvents='auto'; el.style.cursor='move'; if(o.id===ovSel){ el.style.outline='2px dashed #5b8cff'; el.style.outlineOffset='3px'; } dragify(el,o); }
+    layer.appendChild(el);
+  });
+}
+function dragify(el,o){ el.onpointerdown=ev=>{ ev.preventDefault(); ovSel=o.id; renderOvList(); buildOvEditor();
+  const wrap=$('#stageWrap').getBoundingClientRect();
+  const move=e=>{ o.x=Math.max(0,Math.min(1,(e.clientX-wrap.left)/wrap.width)); o.y=Math.max(0,Math.min(1,(e.clientY-wrap.top)/wrap.height)); renderOverlays(playhead); };
+  const up=()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); };
+  window.addEventListener('pointermove',move); window.addEventListener('pointerup',up); }; }
+function uid(){ return 'ov'+Date.now()+Math.floor(Math.random()*1000); }
+function openOvModal(){ stop(); ovEdit=true; $('#ovModal').style.display='flex'; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
+function closeOvModal(){ ovEdit=false; ovSel=null; $('#ovModal').style.display='none'; renderOverlays(playhead); }
+function renderOvList(){
+  const box=$('#ovList'); if(!box) return; box.innerHTML='';
+  const ovs=EDL.overlays||[];
+  if(!ovs.length){ box.innerHTML='<div style="color:var(--mut);font-size:12px">No overlays yet — add Text or Image.</div>'; return; }
+  ovs.forEach(o=>{ const row=document.createElement('div'); row.className='ecline'; if(o.id===ovSel) row.style.borderColor='var(--acc2)';
+    const lab=o.type==='image'?('🖼 '+(o.src||'').split('/').pop()):('🅣 '+((o.text||'').slice(0,16)||'text'));
+    row.innerHTML=`<span class="ovsel" style="flex:1;cursor:pointer">${lab} <span style="color:var(--mut)">@${fmt(o.start)}–${fmt(o.start+(+o.dur||0))}s</span></span><button class="mini ovdel">✕</button>`;
+    row.querySelector('.ovsel').onclick=()=>{ ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
+    row.querySelector('.ovdel').onclick=()=>{ EDL.overlays=EDL.overlays.filter(x=>x.id!==o.id); if(ovSel===o.id) ovSel=null; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
+    box.appendChild(row); });
+}
+function buildOvEditor(){
+  const box=$('#ovEditor'); if(!box) return; const o=(EDL.overlays||[]).find(x=>x.id===ovSel);
+  if(!o){ box.innerHTML='<div style="color:var(--mut);font-size:12px">Select an overlay to edit it.</div>'; return; }
+  let h=`<div class="sec">Timing</div><div><label>Start <input type="number" id="ovStart" step="0.1" style="width:58px" value="${o.start}"> s</label>
+    <label>Dur <input type="number" id="ovDur" step="0.1" style="width:58px" value="${o.dur}"> s</label>
+    <button class="mini" id="ovHere">⤓ at playhead</button></div>`;
+  if(o.type==='text'){
+    h+=`<div class="sec">Text</div><div><input type="text" id="ovText" style="width:100%" value="${(o.text||'').replace(/"/g,'&quot;')}"></div>
+      <div><label>Font <select id="ovFont"><option value="cooper">Cooper</option><option value="meowijuana">Meowijuana</option><option value="arial">Arial</option></select></label>
+      <label>Color <input type="color" id="ovColor" value="${o.color}"></label></div>
+      <div><label>Size <input type="range" id="ovSize" min="0.02" max="0.18" step="0.005" value="${o.size}"></label></div>
+      <div><label class="ck"><input type="checkbox" id="ovBtn" ${o.button?'checked':''}> button</label> <input type="color" id="ovBg" value="${o.bg}" title="button color"></div>`;
+  } else {
+    h+=`<div class="sec">Image</div><div><label>Size <input type="range" id="ovScale" min="0.05" max="1" step="0.01" value="${o.scale}"></label>
+      <button class="mini" id="ovReplace">Replace…</button></div>`;
+  }
+  h+=`<div style="color:var(--mut);font-size:11px;margin-top:6px">Drag the element on the preview to position it.</div>`;
+  box.innerHTML=h;
+  if($('#ovFont')) $('#ovFont').value=o.font;
+  const upd=()=>{ o.start=parseFloat($('#ovStart').value)||0; o.dur=parseFloat($('#ovDur').value)||1;
+    if(o.type==='text'){ o.text=$('#ovText').value; o.font=$('#ovFont').value; o.color=$('#ovColor').value; o.size=parseFloat($('#ovSize').value)||0.06; o.button=$('#ovBtn').checked; o.bg=$('#ovBg').value; }
+    else o.scale=parseFloat($('#ovScale').value)||0.3;
+    renderOverlays(playhead); renderOvList(); };
+  box.querySelectorAll('input,select').forEach(el=>{ el.oninput=upd; el.onchange=upd; });
+  if($('#ovHere')) $('#ovHere').onclick=()=>{ o.start=Math.round(playhead*100)/100; $('#ovStart').value=o.start; renderOvList(); renderOverlays(playhead); };
+  if($('#ovReplace')) $('#ovReplace').onclick=()=>pickImage(src=>{ o.src=src; renderOverlays(playhead); renderOvList(); });
+}
+function pickImage(cb){ const f=$('#ovFile'); f.onchange=()=>{ const file=f.files[0]; if(!file) return; const r=new FileReader();
+  r.onload=async()=>{ try{ const res=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:file.name,data:r.result})}); if(res.ok) cb(res.src); else toast('Upload failed'); }catch(e){ toast('Upload failed'); } f.value=''; };
+  r.readAsDataURL(file); }; f.click(); }
+function addTextOverlay(){ EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'text',text:'New text',font:'cooper',color:'#ffffff',size:0.07,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3,button:false,bg:'#f07830'};
+  EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
+function addImageOverlay(){ pickImage(src=>{ EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'image',src,scale:0.3,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
+  EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }); }
+$('#btnOverlays').onclick=openOvModal; $('#ovClose').onclick=closeOvModal;
+$('#ovAddText').onclick=addTextOverlay; $('#ovAddImage').onclick=addImageOverlay;
+
 /* ---------- save / render ---------- */
 $('#btnSave').onclick=()=>projSave();
 $('#btnRender').onclick=async()=>{ stop(); const b=$('#btnRender'); b.disabled=true; b.textContent='⏳ Rendering…';
@@ -578,6 +674,7 @@ function applyEDL(edl){
   if(!s.canvas) s.canvas='9x16'; if(s.captionSize==null) s.captionSize=0.058;
   if(s.captionY==null) s.captionY=0.62;
   if(!EDL.segments) EDL.segments=[];
+  if(!Array.isArray(EDL.overlays)) EDL.overlays=[];
   normEndcard(s);   // migrate/normalize end-card settings
   const ms=$('#setMusic'); ms.innerHTML=MAN.music.map(m=>`<option ${m===s.music?'selected':''}>${m}</option>`).join('');
   if(!MAN.music.includes(s.music)) s.music=MAN.music[0]||'';
@@ -585,6 +682,7 @@ function applyEDL(edl){
   sel = EDL.segments.length?0:-1;
   renderBin(); renderTimeline(); sizeStage();
   [...new Set(EDL.segments.map(s=>s.id))].forEach(getVid);  // preload timeline clips
+  renderOverlays(playhead||0);
   if(sel>=0) selectSeg(0); else stop();
 }
 function setCur(p){ curProj=p; $('#projCur').textContent = p ? ('● '+p.name) : '○ unsaved'; }

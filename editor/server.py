@@ -14,6 +14,7 @@ MUSIC_DIR = os.path.join(PROJ, "sources", "music")
 EXPORTS = os.path.join(PROJ, "exports")
 EDL_PATH = os.path.join(PROJ, "edl.json")
 PROJECTS = os.path.join(PROJ, "projects")
+ASSETS = os.path.join(PROJ, "assets")
 
 _BIN = r"C:\Users\Jason\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin"
 FFMPEG = os.path.join(_BIN, "ffmpeg.exe")
@@ -312,6 +313,68 @@ def build_endcard_image(ec, W, H, out_path):
     img.save(out_path)
 
 
+def list_assets():
+    os.makedirs(ASSETS, exist_ok=True)
+    out = []
+    for f in sorted(os.listdir(ASSETS)):
+        if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
+            out.append("assets/" + f)
+    return out
+
+
+def apply_overlays(silent, overlays, W, H, tmp):
+    """Composite free-floating text/image overlays over the full timeline (global time)."""
+    overlays = [o for o in (overlays or []) if isinstance(o, dict)]
+    text_ovs = [o for o in overlays if o.get("type") == "text" and (o.get("text") or "").strip()]
+    img_ovs = [o for o in overlays if o.get("type") == "image" and o.get("src")]
+    if not text_ovs and not img_ovs:
+        return silent, None
+    inputs = ["-i", silent]
+    fc = []
+    last = "0:v"
+    if text_ovs:
+        dts = []
+        for j, o in enumerate(text_ovs):
+            tf = os.path.join(tmp, f"ov_{j}.txt")
+            with open(tf, "w", encoding="utf-8") as fh:
+                fh.write(o["text"])
+            ff = esc_path(_font_path(o.get("font", "cooper")))
+            size = max(8, int(W * float(o.get("size", 0.06))))
+            s = float(o.get("start", 0)); e = s + float(o.get("dur", 3))
+            ox, oy = float(o.get("x", 0.5)), float(o.get("y", 0.5))
+            col = (o.get("color", "#ffffff") or "#ffffff").replace("#", "0x")
+            common = (f"fontfile='{ff}':textfile='{esc_path(tf)}':fontcolor={col}:fontsize={size}:"
+                      f"x=w*{ox}-text_w/2:y=h*{oy}-text_h/2:enable='between(t,{s},{e})'")
+            if o.get("button"):
+                bgc = (o.get("bg", "#f07830") or "#f07830").replace("#", "0x")
+                dts.append(f"drawtext={common}:box=1:boxcolor={bgc}:boxborderw={int(size*0.4)}")
+            else:
+                dts.append(f"drawtext={common}:borderw=6:bordercolor=black@0.6")
+        fc.append(f"[{last}]" + ",".join(dts) + "[vt]"); last = "vt"
+    ii = 1
+    for k, o in enumerate(img_ovs):
+        path = os.path.join(PROJ, *o["src"].split("/"))
+        if not os.path.exists(path):
+            continue
+        inputs += ["-i", path]
+        iw = max(1, int(W * float(o.get("scale", 0.3))))
+        s = float(o.get("start", 0)); e = s + float(o.get("dur", 3))
+        ox, oy = float(o.get("x", 0.5)), float(o.get("y", 0.5))
+        fc.append(f"[{ii}:v]scale={iw}:-1[oi{k}]")
+        fc.append(f"[{last}][oi{k}]overlay=x=W*{ox}-w/2:y=H*{oy}-h/2:enable='between(t,{s},{e})'[vo{k}]")
+        last = f"vo{k}"; ii += 1
+    if not fc:
+        return silent, None
+    out = os.path.join(tmp, "overlaid.mp4")
+    cmd = ([FFMPEG, "-y", "-loglevel", "error"] + inputs + ["-filter_complex", ";".join(fc), "-map", f"[{last}]"]
+           + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p",
+              "-r", "30", "-video_track_timescale", "90000", "-an", out])
+    r = run(cmd)
+    if r.returncode != 0:
+        return None, r.stderr[-1500:]
+    return out, None
+
+
 def render(edl):
     s = edl.get("settings", {})
     canvas = s.get("canvas", "9x16")
@@ -393,6 +456,10 @@ def render(edl):
         r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", listf, "-c", "copy", silent])
         if r.returncode != 0:
             return {"ok": False, "log": f"concat failed:\n{r.stderr[-1500:]}"}
+        # free-floating overlays (text/images) over the whole timeline
+        vid_src, ov_err = apply_overlays(silent, edl.get("overlays", []), W, H, tmp)
+        if vid_src is None:
+            return {"ok": False, "log": f"overlays failed:\n{ov_err}"}
         os.makedirs(EXPORTS, exist_ok=True)
         out = os.path.join(EXPORTS, f"Meowi_rollies_hero_{canvas}.mp4")
         music = os.path.join(MUSIC_DIR, s.get("music", "1076_smile.mp3"))
@@ -400,11 +467,11 @@ def render(edl):
         if os.path.exists(music):
             af = (f"[1:a]atrim=0:{total},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.3,"
                   f"afade=t=out:st={fade}:d=1,loudnorm=I=-16:TP=-1.5:LRA=11[a]")
-            r = run([FFMPEG, "-y", "-loglevel", "error", "-i", silent, "-i", music,
+            r = run([FFMPEG, "-y", "-loglevel", "error", "-i", vid_src, "-i", music,
                      "-filter_complex", af, "-map", "0:v", "-map", "[a]",
                      "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest", out])
         else:
-            r = run([FFMPEG, "-y", "-loglevel", "error", "-i", silent,
+            r = run([FFMPEG, "-y", "-loglevel", "error", "-i", vid_src,
                      "-c:v", "copy", "-movflags", "+faststart", out])
         if r.returncode != 0:
             return {"ok": False, "log": f"mux failed:\n{r.stderr[-1500:]}"}
@@ -457,7 +524,7 @@ class Handler(BaseHTTPRequestHandler):
                     logo = "/" + cand
                     break
             return self._json({"clips": clips, "music": list_music(),
-                               "canvases": list(CANVAS.keys()), "logo": logo})
+                               "canvases": list(CANVAS.keys()), "logo": logo, "assets": list_assets()})
         if path == "/api/edl":
             return self._json(load_edl())
         if path == "/api/projects":
@@ -504,6 +571,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(render(data))
             except Exception as e:
                 return self._json({"ok": False, "log": repr(e)}, 500)
+        if path == "/api/upload":
+            import base64
+            name = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(data.get("name", "upload"))) or "upload.png"
+            b64 = data.get("data", "")
+            if "," in b64:
+                b64 = b64.split(",", 1)[1]
+            try:
+                raw = base64.b64decode(b64)
+            except Exception:
+                return self._json({"ok": False, "log": "bad image data"}, 400)
+            os.makedirs(ASSETS, exist_ok=True)
+            with open(os.path.join(ASSETS, name), "wb") as f:
+                f.write(raw)
+            return self._json({"ok": True, "src": "assets/" + name})
         self.send_error(404)
 
     def _serve_file(self, full):

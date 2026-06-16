@@ -33,3 +33,6 @@ desktop.ini
 
 # brand fonts (licensed)
 editor/fonts/
+
+# uploaded overlay images
+assets/
