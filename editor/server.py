@@ -409,6 +409,7 @@ class Handler(BaseHTTPRequestHandler):
     def _serve_file(self, full):
         ext = os.path.splitext(full)[1].lower()
         ctype = CTYPE.get(ext, "application/octet-stream")
+        nocache = ext in (".html", ".js", ".json", ".css")
         try:
             size = os.path.getsize(full)
         except OSError:
@@ -446,6 +447,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Accept-Ranges", "bytes")
+        if nocache:
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Content-Length", str(size))
         self.end_headers()
         with open(full, "rb") as f:
