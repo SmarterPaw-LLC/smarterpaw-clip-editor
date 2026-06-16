@@ -86,7 +86,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.0.3</span>
+  <span class="ver" id="appVer">v1.0.5</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnReload">Reload clips</button>
@@ -283,8 +283,8 @@ function loadSegIntoTrim(){
 
 /* ---------- playback ---------- */
 const music = new Audio();
-let tlPlaying=false, pbToken=0, segRaf=null, clockRaf=null, segTO=null;
-function stop(){ tlPlaying=false; pbToken++; cancelAnimationFrame(segRaf); cancelAnimationFrame(clockRaf); clearTimeout(segTO);
+let tlPlaying=false, pbToken=0, segRaf=null, clockRaf=null, segTO=null, clockTimer=null;
+function stop(){ tlPlaying=false; pbToken++; cancelAnimationFrame(segRaf); cancelAnimationFrame(clockRaf); clearInterval(clockTimer); clearTimeout(segTO);
   const v=activeVid(); if(v){ v.onseeked=null; try{v.pause();}catch(e){} } music.pause();
   $('#endcard').style.display='none'; $('#btnPlayTl').textContent='▶ Play timeline'; }
 
@@ -327,12 +327,14 @@ function playTimeline(){
     if(!tlPlaying) return;
     const e=(performance.now()-t0)/1000;
     $('#tlTime').textContent=fmt(Math.min(e,total))+' / '+fmt(total)+'s';
+    $('#scrub').max=total; $('#scrub').value=Math.min(e,total);   // scrub = smooth timeline playhead
+    $('#vidTime').textContent=fmt(Math.min(e,total))+'s';
     if(e>=vidTotal){                                   // end-card phase
       if(curIdx!==999){ curIdx=999; const a=activeVid(); if(a){try{a.pause();}catch(_){}} showCap('');
         $('#endcard .l2').textContent=EDL.settings.endcard[1]||''; $('#endcard .l3').textContent=EDL.settings.endcard[2]||'';
         $('#endcard').style.display='flex'; }
-      if(e>=total){ stop(); return; }
-      clockRaf=requestAnimationFrame(tick); return;
+      if(e>=total){ stop(); }
+      return;
     }
     let idx=0; for(let k=0;k<bounds.length;k++){ if(e>=bounds[k].a && e<bounds[k].b){ idx=k; break; } if(k===bounds.length-1) idx=k; }
     const bd=bounds[idx], s=bd.s, v=getVid(s.id), want=(+s.in||0)+(e-bd.a);
@@ -346,10 +348,8 @@ function playTimeline(){
       if(Math.abs(v.currentTime-want)>0.35){ try{v.currentTime=Math.max(0,want);}catch(_){} }
       if(v.paused){ const p=v.play(); if(p&&p.catch)p.catch(()=>{}); }
     }
-    const a=activeVid(); if(a){ $('#scrub').value=a.currentTime; $('#vidTime').textContent=fmt(a.currentTime)+'s'; }
-    clockRaf=requestAnimationFrame(tick);
   };
-  clockRaf=requestAnimationFrame(tick);
+  clearInterval(clockTimer); clockTimer=setInterval(tick, 33); tick();   // setInterval keeps running even if the tab loses focus
 }
 
 /* ---------- trimmer controls ---------- */
