@@ -23,6 +23,11 @@
   button.primary { background:var(--acc); color:#1a1300; border-color:var(--acc); font-weight:700; }
   button.ghost { background:transparent; }
   button.mini { padding:3px 7px; font-size:12px; }
+  .arbar { display:flex; align-items:center; gap:6px; }
+  .arbar .arlbl { font-size:11px; color:var(--mut); text-transform:uppercase; letter-spacing:.5px; margin-right:2px; }
+  .arbtn { background:var(--panel2); border:1px solid var(--line); color:var(--txt); border-radius:6px; padding:4px 11px; cursor:pointer; font-size:12px; font-weight:700; }
+  .arbtn.on { background:var(--acc2); border-color:var(--acc2); color:#fff; }
+  .arbar .ardim { font-size:11px; color:var(--mut); margin-left:6px; font-variant-numeric:tabular-nums; }
   select, input[type=text], input[type=number] { background:var(--panel2); color:var(--txt);
            border:1px solid var(--line); border-radius:6px; padding:6px 8px; font-size:13px; }
   .projbar { display:flex; align-items:center; gap:6px; padding:7px 16px; background:var(--panel);
@@ -62,7 +67,7 @@
   .clip .meta span { color:var(--mut); font-size:11px; }
   /* center */
   .center { display:flex; flex-direction:column; align-items:center; gap:10px; padding:12px; overflow:auto; }
-  #stageWrap { position:relative; background:#000; border-radius:10px; overflow:hidden; box-shadow:0 6px 24px #0008; }
+  #stageWrap { position:relative; background:#000; border-radius:10px; overflow:hidden; box-shadow:0 6px 24px #0008; flex:none; }
   #stage { display:block; width:100%; height:100%; }
   .clipvid { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:none; background:#000; }
   #capOverlay { position:absolute; left:7%; right:7%; text-align:center; color:#fff; font-weight:800;
@@ -129,7 +134,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.7.1</span>
+  <span class="ver" id="appVer">v1.8.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button id="btnOverlays">✚ Overlays</button>
@@ -164,6 +169,13 @@
 
   <!-- PREVIEW / TRIMMER -->
   <div class="col center">
+    <div class="arbar">
+      <span class="arlbl">Aspect</span>
+      <button class="arbtn" data-ar="9x16">9:16</button>
+      <button class="arbtn" data-ar="4x5">4:5</button>
+      <button class="arbtn" data-ar="16x9">16:9</button>
+      <span class="ardim" id="arDim"></span>
+    </div>
     <div id="stageWrap">
       <!-- one <video class="clipvid"> per clip is injected here -->
       <div id="capOverlay"><span></span></div>
@@ -314,7 +326,7 @@ function fmt(n){ return (Math.round(n*10)/10).toFixed(1); }
 
 function sizeStage(){
   const [aw,ah]=ASPECT[EDL.settings.canvas]||[9,16];
-  const wrap=$('#stageWrap'); const maxH=Math.max(220, Math.min(520, window.innerHeight-470)); const maxW=480;
+  const wrap=$('#stageWrap'); const maxH=Math.max(180, Math.min(440, window.innerHeight-540)); const maxW=480;
   let h=maxH, w=h*aw/ah; if(w>maxW){ w=maxW; h=w*ah/aw; }
   wrap.style.width=w+'px'; wrap.style.height=h+'px';
   // caption sizing approximates render: fontsize = captionSize * canvasWidth, scaled to stage width
@@ -583,7 +595,13 @@ $('#btnAddSel').onclick=()=>{ const id=$('#btnAddSel').dataset.id || (sel>=0&&ED
   const v=activeVid(); EDL.segments.push({id, in: v?Math.round(v.currentTime*100)/100:0, dur:2.0, cap:'', zoom:1, anchor:'center'}); sel=EDL.segments.length-1; renderTimeline(); selectSeg(sel); toast('Segment added'); };
 
 /* ---------- settings ---------- */
-$('#setCanvas').onchange=e=>{ EDL.settings.canvas=e.target.value; sizeStage(); updateTotal(); };
+const CANVAS_PX={'9x16':[1080,1920],'4x5':[1080,1350],'16x9':[1920,1080]};
+function chooseCanvas(c){ EDL.settings.canvas=c; if($('#setCanvas')) $('#setCanvas').value=c;
+  document.querySelectorAll('.arbtn').forEach(b=>b.classList.toggle('on', b.dataset.ar===c));
+  const px=CANVAS_PX[c]||[1080,1920]; if($('#arDim')) $('#arDim').textContent=px[0]+'×'+px[1];
+  sizeStage(); updateTotal(); if(sel>=0&&EDL.segments[sel]) applyFraming(EDL.segments[sel]); renderOverlays(playhead); renderTracks(); }
+$('#setCanvas').onchange=e=>chooseCanvas(e.target.value);
+document.querySelectorAll('.arbtn').forEach(b=>b.onclick=()=>chooseCanvas(b.dataset.ar));
 $('#setMusic').onchange=e=>{ EDL.settings.music=e.target.value; };
 
 /* ---------- end-card modal ---------- */
@@ -788,19 +806,30 @@ function clipDrag(b,idx){
     window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up);
   };
 }
+function snapPoints(self){            // times that overlay edges snap to
+  const pts=[0]; let acc=0;
+  EDL.segments.forEach(sg=>{ pts.push(acc); acc+=Math.max(0.05,+sg.dur||1); }); pts.push(acc);
+  pts.push(totalDur()); pts.push(playhead);
+  (EDL.overlays||[]).forEach(x=>{ if(x.id!==self.id){ pts.push(+x.start||0); pts.push((+x.start||0)+(+x.dur||0)); } });
+  return pts;
+}
+function snap(t,pts,th){ let best=t,bd=th; for(const p of pts){ const d=Math.abs(p-t); if(d<bd){ bd=d; best=p; } } return best; }
 function ovBarInteract(b,hL,hR,o,total){
   const areaW=()=>($('#tlTracks').getBoundingClientRect().width||1);
   b.onclick=ev=>{ ev.stopPropagation(); ovSel=o.id; if(!ovEdit) openOvModal(); else { renderOvList(); buildOvEditor(); } renderOverlays(playhead); renderTracks(); };
   const drag=mode=>ev=>{ ev.stopPropagation(); ev.preventDefault(); ovSel=o.id; const x0=ev.clientX, s0=o.start, d0=+o.dur||0, w=areaW();
-    const mv=e=>{ const dt=(e.clientX-x0)/w*total;
-      if(mode==='move'){ o.start=Math.max(0,s0+dt);
-        // vertical: move to another channel (reorder layer z-order)
-        const lanes=[...document.querySelectorAll('#tlTracks .trk[data-ovid]')];
+    const th=Math.max(0.12, total*0.012);   // snap threshold (seconds)
+    const mv=e=>{ const dt=(e.clientX-x0)/w*total; const pts=snapPoints(o);
+      if(mode==='move'){ let ns=Math.max(0,s0+dt);
+        const ss=snap(ns,pts,th), se=snap(ns+d0,pts,th);          // snap whichever edge is closer
+        if(ss!==ns && (se===ns+d0 || Math.abs(ss-ns)<=Math.abs(se-(ns+d0)))) ns=ss; else if(se!==ns+d0) ns=se-d0;
+        o.start=Math.max(0,ns);
+        const lanes=[...document.querySelectorAll('#tlTracks .trk[data-ovid]')];   // vertical: change channel
         let ti=lanes.length-1; for(let i=0;i<lanes.length;i++){ const r=lanes[i].getBoundingClientRect(); if(e.clientY<r.top+r.height/2){ ti=i; break; } }
         const disp=EDL.overlays.slice().reverse(); const from=disp.findIndex(x=>x.id===o.id);
         if(from>=0 && ti!==from){ disp.splice(ti,0,disp.splice(from,1)[0]); EDL.overlays=disp.slice().reverse(); } }
-      else if(mode==='r') o.dur=Math.max(0.2,d0+dt);
-      else { const ns=Math.max(0,Math.min(s0+dt,s0+d0-0.2)); o.dur=d0+(s0-ns); o.start=ns; }
+      else if(mode==='r'){ let ne=snap(s0+d0+dt,pts,th); o.dur=Math.max(0.2, ne-o.start); }
+      else { let ns=snap(s0+dt,pts,th); ns=Math.max(0,Math.min(ns,s0+d0-0.2)); o.dur=d0+(s0-ns); o.start=ns; }
       renderTracks(); renderOverlays(playhead); if(ovEdit&&ovSel===o.id) buildOvEditor(); };
     const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); if(ovEdit) renderOvList(); };
     window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up); };
@@ -863,6 +892,8 @@ function applyEDL(edl){
   const ms=$('#setMusic'); ms.innerHTML=MAN.music.map(m=>`<option ${m===s.music?'selected':''}>${m}</option>`).join('');
   if(!MAN.music.includes(s.music)) s.music=MAN.music[0]||'';
   $('#setMusic').value=s.music; $('#setCanvas').value=s.canvas;
+  document.querySelectorAll('.arbtn').forEach(b=>b.classList.toggle('on', b.dataset.ar===s.canvas));
+  const _px=CANVAS_PX[s.canvas]||[1080,1920]; if($('#arDim')) $('#arDim').textContent=_px[0]+'×'+_px[1];
   sel = EDL.segments.length?0:-1;
   renderBin(); renderTimeline(); sizeStage();
   [...new Set(EDL.segments.map(s=>s.id))].forEach(getVid);  // preload timeline clips
