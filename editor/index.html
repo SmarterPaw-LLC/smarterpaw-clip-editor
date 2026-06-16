@@ -134,7 +134,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.8.0</span>
+  <span class="ver" id="appVer">v1.8.1</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button id="btnOverlays">✚ Overlays</button>
@@ -488,7 +488,7 @@ function loadSegIntoTrim(){
 const music = new Audio();
 let tlPlaying=false, pbToken=0, segRaf=null, clockRaf=null, segTO=null, clockTimer=null, playhead=0;
 function stop(){ tlPlaying=false; pbToken++; cancelAnimationFrame(segRaf); cancelAnimationFrame(clockRaf); clearInterval(clockTimer); clearTimeout(segTO);
-  const v=activeVid(); if(v){ v.onseeked=null; try{v.pause();}catch(e){} } music.pause();
+  const v=activeVid(); if(v){ v.onseeked=null; try{v.pause();}catch(e){} v.style.opacity=1; } music.pause();
   $('#endcard').style.display='none'; $('#btnPlayTl').textContent='▶ Play timeline'; }   // note: keeps playhead where it stopped
 
 // Show the frame at the current timeline playhead (used when scrubbing while stopped).
@@ -497,7 +497,11 @@ function seekToPlayhead(){
   let acc=0, found=null, off=0;
   for(const s of EDL.segments){ const d=Math.max(0.05,+s.dur||1); if(playhead < acc+d){ found=s; off=playhead-acc; break; } acc+=d; }
   $('#tlTime').textContent=fmt(playhead)+' / '+fmt(totalDur())+'s'; $('#vidTime').textContent=fmt(playhead)+'s';
-  if(found){ const v=getVid(found.id); if(v){ showVid(found.id); applyFraming(found,v); try{v.currentTime=(+found.in||0)+off;}catch(e){} showCap(found.cap); } $('#endcard').style.display='none'; }
+  if(found){ const v=getVid(found.id); if(v){ showVid(found.id); applyFraming(found,v); try{v.currentTime=(+found.in||0)+off;}catch(e){}
+      let op=1; const fi=+found.fadeIn||0, fo=+found.fadeOut||0, dd=+found.dur||0;   // show clip fade while scrubbing
+      if(fi>0 && off<fi) op=Math.max(0,off/fi);
+      if(fo>0 && off>dd-fo) op=Math.min(op,Math.max(0,(dd-off)/fo));
+      v.style.opacity=op; showCap(found.cap); } $('#endcard').style.display='none'; }
   else if(ec.enabled){                                 // playhead is in the end-card region
     showCap('');
     if(ec.bg.mode==='transparent' && EDL.segments.length){ const last=EDL.segments[EDL.segments.length-1]; const v=getVid(last.id);
