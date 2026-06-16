@@ -17,6 +17,8 @@ __pycache__/
 
 # --- Local/editor state ---
 .claude/settings.local.json
+# user's saved project files (auto-seeded from edl.json on first run)
+projects/
 
 # --- OS ---
 Thumbs.db

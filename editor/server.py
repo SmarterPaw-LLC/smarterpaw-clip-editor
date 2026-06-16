@@ -13,6 +13,7 @@ SRC_ROOT = os.path.join(PROJ, "sources", "youtube")
 MUSIC_DIR = os.path.join(PROJ, "sources", "music")
 EXPORTS = os.path.join(PROJ, "exports")
 EDL_PATH = os.path.join(PROJ, "edl.json")
+PROJECTS = os.path.join(PROJ, "projects")
 
 _BIN = r"C:\Users\Jason\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin"
 FFMPEG = os.path.join(_BIN, "ffmpeg.exe")
@@ -133,6 +134,65 @@ def load_edl():
 def save_edl(edl):
     with open(EDL_PATH, "w", encoding="utf-8") as f:
         json.dump(edl, f, indent=2)
+
+
+def slug(name):
+    s = re.sub(r"[^a-zA-Z0-9]+", "-", (name or "").strip().lower()).strip("-")
+    return s or "project"
+
+
+def safe_project(fname):
+    """Return absolute path inside PROJECTS for a *.json filename, or None."""
+    if not fname or not fname.endswith(".json"):
+        return None
+    base = os.path.basename(fname)
+    full = os.path.join(PROJECTS, base)
+    if os.path.dirname(os.path.abspath(full)) != os.path.abspath(PROJECTS):
+        return None
+    return full
+
+
+def list_projects():
+    os.makedirs(PROJECTS, exist_ok=True)
+    out = []
+    for f in sorted(os.listdir(PROJECTS)):
+        if f.endswith(".json"):
+            name = os.path.splitext(f)[0]
+            try:
+                with open(os.path.join(PROJECTS, f), encoding="utf-8") as fh:
+                    name = json.load(fh).get("name", name)
+            except Exception:
+                pass
+            out.append({"file": f, "name": name})
+    return out
+
+
+def load_project(fname):
+    full = safe_project(fname)
+    if not full or not os.path.exists(full):
+        return None
+    with open(full, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_project(name, edl):
+    os.makedirs(PROJECTS, exist_ok=True)
+    edl = dict(edl)
+    edl["name"] = name
+    fname = slug(name) + ".json"
+    with open(os.path.join(PROJECTS, fname), "w", encoding="utf-8") as f:
+        json.dump(edl, f, indent=2)
+    return {"file": fname, "name": name}
+
+
+def seed_projects():
+    os.makedirs(PROJECTS, exist_ok=True)
+    if any(f.endswith(".json") for f in os.listdir(PROJECTS)):
+        return
+    base = load_edl()
+    base["name"] = "Rollies Hero"
+    with open(os.path.join(PROJECTS, "rollies-hero.json"), "w", encoding="utf-8") as f:
+        json.dump(base, f, indent=2)
 
 
 CANVAS = {"9x16": (1080, 1920), "4x5": (1080, 1350), "16x9": (1920, 1080)}
@@ -277,6 +337,15 @@ class Handler(BaseHTTPRequestHandler):
                                "canvases": list(CANVAS.keys())})
         if path == "/api/edl":
             return self._json(load_edl())
+        if path == "/api/projects":
+            return self._json({"projects": list_projects()})
+        if path == "/api/project":
+            qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            fname = (qs.get("file") or [""])[0]
+            p = load_project(fname)
+            if p is None:
+                return self._json({"error": "not found"}, 404)
+            return self._json(p)
         full = self._safe_path(path)
         if full and os.path.isfile(full):
             return self._serve_file(full)
@@ -293,6 +362,19 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/edl":
             save_edl(data)
             return self._json({"ok": True})
+        if path == "/api/project":
+            name = (data.get("name") or "").strip()
+            edl = data.get("edl") or {}
+            if not name:
+                return self._json({"ok": False, "log": "name required"}, 400)
+            res = save_project(name, edl)
+            return self._json({"ok": True, **res})
+        if path == "/api/project/delete":
+            full = safe_project(data.get("file", ""))
+            if full and os.path.exists(full):
+                os.remove(full)
+                return self._json({"ok": True})
+            return self._json({"ok": False, "log": "not found"}, 404)
         if path == "/api/render":
             save_edl(data)
             try:
@@ -351,6 +433,7 @@ def main():
     os.makedirs(EXPORTS, exist_ok=True)
     if not os.path.exists(EDL_PATH):
         save_edl(default_edl())
+    seed_projects()
     srv = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
     print("Meowi editor running at http://127.0.0.1:8765/")
     srv.serve_forever()

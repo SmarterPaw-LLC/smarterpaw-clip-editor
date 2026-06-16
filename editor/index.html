@@ -21,7 +21,13 @@
   button.mini { padding:3px 7px; font-size:12px; }
   select, input[type=text], input[type=number] { background:var(--panel2); color:var(--txt);
            border:1px solid var(--line); border-radius:6px; padding:6px 8px; font-size:13px; }
-  .wrap { display:grid; grid-template-columns:240px 1fr 360px; gap:12px; padding:12px; height:calc(100vh - 53px); }
+  .projbar { display:flex; align-items:center; gap:6px; padding:7px 16px; background:var(--panel);
+             border-bottom:1px solid var(--line); }
+  .projbar .lbl { font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--mut); margin-right:2px; }
+  .projbar .sp { flex:1; }
+  .projbar .cur { font-size:12px; color:var(--acc); font-weight:700; }
+  .projbar select { min-width:160px; }
+  .wrap { display:grid; grid-template-columns:240px 1fr 360px; gap:12px; padding:12px; height:calc(100vh - 99px); }
   .col { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:auto; }
   .col h2 { font-size:12px; text-transform:uppercase; letter-spacing:.6px; color:var(--mut);
             margin:0; padding:10px 12px; position:sticky; top:0; background:var(--panel); border-bottom:1px solid var(--line); z-index:2; }
@@ -83,6 +89,22 @@
   <button id="btnSave">Save</button>
   <button class="primary" id="btnRender">▶ Render MP4</button>
 </header>
+
+<div class="projbar">
+  <span class="lbl">Project</span>
+  <select id="projSelect" title="Saved projects"></select>
+  <button class="mini" id="btnProjLoad">Load</button>
+  <button class="mini" id="btnProjSave" title="Save changes to this project">Save</button>
+  <button class="mini" id="btnProjSaveAs">Save As…</button>
+  <button class="mini" id="btnProjNew">New</button>
+  <button class="mini" id="btnProjDel" title="Delete this project">Delete</button>
+  <span class="sp"></span>
+  <span class="cur" id="projCur">—</span>
+  <span class="sp"></span>
+  <button class="mini" id="btnExport" title="Download this project as a .json file">⬇ Export .json</button>
+  <button class="mini" id="btnImport" title="Load a .json project file from your computer">⬆ Import .json</button>
+  <input type="file" id="fileImport" accept="application/json,.json" style="display:none">
+</div>
 
 <div class="wrap">
   <!-- SOURCE BIN -->
@@ -299,7 +321,7 @@ $('#setMusic').onchange=e=>{ EDL.settings.music=e.target.value; };
 ['setEc1','setEc2','setEc3'].forEach((id,k)=>{ $('#'+id).onchange=()=>{ EDL.settings.endcard[k]=$('#'+id).value; }; });
 
 /* ---------- save / render ---------- */
-$('#btnSave').onclick=async()=>{ await api('/api/edl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(EDL)}); toast('Saved edl.json'); };
+$('#btnSave').onclick=()=>projSave();
 $('#btnRender').onclick=async()=>{ stop(); const b=$('#btnRender'); b.disabled=true; b.textContent='⏳ Rendering…';
   $('#status').textContent='Rendering '+EDL.settings.canvas+'… (this runs ffmpeg, ~10-30s)';
   try{ const r=await api('/api/render',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(EDL)});
@@ -312,19 +334,80 @@ $('#btnPlayTl').onclick=()=>{ if(playing) stop(); else playTimeline(); };
 $('#btnStop').onclick=stop;
 window.addEventListener('resize', ()=>{ if(EDL) sizeStage(); });
 
+/* ---------- projects ---------- */
+let curProj = null; // {file, name} of the currently loaded saved project (null = unsaved)
+
+function applyEDL(edl){
+  EDL = edl || {};
+  if(!EDL.settings) EDL.settings={};
+  const s=EDL.settings;
+  if(!s.endcard) s.endcard=['MEOWIJUANA','CATNIP JOINTS','SHOP NOW'];
+  if(!s.canvas) s.canvas='9x16'; if(s.captionSize==null) s.captionSize=0.058;
+  if(s.captionY==null) s.captionY=0.62; if(s.endcardDur==null) s.endcardDur=2.6;
+  if(!EDL.segments) EDL.segments=[];
+  const ms=$('#setMusic'); ms.innerHTML=MAN.music.map(m=>`<option ${m===s.music?'selected':''}>${m}</option>`).join('');
+  if(!MAN.music.includes(s.music)) s.music=MAN.music[0]||'';
+  $('#setMusic').value=s.music; $('#setCanvas').value=s.canvas;
+  $('#setEc1').value=s.endcard[0]||''; $('#setEc2').value=s.endcard[1]||''; $('#setEc3').value=s.endcard[2]||'';
+  sel = EDL.segments.length?0:-1;
+  renderBin(); renderTimeline(); sizeStage();
+  if(sel>=0) selectSeg(0); else stop();
+}
+function setCur(p){ curProj=p; $('#projCur').textContent = p ? ('● '+p.name) : '○ unsaved'; }
+async function loadProjects(selectFile){
+  const r=await api('/api/projects'); const list=r.projects||[];
+  $('#projSelect').innerHTML=list.map(p=>`<option value="${p.file}">${p.name}</option>`).join('');
+  if(selectFile) $('#projSelect').value=selectFile;
+  return list;
+}
+async function projLoad(file){
+  if(!file) return; stop();
+  const edl=await api('/api/project?file='+encodeURIComponent(file));
+  if(edl.error){ toast('Load failed'); return; }
+  applyEDL(edl); setCur({file, name:edl.name||file.replace(/\.json$/,'')});
+  $('#projSelect').value=file; toast('Loaded “'+(edl.name||file)+'”');
+}
+async function saveAs(name){
+  const r=await api('/api/project',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name, edl:EDL})});
+  if(r.ok){ setCur({file:r.file,name:r.name}); await loadProjects(r.file); toast('Saved “'+r.name+'”'); }
+  else toast('Save failed');
+}
+function projSave(){ if(curProj) saveAs(curProj.name); else projSaveAs(); }
+function projSaveAs(){ const n=prompt('Save project as:', curProj?curProj.name+' copy':'New Project'); if(n&&n.trim()) saveAs(n.trim()); }
+function projNew(){ if(!confirm('Start a new blank timeline? Unsaved changes will be lost.')) return;
+  applyEDL({name:'', settings:{canvas:EDL.settings.canvas||'9x16', music:MAN.music[0]||'', endcard:['MEOWIJUANA','CATNIP JOINTS','SHOP NOW'], captionSize:0.058, captionY:0.62, endcardDur:2.6}, segments:[]});
+  setCur(null); }
+async function projDelete(){ if(!curProj) return toast('No saved project selected');
+  if(!confirm('Delete project “'+curProj.name+'”? This removes the file.')) return;
+  const r=await api('/api/project/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:curProj.file})});
+  if(r.ok){ toast('Deleted'); const list=await loadProjects(); setCur(null); if(list.length) projLoad(list[0].file); else projNew(); }
+}
+function exportJSON(){ const name=(curProj&&curProj.name)||'project';
+  const blob=new Blob([JSON.stringify(Object.assign({name},EDL),null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob); const a=document.createElement('a');
+  a.href=url; a.download=(name.replace(/[^a-z0-9]+/gi,'-').toLowerCase()||'project')+'.json'; a.click(); URL.revokeObjectURL(url); }
+function importJSON(file){ const r=new FileReader();
+  r.onload=()=>{ try{ const edl=JSON.parse(r.result); applyEDL(edl); setCur(null); toast('Imported “'+(edl.name||file.name)+'” — use Save As to keep it'); }catch(e){ toast('Invalid JSON file'); } };
+  r.readAsText(file); }
+
+$('#btnProjLoad').onclick=()=>projLoad($('#projSelect').value);
+$('#projSelect').onchange=()=>projLoad($('#projSelect').value);
+$('#btnProjSave').onclick=projSave;
+$('#btnProjSaveAs').onclick=projSaveAs;
+$('#btnProjNew').onclick=projNew;
+$('#btnProjDel').onclick=projDelete;
+$('#btnExport').onclick=exportJSON;
+$('#btnImport').onclick=()=>$('#fileImport').click();
+$('#fileImport').onchange=e=>{ if(e.target.files[0]) importJSON(e.target.files[0]); e.target.value=''; };
+
 /* ---------- boot ---------- */
 async function boot(reload){
-  $('#status').textContent='Loading…';
   MAN = await api('/api/manifest'); MAN.byId={}; MAN.clips.forEach(c=>MAN.byId[c.id]=c);
-  if(!reload || !EDL) EDL = await api('/api/edl');
-  if(!EDL.settings.endcard) EDL.settings.endcard=['MEOWIJUANA','CATNIP JOINTS','SHOP NOW'];
-  // music dropdown
-  const ms=$('#setMusic'); ms.innerHTML=MAN.music.map(m=>`<option ${m===EDL.settings.music?'selected':''}>${m}</option>`).join('');
-  $('#setCanvas').value=EDL.settings.canvas||'9x16';
-  $('#setEc1').value=EDL.settings.endcard[0]; $('#setEc2').value=EDL.settings.endcard[1]; $('#setEc3').value=EDL.settings.endcard[2];
-  renderBin(); renderTimeline(); sizeStage();
-  $('#status').textContent=MAN.clips.length+' clips loaded. Select a segment to trim, or play the timeline.';
-  if(EDL.segments.length){ selectSeg(0); }
+  if(reload){ renderBin(); renderTimeline(); toast('Clips reloaded'); return; }
+  const list=await loadProjects();
+  if(list.length) await projLoad(list[0].file);
+  else { applyEDL(await api('/api/edl')); setCur(null); }
+  $('#status').textContent=MAN.clips.length+' clips loaded · '+list.length+' saved project(s).';
 }
 boot();
 </script>

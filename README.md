@@ -42,6 +42,9 @@ python editor/server.py
 - `editor/index.html` — the entire UI (vanilla JS).
 - `edl.json` — the timeline (segments + settings). Each segment references a clip by its
   YouTube id, with `in`, `dur`, `cap`, `zoom`, `anchor`.
+- **Projects** — named timelines saved under `projects/*.json` (Save / Save As / Load /
+  New / Delete in the UI, plus Export/Import `.json`). On first run the current `edl.json`
+  is seeded as the "Rollies Hero" project.
 - `_build_rollies_hero.ps1` — standalone CLI renderer with the same EDL logic.
 
 Render pipeline per segment: `scale` (cover) → directional `crop` → `drawtext` caption →
