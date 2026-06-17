@@ -152,7 +152,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.13.1</span>
+  <span class="ver" id="appVer">v1.13.2</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button id="btnOverlays">✚ Overlays</button>
@@ -869,7 +869,7 @@ function renderTracks(){
       const cl=document.createElement('div'); cl.className='lab'; cl.textContent='Clips'; row.appendChild(cl);
     } else {
       const cl=document.createElement('div'); cl.className='lab'; cl.textContent='Ch '+ch; row.appendChild(cl);
-      if(ch===N-1 && !L.all.some(o=>o.ch===ch)){ const rm=document.createElement('button'); rm.className='mini lanex'; rm.textContent='✕'; rm.title='Remove this empty channel'; rm.onpointerdown=ev=>ev.stopPropagation(); rm.onclick=ev=>{ ev.stopPropagation(); removeChannel(); }; row.appendChild(rm); }
+      if(ch===N-1 && !L.all.some(o=>o.ch===ch)){ const rm=document.createElement('button'); rm.className='mini lanex'; rm.textContent='✕'; rm.title='Remove empty channel(s)'; rm.onpointerdown=ev=>ev.stopPropagation(); rm.onclick=ev=>{ ev.stopPropagation(); removeChannel(); }; row.appendChild(rm); }
     }
     tr.appendChild(row);
   }
@@ -891,9 +891,8 @@ function buildClipBlock(o,total){ const i=o.idx, sg=o.seg;
   return b;
 }
 function addChannel(){ EDL.channels=chCount()+1; renderTimeline(); toast('Channel '+(chCount()-1)+' added — drag clips up into it'); }
-function removeChannel(){ const N=chCount(); if(N<=1) return; const top=N-1;
-  if((EDL.segments||[]).some(s=>(+s.ch||0)===top)) return toast('That channel still has clips');
-  EDL.channels=top; renderTimeline(); }
+function removeChannel(){ let used=0; (EDL.segments||[]).forEach(s=>{ used=Math.max(used,(+s.ch||0)); });
+  EDL.channels=Math.max(1,used+1); renderTimeline(); }   // collapse all empty trailing channels
 // drag a clip edge to change its duration. Two modes (Settings → "Edge drag"):
 //  • roll  — the neighbor absorbs the change so the total stays fixed (default).
 //  • free  — only this clip's duration changes; neighbors stay pinned, opening/closing
@@ -931,14 +930,12 @@ function clipDragMulti(b,o){ const seg=o.seg;
     const area=$('#tlTracks').getBoundingClientRect(); const total=totalDur()||1; let moved=false; const x0=ev.clientX, y0=ev.clientY;
     const t0start=+seg.t0||0;
     const targetCh=cy=>{ const lanes=[...document.querySelectorAll('#tlTracks .trk[data-ch]')];   // top→bottom = high→low
-      if(lanes.length){ const tr0=lanes[0].getBoundingClientRect(); if(cy<tr0.top-2) return chCount(); }   // above the top lane → a fresh channel
       let tch=0; for(const ln of lanes){ const r=ln.getBoundingClientRect(); if(cy<r.bottom){ tch=+ln.dataset.ch; break; } } return tch; };
     const baseIdxAt=pt=>{ let ti=EDL.segments.length-1; for(const bd of clipBounds().bounds){ if(pt<bd.end){ ti=bd.idx; break; } } return ti; };
     const mv=e=>{ if(!moved && Math.abs(e.clientX-x0)<5 && Math.abs(e.clientY-y0)<5) return; moved=true;
       const pt=Math.max(0,Math.min(total,(e.clientX-area.left)/area.width*total));
-      const curCh=+seg.ch||0; let tch=Math.max(0,Math.min(chCount(),targetCh(e.clientY)));   // allow one above = new channel
-      if(tch!==curCh){                                  // moved to a different channel
-        if(tch>=chCount()) EDL.channels=tch+1;          // dragged above the top → create the channel on the fly
+      const curCh=+seg.ch||0, tch=Math.max(0,Math.min(chCount()-1,targetCh(e.clientY)));   // existing channels only
+      if(tch!==curCh){                                  // moved to a different existing channel
         if(tch===0){ seg.ch=0; delete seg.t0; const cur=EDL.segments.indexOf(seg); const ti=baseIdxAt(pt); if(cur>=0){ EDL.segments.splice(ti,0,EDL.segments.splice(cur,1)[0]); } }
         else { seg.ch=tch; seg.t0=Math.round(pt*100)/100; }
         sel=EDL.segments.indexOf(seg); renderTimeline(); return;
