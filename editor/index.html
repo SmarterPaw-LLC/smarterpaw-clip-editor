@@ -53,6 +53,8 @@
   .blk.ov-text { background:#2c6e49; } .blk.ov-shape { background:#5d539e; } .blk.ov-image { background:#7a5230; }
   .blk.sel { box-shadow:0 0 0 2px var(--acc2); z-index:2; }
   .blk .hL,.blk .hR { position:absolute; top:0; bottom:0; width:7px; cursor:ew-resize; background:rgba(255,255,255,.18); } .blk .hL{left:0} .blk .hR{right:0}
+  .blk .modedot { position:absolute; top:1px; right:9px; font-size:10px; line-height:1; cursor:pointer; background:#0007; border-radius:3px; padding:1px 3px; z-index:3; }
+  .blk .modedot.free { background:var(--acc2); }
   #tlPlayhead { position:absolute; top:0; bottom:0; width:2px; background:#ff5a5a; pointer-events:none; z-index:6; }
   #tlPhGrip { position:absolute; top:0; left:-7px; width:16px; height:15px; background:#ff5a5a; border-radius:0 0 4px 4px; cursor:ew-resize; pointer-events:auto; }
   #tlRuler { cursor:pointer; }
@@ -148,7 +150,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.12.0</span>
+  <span class="ver" id="appVer">v1.12.1</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button id="btnOverlays">✚ Overlays</button>
@@ -853,6 +855,10 @@ function renderTracks(){
     clipDrag(b,i);
     const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR';
     b.appendChild(hL); b.appendChild(hR); clipResize(hL,i,'l'); clipResize(hR,i,'r');
+    const md=document.createElement('span'); md.className='modedot'+(sg.editMode==='free'?' free':''); md.textContent=sg.editMode==='free'?'✂':'🔗';
+    md.title=sg.editMode==='free'?'Independent — resizing opens/closes a gap (click to link to neighbor)':'Linked — neighbor absorbs the resize (click to make independent)';
+    md.onpointerdown=ev=>ev.stopPropagation(); md.onclick=ev=>{ ev.stopPropagation(); segAction('mode',i); };
+    b.appendChild(md);
     ct.appendChild(b); });
   if(ec.enabled){ const eb=document.createElement('div'); eb.className='blk endcard'; eb.style.left=(vidTotal/total*100)+'%'; eb.style.width=(ec.dur/total*100)+'%'; eb.textContent='End card'; eb.title='End card'; eb.onclick=ev=>{ ev.stopPropagation(); openEcModal(); }; ct.appendChild(eb); }
   const cl=document.createElement('div'); cl.className='lab'; cl.textContent='Clips'; ct.appendChild(cl); tr.appendChild(ct);
@@ -890,7 +896,7 @@ function clipResize(handle,i,side){
 // drag a clip block left/right to resequence it; click selects
 function clipDrag(b,idx){
   const seg=EDL.segments[idx];
-  b.onpointerdown=ev=>{ if(ev.target.closest('.hL,.hR')) return; ev.stopPropagation();
+  b.onpointerdown=ev=>{ if(ev.target.closest('.hL,.hR,.modedot')) return; ev.stopPropagation();
     const area=$('#tlTracks').getBoundingClientRect(); const total=totalDur()||1; let moved=false; const x0=ev.clientX;
     const mv=e=>{ if(!moved && Math.abs(e.clientX-x0)<5) return; moved=true;
       const pt=Math.max(0,Math.min(total,(e.clientX-area.left)/area.width*total));
