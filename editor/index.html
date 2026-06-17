@@ -95,9 +95,9 @@
   .seg.sel { border-color:var(--acc2); box-shadow:0 0 0 1px var(--acc2); }
   .seg .top { display:flex; gap:6px; align-items:center; }
   .seg .hd { flex:1; font-size:12px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .seg .nums { display:flex; gap:6px; margin:6px 0; }
+  .seg .nums { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0; }
   .seg .nums label { font-size:11px; color:var(--mut); display:flex; flex-direction:column; gap:2px; }
-  .seg .nums input { width:62px; }
+  .seg .nums input, .seg .nums select { width:62px; box-sizing:border-box; }
   .seg input.cap { width:100%; margin-top:4px; }
   .seg .cscrub-row { display:flex; align-items:center; gap:6px; margin-top:6px; }
   .seg .cscrub { flex:1; min-width:0; height:18px; accent-color:var(--acc2); }
@@ -146,7 +146,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.11.0</span>
+  <span class="ver" id="appVer">v1.11.1</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button id="btnOverlays">✚ Overlays</button>
