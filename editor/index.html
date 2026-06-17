@@ -152,7 +152,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.13.2</span>
+  <span class="ver" id="appVer">v1.13.3</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button id="btnOverlays">✚ Overlays</button>
@@ -928,14 +928,16 @@ function clipResize(handle,i,side){
 function clipDragMulti(b,o){ const seg=o.seg;
   b.onpointerdown=ev=>{ if(ev.target.closest('.hL,.hR,.modedot')) return; ev.stopPropagation(); ev.preventDefault();
     const area=$('#tlTracks').getBoundingClientRect(); const total=totalDur()||1; let moved=false; const x0=ev.clientX, y0=ev.clientY;
-    const t0start=+seg.t0||0;
+    const t0start=+seg.t0||0; const chStart=chCount(); let createdCh=-1;   // cap creation to ONE new channel per drag
     const targetCh=cy=>{ const lanes=[...document.querySelectorAll('#tlTracks .trk[data-ch]')];   // top→bottom = high→low
+      if(lanes.length){ const tr0=lanes[0].getBoundingClientRect(); if(cy<tr0.top-2) return chStart; }   // above the top lane → the one new channel
       let tch=0; for(const ln of lanes){ const r=ln.getBoundingClientRect(); if(cy<r.bottom){ tch=+ln.dataset.ch; break; } } return tch; };
     const baseIdxAt=pt=>{ let ti=EDL.segments.length-1; for(const bd of clipBounds().bounds){ if(pt<bd.end){ ti=bd.idx; break; } } return ti; };
     const mv=e=>{ if(!moved && Math.abs(e.clientX-x0)<5 && Math.abs(e.clientY-y0)<5) return; moved=true;
       const pt=Math.max(0,Math.min(total,(e.clientX-area.left)/area.width*total));
-      const curCh=+seg.ch||0, tch=Math.max(0,Math.min(chCount()-1,targetCh(e.clientY)));   // existing channels only
-      if(tch!==curCh){                                  // moved to a different existing channel
+      const curCh=+seg.ch||0, tch=Math.max(0,Math.min(chStart,targetCh(e.clientY)));   // 0..chStart-1 existing, chStart = the single new channel
+      if(tch!==curCh){                                  // moved to a different channel
+        if(tch>=chCount()){ EDL.channels=tch+1; createdCh=tch; }   // materialize the new channel once (clamped, so no runaway)
         if(tch===0){ seg.ch=0; delete seg.t0; const cur=EDL.segments.indexOf(seg); const ti=baseIdxAt(pt); if(cur>=0){ EDL.segments.splice(ti,0,EDL.segments.splice(cur,1)[0]); } }
         else { seg.ch=tch; seg.t0=Math.round(pt*100)/100; }
         sel=EDL.segments.indexOf(seg); renderTimeline(); return;
@@ -945,7 +947,10 @@ function clipDragMulti(b,o){ const seg=o.seg;
         if(cur>=0 && ti!==cur){ EDL.segments.splice(ti,0,EDL.segments.splice(cur,1)[0]); sel=ti; renderTimeline(); } }
       else { const dt=(e.clientX-x0)/area.width*total; seg.t0=Math.max(0,Math.round((t0start+dt)*100)/100); sel=EDL.segments.indexOf(seg); renderTracks(); updateTotal(); }
     };
-    const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); if(!moved) selectSeg(o.idx); else renderTimeline(); };
+    const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up);
+      if(createdCh>=0 && !(EDL.segments||[]).some(s=>(+s.ch||0)===createdCh)){   // drag ended without landing on the new channel → drop it
+        let u=0; (EDL.segments||[]).forEach(s=>{ u=Math.max(u,(+s.ch||0)); }); EDL.channels=Math.max(1,u+1); }
+      if(!moved) selectSeg(o.idx); else renderTimeline(); };
     window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up);
   };
 }
