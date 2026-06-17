@@ -54,6 +54,8 @@
   .blk.sel { box-shadow:0 0 0 2px var(--acc2); z-index:2; }
   .blk .hL,.blk .hR { position:absolute; top:0; bottom:0; width:7px; cursor:ew-resize; background:rgba(255,255,255,.18); } .blk .hL{left:0} .blk .hR{right:0}
   #tlPlayhead { position:absolute; top:0; bottom:0; width:2px; background:#ff5a5a; pointer-events:none; z-index:6; }
+  #tlPhGrip { position:absolute; top:0; left:-7px; width:16px; height:15px; background:#ff5a5a; border-radius:0 0 4px 4px; cursor:ew-resize; pointer-events:auto; }
+  #tlRuler { cursor:pointer; }
   .col { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:auto; }
   .col h2 { font-size:12px; text-transform:uppercase; letter-spacing:.6px; color:var(--mut);
             margin:0; padding:10px 12px; position:sticky; top:0; background:var(--panel); border-bottom:1px solid var(--line); z-index:2; }
@@ -134,7 +136,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.8.1</span>
+  <span class="ver" id="appVer">v1.8.2</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button id="btnOverlays">✚ Overlays</button>
@@ -230,7 +232,7 @@
     <div id="tlTracksWrap">
       <div id="tlRuler"></div>
       <div id="tlTracks"></div>
-      <div id="tlPlayhead"></div>
+      <div id="tlPlayhead"><div id="tlPhGrip"></div></div>
     </div>
   </div>
 </div>
@@ -664,12 +666,13 @@ function renderOverlays(time){
   const W=$('#stageWrap').clientWidth||360;
   const ids=new Set((EDL.overlays||[]).map(o=>o.id));
   for(const id in ovEls){ if(!ids.has(id)){ ovEls[id].remove(); delete ovEls[id]; } }
-  (EDL.overlays||[]).forEach(o=>{
+  (EDL.overlays||[]).forEach((o,idx)=>{
     const active = time>=o.start && time < o.start+(+o.dur||0);
     const visible = active || (ovEdit && o.id===ovSel);
     let el=ovEls[o.id];
     if(el && el.dataset.t!==o.type){ el.remove(); el=null; }
     if(!el){ el = o.type==='image'?document.createElement('img'):document.createElement('div'); el.dataset.t=o.type; el.style.position='absolute'; ovEls[o.id]=el; layer.appendChild(el); }
+    el.style.zIndex=idx;   // layer order = array order (later overlay = on top), independent of DOM creation order
     if(!visible){ el.style.display='none'; return; }
     el.style.display='';
     if(o.type==='image'){ const u=o.src?('/'+encodeURI(o.src)):''; if(el.getAttribute('src')!==u) el.setAttribute('src',u); el.style.width=((o.scale||0.3)*W)+'px'; el.style.height='auto'; }
@@ -839,14 +842,13 @@ function ovBarInteract(b,hL,hR,o,total){
     window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up); };
   b.onpointerdown=drag('move'); hL.onpointerdown=drag('l'); hR.onpointerdown=drag('r');
 }
-$('#tlTracksWrap').addEventListener('pointerdown', ev=>{
-  if(ev.target.closest('.blk')) return;
-  const r=$('#tlTracks').getBoundingClientRect(); const total=totalDur()||1;
-  const setPH=e=>{ stop(); playhead=Math.max(0,Math.min(total,(e.clientX-r.left)/r.width*total)); seekToPlayhead(); positionPlayhead(); };
-  setPH(ev);
-  const up=()=>{ window.removeEventListener('pointermove',setPH); window.removeEventListener('pointerup',up); };
-  window.addEventListener('pointermove',setPH); window.addEventListener('pointerup',up);
-});
+function scrubToX(cx){ const wrap=$('#tlTracksWrap'); const r=wrap.getBoundingClientRect(); const W=wrap.clientWidth||r.width||1; const total=totalDur()||1;
+  playhead=Math.max(0,Math.min(total,(cx-r.left)/W*total)); seekToPlayhead(); positionPlayhead(); }
+function startScrub(ev){ ev.preventDefault(); stop(); scrubToX(ev.clientX);
+  const mv=e=>scrubToX(e.clientX); const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); };
+  window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up); }
+$('#tlTracksWrap').addEventListener('pointerdown', ev=>{ if(ev.target.closest('.blk')) return; startScrub(ev); });
+$('#tlPhGrip').addEventListener('pointerdown', ev=>{ ev.stopPropagation(); startScrub(ev); });
 
 /* ---------- save / render ---------- */
 $('#btnSave').onclick=()=>projSave();
