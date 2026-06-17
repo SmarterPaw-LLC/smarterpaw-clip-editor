@@ -530,6 +530,63 @@ def apply_overlays(silent, overlays, W, H, tmp):
     return out, None
 
 
+def flatten_segments(edl):
+    """Collapse multi-channel clips into one sequential list (higher channel covers lower).
+    channel 0 = base story track (sequential, with lead `gap`); channels >=1 are positioned by
+    absolute `t0`. Returns (flat, vid_total). Each flat entry is either a black filler
+    {"black": True, "dur": d} or a clip sub-segment {id,in,dur,cap,zoom,anchor[,fadeIn,fadeOut]}."""
+    segs = edl.get("segments", [])
+    base, acc = [], 0.0
+    for i, s in enumerate(segs):
+        if int(s.get("ch", 0) or 0) != 0:
+            continue
+        g = max(0.0, float(s.get("gap", 0) or 0))
+        d = max(0.05, float(s.get("dur", 1) or 1))
+        base.append({"i": i, "s": s, "ch": 0, "start": acc + g, "end": acc + g + d})
+        acc += g + d
+    clips = list(base)
+    for i, s in enumerate(segs):
+        ch = int(s.get("ch", 0) or 0)
+        if ch == 0:
+            continue
+        t0 = max(0.0, float(s.get("t0", 0) or 0))
+        d = max(0.05, float(s.get("dur", 1) or 1))
+        clips.append({"i": i, "s": s, "ch": ch, "start": t0, "end": t0 + d})
+    vid_total = acc
+    for c in clips:
+        vid_total = max(vid_total, c["end"])
+    bset = {0.0, round(vid_total, 4)}
+    for c in clips:
+        bset.add(round(c["start"], 4))
+        bset.add(round(c["end"], 4))
+    bs = sorted(x for x in bset if 0.0 <= x <= vid_total + 1e-6)
+    flat = []
+    for a, b in zip(bs, bs[1:]):
+        if b - a < 0.02:
+            continue
+        m = (a + b) / 2.0
+        top = None
+        for c in clips:
+            if c["start"] <= m < c["end"]:
+                if top is None or c["ch"] > top["ch"] or (c["ch"] == top["ch"] and c["i"] > top["i"]):
+                    top = c
+        if top is None:
+            flat.append({"black": True, "dur": round(b - a, 4)})
+            continue
+        s, off = top["s"], a - top["start"]
+        seg = {"id": s.get("id"), "in": round(float(s.get("in", 0) or 0) + off, 4),
+               "dur": round(b - a, 4), "cap": s.get("cap", ""),
+               "zoom": s.get("zoom", 1.0), "anchor": s.get("anchor", "center")}
+        fi = float(s.get("fadeIn", 0) or 0)
+        fo = float(s.get("fadeOut", 0) or 0)
+        if fi > 0 and abs(a - top["start"]) < 0.02:
+            seg["fadeIn"] = fi
+        if fo > 0 and abs(b - top["end"]) < 0.02:
+            seg["fadeOut"] = fo
+        flat.append(seg)
+    return flat, vid_total
+
+
 def render(edl, out_dir=None, out_name=None):
     s = edl.get("settings", {})
     canvas = s.get("canvas", "9x16")
@@ -555,16 +612,21 @@ def render(edl, out_dir=None, out_name=None):
         listf = os.path.join(tmp, "concat.txt")
         lines = []
         total = 0.0
-        for idx, seg in enumerate(segs):
-            gap = max(0.0, float(seg.get("gap", 0) or 0))   # lead black gap (free-mode timeline gaps)
-            if gap > 0.01:
-                gp = os.path.join(tmp, f"gap_{idx:02d}.mp4")
+        flat, _vt = flatten_segments(edl)   # multi-channel → sequential (top channel covers lower)
+        if not flat:
+            return {"ok": False, "log": "Nothing to render."}
+        last_real = max((k for k, e in enumerate(flat) if not e.get("black")), default=-1)
+        for idx, seg in enumerate(flat):
+            if seg.get("black"):            # uncovered span (gap, or black under upper clips) → black filler
+                d = max(0.05, float(seg.get("dur", 0.1)))
+                gp = os.path.join(tmp, f"blk_{idx:02d}.mp4")
                 r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi",
-                         "-i", f"color=c=black:s={W}x{H}:r=30:d={gap}", "-vf", "format=yuv420p"] + ENC + [gp])
+                         "-i", f"color=c=black:s={W}x{H}:r=30:d={d}", "-vf", "format=yuv420p"] + ENC + [gp])
                 if r.returncode != 0:
-                    return {"ok": False, "log": f"gap {idx} failed:\n{r.stderr[-1500:]}"}
+                    return {"ok": False, "log": f"black {idx} failed:\n{r.stderr[-1500:]}"}
                 lines.append("file '" + gp.replace("\\", "/") + "'")
-                total += gap
+                total += d
+                continue
             src = i2f.get(seg["id"])
             if not src:
                 return {"ok": False, "log": f"Clip not found for id {seg['id']}"}
@@ -578,7 +640,7 @@ def render(edl, out_dir=None, out_name=None):
                 base += f",fade=t=in:st=0:d={sfi}"
             if sfo > 0:
                 base += f",fade=t=out:st={max(0,dur-sfo)}:d={sfo}"
-            is_last = (idx == len(segs) - 1)
+            is_last = (idx == last_real)
             cap = (seg.get("cap") or "").strip()
             cap_dt = ""
             if cap:
