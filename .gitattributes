@@ -1,0 +1,22 @@
+# Normalize all text files to LF in the repo (stops Windows LF<->CRLF churn/warnings)
+* text=auto eol=lf
+
+# Windows batch file stays CRLF
+*.bat text eol=crlf
+
+# Binary assets — never touch line endings
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.webp binary
+*.gif  binary
+*.mp4  binary
+*.mov  binary
+*.webm binary
+*.mp3  binary
+*.m4a  binary
+*.wav  binary
+*.otf  binary
+*.ttf  binary
+*.woff binary
+*.woff2 binary
