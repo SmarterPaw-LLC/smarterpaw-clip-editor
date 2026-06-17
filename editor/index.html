@@ -152,7 +152,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.14.0</span>
+  <span class="ver" id="appVer">v1.14.1</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button id="btnOverlays">✚ Overlays</button>
@@ -932,22 +932,25 @@ function clipResize(handle,i,side){
 function clipDragMulti(b,o){ const seg=o.seg;
   b.onpointerdown=ev=>{ if(ev.target.closest('.hL,.hR,.modedot')) return; ev.stopPropagation(); ev.preventDefault();
     const area=$('#tlTracks').getBoundingClientRect(); const total=totalDur()||1; let moved=false; const x0=ev.clientX, y0=ev.clientY;
-    const t0start=+seg.t0||0;
+    const ptDown=Math.max(0,Math.min(total,(x0-area.left)/area.width*total)); const grabOff=ptDown-(o.start||0);   // keep the grabbed point under the cursor
     const targetCh=cy=>{ const lanes=[...document.querySelectorAll('#tlTracks .trk[data-ch]')];   // top→bottom = high→low
       let tch=0; for(const ln of lanes){ const r=ln.getBoundingClientRect(); if(cy<r.bottom){ tch=+ln.dataset.ch; break; } } return tch; };
     const baseIdxAt=pt=>{ let ti=EDL.segments.length-1; for(const bd of clipBounds().bounds){ if(pt<bd.end){ ti=bd.idx; break; } } return ti; };
+    const leaveBaseGap=()=>{ if((+seg.ch||0)!==0 || seg.editMode!=='free') return;   // cut mode: leave a gap where it sat
+      const mi=EDL.segments.indexOf(seg); for(let k=mi+1;k<EDL.segments.length;k++){ if((+EDL.segments[k].ch||0)===0){
+        EDL.segments[k].gap=Math.round(((+EDL.segments[k].gap||0)+(+seg.gap||0)+(+seg.dur||0))*100)/100; break; } } };
     const mv=e=>{ if(!moved && Math.abs(e.clientX-x0)<5 && Math.abs(e.clientY-y0)<5) return; moved=true;
       const pt=Math.max(0,Math.min(total,(e.clientX-area.left)/area.width*total));
       const curCh=+seg.ch||0, tch=Math.max(0,Math.min(chCount()-1,targetCh(e.clientY)));   // existing channels only — use + Channel to add
       if(tch!==curCh){                                  // moved to a different existing channel
         if(tch===0){ seg.ch=0; delete seg.t0; const cur=EDL.segments.indexOf(seg); const ti=baseIdxAt(pt); if(cur>=0){ EDL.segments.splice(ti,0,EDL.segments.splice(cur,1)[0]); } }
-        else { seg.ch=tch; seg.t0=Math.round(pt*100)/100; }
+        else { leaveBaseGap(); seg.ch=tch; delete seg.gap; seg.t0=Math.max(0,Math.round((pt-grabOff)*100)/100); }   // land where dragged
         sel=EDL.segments.indexOf(seg); renderTimeline(); return;
       }
       if(curCh===0){                                    // base: resequence
         const cur=EDL.segments.indexOf(seg); const ti=baseIdxAt(pt);
         if(cur>=0 && ti!==cur){ EDL.segments.splice(ti,0,EDL.segments.splice(cur,1)[0]); sel=ti; renderTimeline(); } }
-      else { const dt=(e.clientX-x0)/area.width*total; seg.t0=Math.max(0,Math.round((t0start+dt)*100)/100); sel=EDL.segments.indexOf(seg); renderTracks(); updateTotal(); }
+      else { seg.t0=Math.max(0,Math.round((pt-grabOff)*100)/100); sel=EDL.segments.indexOf(seg); renderTracks(); updateTotal(); }   // upper: track the cursor
     };
     const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); if(!moved) selectSeg(o.idx); else renderTimeline(); };
     window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up);
