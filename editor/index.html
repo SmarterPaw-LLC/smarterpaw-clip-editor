@@ -152,7 +152,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.13.0</span>
+  <span class="ver" id="appVer">v1.13.1</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button id="btnOverlays">✚ Overlays</button>
@@ -931,12 +931,14 @@ function clipDragMulti(b,o){ const seg=o.seg;
     const area=$('#tlTracks').getBoundingClientRect(); const total=totalDur()||1; let moved=false; const x0=ev.clientX, y0=ev.clientY;
     const t0start=+seg.t0||0;
     const targetCh=cy=>{ const lanes=[...document.querySelectorAll('#tlTracks .trk[data-ch]')];   // top→bottom = high→low
+      if(lanes.length){ const tr0=lanes[0].getBoundingClientRect(); if(cy<tr0.top-2) return chCount(); }   // above the top lane → a fresh channel
       let tch=0; for(const ln of lanes){ const r=ln.getBoundingClientRect(); if(cy<r.bottom){ tch=+ln.dataset.ch; break; } } return tch; };
     const baseIdxAt=pt=>{ let ti=EDL.segments.length-1; for(const bd of clipBounds().bounds){ if(pt<bd.end){ ti=bd.idx; break; } } return ti; };
     const mv=e=>{ if(!moved && Math.abs(e.clientX-x0)<5 && Math.abs(e.clientY-y0)<5) return; moved=true;
       const pt=Math.max(0,Math.min(total,(e.clientX-area.left)/area.width*total));
-      const curCh=+seg.ch||0, tch=Math.max(0,Math.min(chCount()-1,targetCh(e.clientY)));
+      const curCh=+seg.ch||0; let tch=Math.max(0,Math.min(chCount(),targetCh(e.clientY)));   // allow one above = new channel
       if(tch!==curCh){                                  // moved to a different channel
+        if(tch>=chCount()) EDL.channels=tch+1;          // dragged above the top → create the channel on the fly
         if(tch===0){ seg.ch=0; delete seg.t0; const cur=EDL.segments.indexOf(seg); const ti=baseIdxAt(pt); if(cur>=0){ EDL.segments.splice(ti,0,EDL.segments.splice(cur,1)[0]); } }
         else { seg.ch=tch; seg.t0=Math.round(pt*100)/100; }
         sel=EDL.segments.indexOf(seg); renderTimeline(); return;
