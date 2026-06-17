@@ -136,7 +136,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.8.2</span>
+  <span class="ver" id="appVer">v1.8.3</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button id="btnOverlays">✚ Overlays</button>
@@ -705,10 +705,19 @@ function renderOvList(){
   const box=$('#ovList'); if(!box) return; box.innerHTML='';
   const ovs=EDL.overlays||[];
   if(!ovs.length){ box.innerHTML='<div style="color:var(--mut);font-size:12px">No overlays yet — add Text, Shape, or Image.</div>'; renderTracks(); return; }
+  box.insertAdjacentHTML('beforeend','<div style="font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px">▲ top of list = front layer</div>');
+  const move=(o,dir)=>{ const i=EDL.overlays.indexOf(o), j=i+dir; if(i<0||j<0||j>=EDL.overlays.length) return;
+    [EDL.overlays[i],EDL.overlays[j]]=[EDL.overlays[j],EDL.overlays[i]]; renderOvList(); buildOvEditor(); renderOverlays(playhead); renderTracks(); };
   ovs.slice().reverse().forEach(o=>{ const row=document.createElement('div'); row.className='ecline'; if(o.id===ovSel) row.style.borderColor='var(--acc2)';
-    const lab=o.type==='image'?('🖼 '+(o.src||'').split('/').pop()):(o.type==='shape'?'▭ shape':('🅣 '+((o.text||'').slice(0,16)||'text')));
-    row.innerHTML=`<span class="ovsel" style="flex:1;cursor:pointer">${lab} <span style="color:var(--mut)">@${fmt(o.start)}–${fmt(o.start+(+o.dur||0))}s</span></span><button class="mini ovdel">✕</button>`;
+    const thumb=(o.type==='image'&&o.src)?`<img src="/${encodeURI(o.src)}" style="height:24px;width:auto;max-width:46px;border-radius:3px;background:#0008;flex:none">`:'';
+    const icon=o.type==='image'?'🖼':(o.type==='shape'?'▭':'🅣');
+    const name=o.type==='image'?((o.src||'').split('/').pop()):(o.type==='shape'?'shape':((o.text||'').slice(0,18)||'text'));
+    row.innerHTML=`<div style="display:flex;flex-direction:column;gap:1px"><button class="mini ovup" title="bring forward">▲</button><button class="mini ovdn" title="send back">▼</button></div>
+      <span class="ovsel" style="flex:1;cursor:pointer;display:flex;align-items:center;gap:6px;min-width:0">${thumb}<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${icon} ${name}</span><span style="color:var(--mut);flex:none">@${fmt(o.start)}–${fmt(o.start+(+o.dur||0))}s</span></span>
+      <button class="mini ovdel" title="delete">✕</button>`;
     row.querySelector('.ovsel').onclick=()=>{ ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
+    row.querySelector('.ovup').onclick=()=>move(o,+1);
+    row.querySelector('.ovdn').onclick=()=>move(o,-1);
     row.querySelector('.ovdel').onclick=()=>{ EDL.overlays=EDL.overlays.filter(x=>x.id!==o.id); if(ovSel===o.id) ovSel=null; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
     box.appendChild(row); });
   renderTracks();
