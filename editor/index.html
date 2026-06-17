@@ -143,6 +143,9 @@
   .aicell.on .pick { background:var(--acc2); }
   .aicell .ord { position:absolute; top:4px; left:4px; background:var(--acc2); color:#06122e; font-weight:800; font-size:11px; border-radius:4px; padding:0 5px; display:none; }
   .aicell.on .ord { display:block; }
+  .aigrid .grphd { grid-column:1/-1; display:flex; align-items:center; gap:8px; font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--mut); padding:7px 2px 3px; border-bottom:1px solid var(--line); }
+  .aigrid .grphd b { color:var(--txt); text-transform:none; letter-spacing:0; font-size:12px; }
+  .aigrid .grphd button { font-size:10px; padding:1px 7px; margin-left:auto; }
   .ecline { display:flex; flex-wrap:wrap; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:8px; }
   .ecline input.ecl-text { flex:1; min-width:120px; }
   .ecline input[type=color] { width:34px; height:26px; padding:0; border:none; background:none; }
@@ -152,7 +155,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.15.2</span>
+  <span class="ver" id="appVer">v1.16.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -332,6 +335,8 @@
       <div class="row" style="align-items:flex-start"><label class="k" style="margin-top:6px">Brief</label>
         <textarea id="aiBrief" rows="3" placeholder="Story / vibe / hook you want — e.g. 'Fast punchy hook, cat going wild on the joint, end on total zen. Playful, sound-on, captions.'"></textarea></div>
       <div class="row" style="justify-content:space-between"><label class="k" style="min-width:auto">Pick clips (click to select; number = order)</label><span id="aiCount" style="font-size:12px;color:var(--mut)">0 selected</span></div>
+      <div class="row"><input type="text" id="aiFilter" placeholder="🔍 filter by name…" style="flex:1" spellcheck="false">
+        <select id="aiCat" title="Category (= source subfolder)"></select></div>
       <div id="aiGrid" class="aigrid"></div>
       <div class="row" style="justify-content:flex-end;gap:8px"><button class="ghost" id="aiCancel">Cancel</button><button class="primary" id="aiGo">✨ Create build &amp; notify Claude</button></div>
       <div class="status" id="aiStatus"></div>
@@ -1126,13 +1131,27 @@ function importJSON(file){ const r=new FileReader();
 let aiSel=[];   // selected clip ids, in pick order
 function openAiBuild(){ stop(); aiSel=[]; $('#aiName').value=''; $('#aiBrief').value=''; $('#aiStatus').textContent='';
   $('#aiCanvas').value=EDL.settings.canvas||'9x16';
-  const g=$('#aiGrid'); g.innerHTML='';
-  MAN.clips.forEach(c=>{ const cell=document.createElement('div'); cell.className='aicell'; cell.dataset.id=c.id;
+  const cats=[...new Set(MAN.clips.map(c=>c.product))].sort();
+  $('#aiCat').innerHTML='<option value="">All categories</option>'+cats.map(p=>`<option value="${p}">${p}</option>`).join('');
+  $('#aiFilter').value='';
+  renderAiGrid(); $('#aiModal').style.display='flex'; }
+function renderAiGrid(){ const g=$('#aiGrid'); const sc=g.scrollTop; g.innerHTML='';
+  const q=($('#aiFilter').value||'').trim().toLowerCase(), cat=$('#aiCat').value;
+  const list=MAN.clips.filter(c=>(!cat||c.product===cat) && (!q||((c.label||'')+' '+c.product+' '+c.id).toLowerCase().includes(q)));
+  if(!list.length){ g.innerHTML='<div style="grid-column:1/-1;color:var(--mut);font-size:12px;padding:8px">No clips match.</div>'; return; }
+  let cur=null;
+  list.forEach(c=>{
+    if(c.product!==cur){ cur=c.product; const inCat=list.filter(x=>x.product===cur); const allSel=inCat.every(x=>aiSel.includes(x.id));
+      const hd=document.createElement('div'); hd.className='grphd'; hd.innerHTML=`<b>${cur}</b> <span>${inCat.length} clip${inCat.length>1?'s':''}</span>`;
+      const btn=document.createElement('button'); btn.className='mini'; btn.textContent=allSel?'Clear':'Select all';
+      btn.onclick=()=>{ const ids=inCat.map(x=>x.id); if(allSel) aiSel=aiSel.filter(id=>!ids.includes(id)); else ids.forEach(id=>{ if(!aiSel.includes(id)) aiSel.push(id); }); renderAiGrid(); };
+      hd.appendChild(btn); g.appendChild(hd); }
+    const cell=document.createElement('div'); cell.className='aicell'; cell.dataset.id=c.id;
     cell.title=c.product+' · '+c.id+' · '+fmt(c.dur)+'s';
     cell.innerHTML=`<span class="ord"></span><span class="pick">＋</span><img src="${c.thumb}" loading="lazy"><div class="cap">${c.label} · ${fmt(c.dur)}s</div>`;
-    cell.onclick=()=>{ const i=aiSel.indexOf(c.id); if(i>=0) aiSel.splice(i,1); else aiSel.push(c.id); refreshAiSel(); };
+    cell.onclick=()=>{ const i=aiSel.indexOf(c.id); if(i>=0) aiSel.splice(i,1); else aiSel.push(c.id); renderAiGrid(); };
     g.appendChild(cell); });
-  refreshAiSel(); $('#aiModal').style.display='flex'; }
+  refreshAiSel(); g.scrollTop=sc; }
 function refreshAiSel(){ $('#aiCount').textContent=aiSel.length+' selected';
   document.querySelectorAll('#aiGrid .aicell').forEach(cell=>{ const i=aiSel.indexOf(cell.dataset.id);
     cell.classList.toggle('on', i>=0); cell.querySelector('.ord').textContent=i>=0?(i+1):''; cell.querySelector('.pick').textContent=i>=0?'✓':'＋'; }); }
@@ -1148,6 +1167,7 @@ async function aiBuildGo(){ if(!aiSel.length){ $('#aiStatus').textContent='Pick 
   else $('#aiStatus').textContent='Failed: '+((r&&r.log)||'error'); }
 $('#btnAiBuild').onclick=openAiBuild;
 $('#aiClose').onclick=closeAiBuild; $('#aiCancel').onclick=closeAiBuild; $('#aiGo').onclick=aiBuildGo;
+$('#aiFilter').oninput=renderAiGrid; $('#aiCat').onchange=renderAiGrid;
 
 $('#btnProjLoad').onclick=()=>projLoad($('#projSelect').value);
 $('#projSelect').onchange=()=>projLoad($('#projSelect').value);
