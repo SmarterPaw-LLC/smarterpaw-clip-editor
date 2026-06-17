@@ -152,9 +152,11 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.14.1</span>
+  <span class="ver" id="appVer">v1.15.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
+  <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
+  <button class="ghost" id="btnRedo" title="Redo (Ctrl+Shift+Z / Ctrl+Y)" disabled>↷ Redo</button>
   <button id="btnOverlays">✚ Overlays</button>
   <button class="ghost" id="btnReload">Reload clips</button>
   <button id="btnSave">Save</button>
@@ -531,6 +533,7 @@ function updateTotal(){ const t=totalDur(); $('#totalPill').textContent=fmt(t)+'
   if(playhead>t) playhead=0;
   if(!tlPlaying){ $('#tlTime').textContent=fmt(Math.min(playhead,t))+' / '+fmt(t)+'s'; $('#scrub').max=t; $('#scrub').value=Math.min(playhead,t); } }
 function segAction(a,i){
+  histCommit();   // seal prior state so this discrete action is its own undo step
   if(a==='up'&&i>0){ [EDL.segments[i-1],EDL.segments[i]]=[EDL.segments[i],EDL.segments[i-1]]; sel=i-1; }
   else if(a==='down'&&i<EDL.segments.length-1){ [EDL.segments[i+1],EDL.segments[i]]=[EDL.segments[i],EDL.segments[i+1]]; sel=i+1; }
   else if(a==='dup'){ EDL.segments.splice(i+1,0,JSON.parse(JSON.stringify(EDL.segments[i]))); sel=i+1; }
@@ -757,8 +760,9 @@ function renderOverlays(time){
     if(ovEdit){ el.style.pointerEvents='auto'; el.style.cursor='move'; el.style.outline=(o.id===ovSel)?'2px dashed #5b8cff':'none'; el.style.outlineOffset='3px'; dragify(el,o); }
     else { el.style.pointerEvents='none'; el.style.outline='none'; }
   });
+  histSchedule();
 }
-function dragify(el,o){ el.onpointerdown=ev=>{ ev.preventDefault(); ovSel=o.id; renderOvList(); buildOvEditor();
+function dragify(el,o){ el.onpointerdown=ev=>{ ev.preventDefault(); histCommit(); ovSel=o.id; renderOvList(); buildOvEditor();
   const wrap=$('#stageWrap').getBoundingClientRect();
   const move=e=>{ o.x=Math.max(0,Math.min(1,(e.clientX-wrap.left)/wrap.width)); o.y=Math.max(0,Math.min(1,(e.clientY-wrap.top)/wrap.height)); renderOverlays(playhead); };
   const up=()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); };
@@ -772,7 +776,7 @@ function renderOvList(){
   if(!ovs.length){ box.innerHTML='<div style="color:var(--mut);font-size:12px">No overlays yet — add Text, Shape, or Image.</div>'; renderTracks(); return; }
   box.insertAdjacentHTML('beforeend','<div style="font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px">▲ top of list = front layer</div>');
   const move=(o,dir)=>{ const i=EDL.overlays.indexOf(o), j=i+dir; if(i<0||j<0||j>=EDL.overlays.length) return;
-    [EDL.overlays[i],EDL.overlays[j]]=[EDL.overlays[j],EDL.overlays[i]]; renderOvList(); buildOvEditor(); renderOverlays(playhead); renderTracks(); };
+    histCommit(); [EDL.overlays[i],EDL.overlays[j]]=[EDL.overlays[j],EDL.overlays[i]]; renderOvList(); buildOvEditor(); renderOverlays(playhead); renderTracks(); };
   ovs.slice().reverse().forEach(o=>{ const row=document.createElement('div'); row.className='ecline'; if(o.id===ovSel) row.style.borderColor='var(--acc2)';
     const thumb=(o.type==='image'&&o.src)?`<img src="/${encodeURI(o.src)}" style="height:24px;width:auto;max-width:46px;border-radius:3px;background:#0008;flex:none">`:'';
     const icon=o.type==='image'?'🖼':(o.type==='shape'?'▭':'🅣');
@@ -783,7 +787,7 @@ function renderOvList(){
     row.querySelector('.ovsel').onclick=()=>{ ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
     row.querySelector('.ovup').onclick=()=>move(o,+1);
     row.querySelector('.ovdn').onclick=()=>move(o,-1);
-    row.querySelector('.ovdel').onclick=()=>{ EDL.overlays=EDL.overlays.filter(x=>x.id!==o.id); if(ovSel===o.id) ovSel=null; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
+    row.querySelector('.ovdel').onclick=()=>{ histCommit(); EDL.overlays=EDL.overlays.filter(x=>x.id!==o.id); if(ovSel===o.id) ovSel=null; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
     box.appendChild(row); });
   renderTracks();
 }
@@ -838,11 +842,11 @@ function buildOvEditor(){
 function pickImage(cb){ const f=$('#ovFile'); f.onchange=()=>{ const file=f.files[0]; if(!file) return; const r=new FileReader();
   r.onload=async()=>{ try{ const res=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:file.name,data:r.result})}); if(res.ok) cb(res.src); else toast('Upload failed'); }catch(e){ toast('Upload failed'); } f.value=''; };
   r.readAsDataURL(file); }; f.click(); }
-function addTextOverlay(){ EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'text',text:'New text',font:'cooper',color:'#ffffff',size:0.07,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3,button:false,bg:'#f07830'};
+function addTextOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'text',text:'New text',font:'cooper',color:'#ffffff',size:0.07,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3,button:false,bg:'#f07830'};
   EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
-function addImageOverlay(){ pickImage(src=>{ EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'image',src,scale:0.3,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
+function addImageOverlay(){ pickImage(src=>{ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'image',src,scale:0.3,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }); }
-function addShapeOverlay(){ EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'shape',w:0.6,h:0.18,fill:'#000000',opacity:0.45,radius:0.04,stroke:'#ffffff',strokeW:0,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
+function addShapeOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'shape',w:0.6,h:0.18,fill:'#000000',opacity:0.45,radius:0.04,stroke:'#ffffff',strokeW:0,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 $('#btnOverlays').onclick=openOvModal; $('#ovClose').onclick=closeOvModal;
 $('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay; $('#ovAddImage').onclick=addImageOverlay;
@@ -870,7 +874,7 @@ function renderTracks(){
     }
     tr.appendChild(row);
   }
-  positionPlayhead();
+  positionPlayhead(); histSchedule();
 }
 // Build one overlay bar element on its channel lane (drag to move/retime/change channel).
 function buildOverlayBar(o,total){ const b=document.createElement('div'); b.className='blk ov-'+o.type+(o.id===ovSel?' sel':'');
@@ -893,8 +897,8 @@ function buildClipBlock(o,total){ const i=o.idx, sg=o.seg;
   }
   return b;
 }
-function addChannel(){ EDL.channels=chCount()+1; renderTimeline(); toast('Channel '+(chCount()-1)+' added — drag clips up into it'); }
-function removeChannel(){ let used=0; (EDL.segments||[]).forEach(s=>{ used=Math.max(used,(+s.ch||0)); });
+function addChannel(){ histCommit(); EDL.channels=chCount()+1; renderTimeline(); toast('Channel '+(chCount()-1)+' added — drag clips up into it'); }
+function removeChannel(){ histCommit(); let used=0; (EDL.segments||[]).forEach(s=>{ used=Math.max(used,(+s.ch||0)); });
   (EDL.overlays||[]).forEach(o=>{ used=Math.max(used,(+o.ch||0)); });
   EDL.channels=Math.max(1,used+1); renderTimeline(); }   // collapse all empty trailing channels
 // drag a clip edge to change its duration. Two modes (Settings → "Edge drag"):
@@ -902,7 +906,7 @@ function removeChannel(){ let used=0; (EDL.segments||[]).forEach(s=>{ used=Math.
 //  • free  — only this clip's duration changes; neighbors stay pinned, opening/closing
 //            black gaps in the timeline (total can grow/shrink). Gaps are seg.gap (lead seconds).
 function clipResize(handle,i,side){
-  handle.onpointerdown=ev=>{ ev.stopPropagation(); ev.preventDefault();
+  handle.onpointerdown=ev=>{ ev.stopPropagation(); ev.preventDefault(); histCommit();
     const wrap=$('#tlTracksWrap'); const W=wrap.clientWidth||wrap.getBoundingClientRect().width||1; const x0=ev.clientX; const total0=totalDur()||1;
     const segs=EDL.segments; const free=(segs[i]&&segs[i].editMode==='free');   // per-clip edge-drag mode
     const d0=+segs[i].dur||0; const g0=+segs[i].gap||0;
@@ -930,7 +934,7 @@ function clipResize(handle,i,side){
 //  • base (ch0): horizontal = resequence in the story order; drop onto ch0 = rejoin the sequence.
 //  • upper (ch≥1): horizontal = set absolute start t0; drop onto a higher lane = cover the base there.
 function clipDragMulti(b,o){ const seg=o.seg;
-  b.onpointerdown=ev=>{ if(ev.target.closest('.hL,.hR,.modedot')) return; ev.stopPropagation(); ev.preventDefault();
+  b.onpointerdown=ev=>{ if(ev.target.closest('.hL,.hR,.modedot')) return; ev.stopPropagation(); ev.preventDefault(); histCommit();
     const area=$('#tlTracks').getBoundingClientRect(); const total=totalDur()||1; let moved=false; const x0=ev.clientX, y0=ev.clientY;
     const ptDown=Math.max(0,Math.min(total,(x0-area.left)/area.width*total)); const grabOff=ptDown-(o.start||0);   // keep the grabbed point under the cursor
     const targetCh=cy=>{ const lanes=[...document.querySelectorAll('#tlTracks .trk[data-ch]')];   // top→bottom = high→low
@@ -958,7 +962,7 @@ function clipDragMulti(b,o){ const seg=o.seg;
 }
 // Resize an upper-channel clip: right edge changes dur; left edge moves t0 while keeping the end fixed.
 function clipResizeUpper(handle,o,side){ const seg=o.seg;
-  handle.onpointerdown=ev=>{ ev.stopPropagation(); ev.preventDefault();
+  handle.onpointerdown=ev=>{ ev.stopPropagation(); ev.preventDefault(); histCommit();
     const area=$('#tlTracks').getBoundingClientRect(); const total=totalDur()||1; const x0=ev.clientX; const d0=+seg.dur||0, t0=+seg.t0||0;
     const rnd=x=>Math.round(x*100)/100;
     const mv=e=>{ const dt=(e.clientX-x0)/area.width*total;
@@ -979,7 +983,7 @@ function snap(t,pts,th){ let best=t,bd=th; for(const p of pts){ const d=Math.abs
 function ovBarInteract(b,hL,hR,o,total){
   const areaW=()=>($('#tlTracks').getBoundingClientRect().width||1);
   b.onclick=ev=>{ ev.stopPropagation(); ovSel=o.id; if(!ovEdit) openOvModal(); else { renderOvList(); buildOvEditor(); } renderOverlays(playhead); renderTracks(); };
-  const drag=mode=>ev=>{ ev.stopPropagation(); ev.preventDefault(); ovSel=o.id; const x0=ev.clientX, s0=o.start, d0=+o.dur||0, w=areaW();
+  const drag=mode=>ev=>{ ev.stopPropagation(); ev.preventDefault(); histCommit(); ovSel=o.id; const x0=ev.clientX, s0=o.start, d0=+o.dur||0, w=areaW();
     const th=Math.max(0.12, total*0.012);   // snap threshold (seconds)
     const mv=e=>{ const dt=(e.clientX-x0)/w*total; const pts=snapPoints(o);
       if(mode==='move'){ let ns=Math.max(0,s0+dt);
@@ -1041,6 +1045,17 @@ window.addEventListener('resize', ()=>{ if(EDL) sizeStage(); });
 /* ---------- projects ---------- */
 let curProj = null; // {file, name} of the currently loaded saved project (null = unsaved)
 
+/* ---------- undo / redo ---------- */
+let histPast=[], histFuture=[], lastSnap=null, histRestoring=false, histTimer=null;
+function histSnap(){ try{ return JSON.stringify(EDL); }catch(e){ return null; } }
+function histReset(){ histPast=[]; histFuture=[]; lastSnap=histSnap(); updateUndoUI(); }   // called on fresh load
+function histSchedule(){ if(histRestoring) return; clearTimeout(histTimer); histTimer=setTimeout(histCommit, 350); }   // debounce a gesture into one entry
+function histCommit(){ if(histRestoring) return; const cur=histSnap(); if(cur===null||cur===lastSnap) return;   // no change → no entry
+  histPast.push(lastSnap); if(histPast.length>120) histPast.shift(); histFuture.length=0; lastSnap=cur; updateUndoUI(); }
+function histRestore(json){ histRestoring=true; applyEDL(JSON.parse(json)); lastSnap=json; histRestoring=false; updateUndoUI(); }
+function doUndo(){ histCommit(); if(!histPast.length) return; histFuture.push(lastSnap); histRestore(histPast.pop()); toast('Undo'); }
+function doRedo(){ if(!histFuture.length) return; histPast.push(lastSnap); histRestore(histFuture.pop()); toast('Redo'); }
+function updateUndoUI(){ const u=$('#btnUndo'), r=$('#btnRedo'); if(u) u.disabled=!histPast.length; if(r) r.disabled=!histFuture.length; }
 function applyEDL(edl){
   EDL = edl || {};
   if(!EDL.settings) EDL.settings={};
@@ -1060,6 +1075,7 @@ function applyEDL(edl){
   [...new Set(EDL.segments.map(s=>s.id))].forEach(getVid);  // preload timeline clips
   renderOverlays(playhead||0);
   if(sel>=0) selectSeg(0); else stop();
+  if(!histRestoring) histReset();   // fresh load clears undo history
 }
 function setCur(p){ curProj=p; $('#projCur').textContent = p ? ('● '+p.name) : '○ unsaved'; }
 async function loadProjects(selectFile){
@@ -1134,6 +1150,12 @@ $('#btnProjDel').onclick=projDelete;
 $('#btnExport').onclick=exportJSON;
 $('#btnImport').onclick=()=>$('#fileImport').click();
 $('#fileImport').onchange=e=>{ if(e.target.files[0]) importJSON(e.target.files[0]); e.target.value=''; };
+$('#btnUndo').onclick=doUndo; $('#btnRedo').onclick=doRedo;
+document.addEventListener('keydown', e=>{ if(!(e.ctrlKey||e.metaKey)) return; const k=(e.key||'').toLowerCase();
+  const tag=(document.activeElement&&document.activeElement.tagName||'').toLowerCase();
+  if(tag==='input'||tag==='textarea'||tag==='select') return;   // let form fields keep their own text undo
+  if(k==='z'&&!e.shiftKey){ e.preventDefault(); doUndo(); }
+  else if(k==='y'||(k==='z'&&e.shiftKey)){ e.preventDefault(); doRedo(); } });
 
 /* ---------- boot ---------- */
 async function boot(reload){
