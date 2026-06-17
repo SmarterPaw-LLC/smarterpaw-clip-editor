@@ -152,7 +152,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.15.0</span>
+  <span class="ver" id="appVer">v1.15.1</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -947,7 +947,14 @@ function clipDragMulti(b,o){ const seg=o.seg;
       const pt=Math.max(0,Math.min(total,(e.clientX-area.left)/area.width*total));
       const curCh=+seg.ch||0, tch=Math.max(0,Math.min(chCount()-1,targetCh(e.clientY)));   // existing channels only — use + Channel to add
       if(tch!==curCh){                                  // moved to a different existing channel
-        if(tch===0){ seg.ch=0; delete seg.t0; const cur=EDL.segments.indexOf(seg); const ti=baseIdxAt(pt); if(cur>=0){ EDL.segments.splice(ti,0,EDL.segments.splice(cur,1)[0]); } }
+        if(tch===0){ seg.ch=0; delete seg.t0;
+          const ti=baseIdxAt(pt); let beforeClip=EDL.segments[ti]; if(!beforeClip||(+beforeClip.ch||0)!==0||beforeClip===seg) beforeClip=null;   // the base clip we drop in front of
+          const cur=EDL.segments.indexOf(seg); if(cur>=0) EDL.segments.splice(cur,1);
+          const insAt=beforeClip?EDL.segments.indexOf(beforeClip):EDL.segments.length; EDL.segments.splice(insAt,0,seg);
+          seg.gap=0;
+          if(seg.editMode==='free' && beforeClip)   // cut mode: fill the existing gap instead of pushing the clips after
+            beforeClip.gap=Math.round(Math.max(0,(+beforeClip.gap||0)-(+seg.dur||0))*100)/100;
+        }
         else { leaveBaseGap(); seg.ch=tch; delete seg.gap; seg.t0=Math.max(0,Math.round((pt-grabOff)*100)/100); }   // land where dragged
         sel=EDL.segments.indexOf(seg); renderTimeline(); return;
       }
