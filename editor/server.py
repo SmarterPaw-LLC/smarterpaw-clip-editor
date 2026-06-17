@@ -450,6 +450,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
     overlays = [o for o in (overlays or []) if isinstance(o, dict) and o.get("type") in ("text", "image", "shape")]
     if not overlays:
         return silent, None
+    overlays = sorted(overlays, key=lambda o: int(o.get("ch", 0) or 0))   # higher channel composited later = on top (stable within a channel)
     inputs = ["-i", silent]
     fc = []
     last = "0:v"
