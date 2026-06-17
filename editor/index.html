@@ -127,6 +127,16 @@
   .cmodal .bd .row { display:flex; gap:8px; align-items:center; }
   .cmodal .bd label.k { font-size:12px; color:var(--mut); min-width:74px; }
   .cmodal .bd input[type=text] { flex:1; }
+  .cmodal .bd textarea { flex:1; background:var(--bg); color:var(--txt); border:1px solid var(--line); border-radius:7px; padding:6px 8px; font:inherit; resize:vertical; }
+  .aigrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(118px,1fr)); gap:8px; max-height:300px; overflow:auto; padding:6px; border:1px solid var(--line); border-radius:8px; background:var(--bg); }
+  .aicell { position:relative; border:2px solid transparent; border-radius:8px; overflow:hidden; cursor:pointer; background:var(--panel2); }
+  .aicell img { width:100%; height:78px; object-fit:cover; display:block; background:#000; }
+  .aicell .cap { font-size:10px; padding:3px 5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--txt); }
+  .aicell.on { border-color:var(--acc2); }
+  .aicell .pick { position:absolute; top:4px; right:4px; width:20px; height:20px; border-radius:50%; background:#000a; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; }
+  .aicell.on .pick { background:var(--acc2); }
+  .aicell .ord { position:absolute; top:4px; left:4px; background:var(--acc2); color:#06122e; font-weight:800; font-size:11px; border-radius:4px; padding:0 5px; display:none; }
+  .aicell.on .ord { display:block; }
   .ecline { display:flex; flex-wrap:wrap; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:8px; }
   .ecline input.ecl-text { flex:1; min-width:120px; }
   .ecline input[type=color] { width:34px; height:26px; padding:0; border:none; background:none; }
@@ -136,7 +146,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.9.0</span>
+  <span class="ver" id="appVer">v1.11.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button id="btnOverlays">✚ Overlays</button>
@@ -152,6 +162,7 @@
   <button class="mini" id="btnProjSave" title="Save changes to this project">Save</button>
   <button class="mini" id="btnProjSaveAs">Save As…</button>
   <button class="mini" id="btnProjNew">New</button>
+  <button class="mini" id="btnAiBuild" title="New AI-assisted build — pick clips + a brief, then tell Claude to assemble">✨ AI build…</button>
   <button class="mini" id="btnProjDel" title="Delete this project">Delete</button>
   <span class="sp"></span>
   <span class="cur" id="projCur">—</span>
@@ -222,6 +233,10 @@
         <select id="setCanvas"><option value="9x16">9:16 Reels/Stories</option>
           <option value="4x5">4:5 Meta feed</option><option value="16x9">16:9 YouTube</option></select></div>
       <div class="row"><label>Music</label><select id="setMusic"></select></div>
+      <div class="row"><label>Edge drag</label>
+        <select id="setEditMode" title="What happens when you drag a clip's edge on the timeline">
+          <option value="roll">Roll — neighbor absorbs (length fixed)</option>
+          <option value="free">Free — independent (creates gaps)</option></select></div>
       <div class="row"><label>End card</label><button class="mini" id="btnEndcard">🎬 Edit end card…</button></div>
     </div>
     <div class="status" id="status">Loading…</div>
@@ -295,6 +310,26 @@
       <div class="row"><label class="k"></label><label class="ck" style="color:var(--txt)"><input type="checkbox" id="exStamp" checked> Add timestamp (never overwrite an existing file)</label></div>
       <div class="row" style="justify-content:flex-end;gap:8px"><button class="ghost" id="exCancel">Cancel</button><button class="primary" id="exGo">▶ Render</button></div>
       <div class="status" id="exStatus"></div>
+    </div>
+  </div>
+</div>
+
+<div id="aiModal" class="cmodal" style="display:none">
+  <div class="card" style="width:780px">
+    <div class="hd"><span>✨ New AI-assisted build</span><button class="mini" id="aiClose">✕</button></div>
+    <div class="bd">
+      <div class="row"><label class="k">Name</label><input type="text" id="aiName" placeholder="e.g. Zoomies hero" spellcheck="false"></div>
+      <div class="row"><label class="k">Placement</label>
+        <select id="aiCanvas"><option value="9x16">9:16 Reels / Stories</option>
+          <option value="4x5">4:5 Meta feed</option><option value="16x9">16:9 YouTube</option></select>
+        <label class="k" style="min-width:auto">Length</label>
+        <input type="number" id="aiLen" value="15" min="3" max="120" step="1" style="width:64px"><span style="color:var(--mut);font-size:12px">sec</span></div>
+      <div class="row" style="align-items:flex-start"><label class="k" style="margin-top:6px">Brief</label>
+        <textarea id="aiBrief" rows="3" placeholder="Story / vibe / hook you want — e.g. 'Fast punchy hook, cat going wild on the joint, end on total zen. Playful, sound-on, captions.'"></textarea></div>
+      <div class="row" style="justify-content:space-between"><label class="k" style="min-width:auto">Pick clips (click to select; number = order)</label><span id="aiCount" style="font-size:12px;color:var(--mut)">0 selected</span></div>
+      <div id="aiGrid" class="aigrid"></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button class="ghost" id="aiCancel">Cancel</button><button class="primary" id="aiGo">✨ Create build &amp; notify Claude</button></div>
+      <div class="status" id="aiStatus"></div>
     </div>
   </div>
 </div>
@@ -415,7 +450,11 @@ function renderBin(){
 }
 
 /* ---------- timeline ---------- */
-function totalDur(){ let t=0; EDL.segments.forEach(s=>t+=(+s.dur||0)); const ec=normEndcard(EDL.settings); return t+(ec.enabled?ec.dur:0); }
+function clipBounds(){ let acc=0; const b=[];   // gap-aware timeline layout
+  (EDL.segments||[]).forEach((s,i)=>{ const g=Math.max(0,+s.gap||0), d=Math.max(0.05,+s.dur||1);
+    b.push({gapStart:acc, start:acc+g, end:acc+g+d, gap:g, dur:d, seg:s, idx:i}); acc+=g+d; });
+  return {bounds:b, vidTotal:acc}; }
+function totalDur(){ const ec=normEndcard(EDL.settings); return clipBounds().vidTotal + (ec.enabled?ec.dur:0); }
 function renderTimeline(){
   const tl=$('#timeline'); tl.innerHTML='';
   EDL.segments.forEach((s,i)=>{
@@ -499,9 +538,11 @@ function stop(){ tlPlaying=false; pbToken++; cancelAnimationFrame(segRaf); cance
 // Show the frame at the current timeline playhead (used when scrubbing while stopped).
 function seekToPlayhead(){
   const ec=normEndcard(EDL.settings);
-  let acc=0, found=null, off=0;
-  for(const s of EDL.segments){ const d=Math.max(0.05,+s.dur||1); if(playhead < acc+d){ found=s; off=playhead-acc; break; } acc+=d; }
+  const {bounds, vidTotal}=clipBounds(); let acc=vidTotal, found=null, off=0, inGap=false;
+  for(const bd of bounds){ if(playhead < bd.start){ inGap=true; break; }   // playhead sits in this clip's lead gap → black
+    if(playhead < bd.end){ found=bd.seg; off=playhead-bd.start; break; } }
   $('#tlTime').textContent=fmt(playhead)+' / '+fmt(totalDur())+'s'; $('#vidTime').textContent=fmt(playhead)+'s';
+  if(inGap){ showVid(null); showCap(''); $('#endcard').style.display='none'; renderOverlays(playhead); positionPlayhead(); return; }
   if(found){ const v=getVid(found.id); if(v){ showVid(found.id); applyFraming(found,v); try{v.currentTime=(+found.in||0)+off;}catch(e){}
       let op=1; const fi=+found.fadeIn||0, fo=+found.fadeOut||0, dd=+found.dur||0;   // show clip fade while scrubbing
       if(fi>0 && off<fi) op=Math.max(0,off/fi);
@@ -547,10 +588,9 @@ function playTimeline(){
   $('#btnPlayTl').textContent='❚❚ Stop'; $('#endcard').style.display='none';
   if(MAN.music.includes(EDL.settings.music)){ music.src='/sources/music/'+encodeURIComponent(EDL.settings.music);
     music.currentTime=0; music.volume=0.5; music.play().catch(()=>{}); }
-  const segs=EDL.segments, bounds=[]; let acc=0;
-  segs.forEach(s=>{ const d=Math.max(0.05,+s.dur||1); bounds.push({a:acc,b:acc+d,s}); acc+=d; });
+  const cb=clipBounds(); const bounds=cb.bounds.map(bd=>({a:bd.start,b:bd.end,gapStart:bd.gapStart,s:bd.seg}));
   const ec=normEndcard(EDL.settings);
-  const vidTotal=acc, endDur=(ec.enabled?ec.dur:0), total=vidTotal+endDur;
+  const vidTotal=cb.vidTotal, endDur=(ec.enabled?ec.dur:0), total=vidTotal+endDur;
   if(playhead>=total-0.05) playhead=0;                // restart only if parked at the very end (past the end card)
   let curIdx=-1; const t0=performance.now()-playhead*1000;   // resume from the playhead
   const tick=()=>{
@@ -571,7 +611,12 @@ function playTimeline(){
       renderOverlays(playhead); positionPlayhead();
       return;
     }
-    let idx=0; for(let k=0;k<bounds.length;k++){ if(e>=bounds[k].a && e<bounds[k].b){ idx=k; break; } if(k===bounds.length-1) idx=k; }
+    let idx=-1, inGap=false; for(let k=0;k<bounds.length;k++){ if(e<bounds[k].b){ idx=k; if(e<bounds[k].a) inGap=true; break; } }
+    if(idx<0) idx=bounds.length-1;
+    if(inGap){                                          // playhead in a black gap between clips
+      if(curIdx!==-2){ curIdx=-2; for(const k in vids){ try{vids[k].pause();}catch(_){} } showVid(null); showCap(''); }
+      renderOverlays(playhead); positionPlayhead(); return;
+    }
     const bd=bounds[idx], s=bd.s, v=getVid(s.id), want=(+s.in||0)+(e-bd.a);
     if(idx!==curIdx){                                  // entered a new segment
       curIdx=idx;
@@ -612,6 +657,7 @@ function chooseCanvas(c){ EDL.settings.canvas=c; if($('#setCanvas')) $('#setCanv
 $('#setCanvas').onchange=e=>chooseCanvas(e.target.value);
 document.querySelectorAll('.arbtn').forEach(b=>b.onclick=()=>chooseCanvas(b.dataset.ar));
 $('#setMusic').onchange=e=>{ EDL.settings.music=e.target.value; };
+$('#setEditMode').onchange=e=>{ EDL.settings.editMode=e.target.value; };
 
 /* ---------- end-card modal ---------- */
 function ecBgModeUI(){ const m=$('#ecBgMode').value; $('#ecGradRow').style.display=(m==='gradient')?'':'none'; $('#ecColorRow').style.display=(m==='color')?'':'none'; }
@@ -801,27 +847,37 @@ function renderTracks(){
     const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR'; b.appendChild(hL); b.appendChild(hR);
     ovBarInteract(b,hL,hR,o,total); row.appendChild(b); tr.appendChild(row); });
   // clips track at the BOTTOM (base layer)
-  const ct=document.createElement('div'); ct.className='trk'; let acc=0;
-  EDL.segments.forEach((sg,i)=>{ const d=Math.max(0.05,+sg.dur||1); const b=document.createElement('div'); b.className='blk clip'+(i===sel?' sel':'');
-    b.style.left=(acc/total*100)+'%'; b.style.width=(d/total*100)+'%'; const c=MAN.byId[sg.id];
+  const ct=document.createElement('div'); ct.className='trk';
+  clipBounds().bounds.forEach(bd=>{ const i=bd.idx, sg=bd.seg; const b=document.createElement('div'); b.className='blk clip'+(i===sel?' sel':'');
+    b.style.left=(bd.start/total*100)+'%'; b.style.width=(bd.dur/total*100)+'%'; const c=MAN.byId[sg.id];
     b.textContent=(i+1)+'. '+(((c&&c.label)||sg.id).slice(0,16)); b.title=b.textContent;
     clipDrag(b,i);
     const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR';
     b.appendChild(hL); b.appendChild(hR); clipResize(hL,i,'l'); clipResize(hR,i,'r');
-    ct.appendChild(b); acc+=d; });
+    ct.appendChild(b); });
   if(ec.enabled){ const eb=document.createElement('div'); eb.className='blk endcard'; eb.style.left=(vidTotal/total*100)+'%'; eb.style.width=(ec.dur/total*100)+'%'; eb.textContent='End card'; eb.title='End card'; eb.onclick=ev=>{ ev.stopPropagation(); openEcModal(); }; ct.appendChild(eb); }
   const cl=document.createElement('div'); cl.className='lab'; cl.textContent='Clips'; ct.appendChild(cl); tr.appendChild(ct);
   positionPlayhead();
 }
-// drag a clip edge to change its duration; the neighbor absorbs it (roll) so total stays fixed.
-// Last clip's right edge / first clip's left edge have no neighbor, so they extend the total.
+// drag a clip edge to change its duration. Two modes (Settings → "Edge drag"):
+//  • roll  — the neighbor absorbs the change so the total stays fixed (default).
+//  • free  — only this clip's duration changes; neighbors stay pinned, opening/closing
+//            black gaps in the timeline (total can grow/shrink). Gaps are seg.gap (lead seconds).
 function clipResize(handle,i,side){
   handle.onpointerdown=ev=>{ ev.stopPropagation(); ev.preventDefault();
     const wrap=$('#tlTracksWrap'); const W=wrap.clientWidth||wrap.getBoundingClientRect().width||1; const x0=ev.clientX; const total0=totalDur()||1;
-    const segs=EDL.segments; const d0=+segs[i].dur||0; const nbrIdx=side==='r'?i+1:i-1; const nbr=segs[nbrIdx]; const nd0=nbr?(+nbr.dur||0):0;
+    const segs=EDL.segments; const free=(EDL.settings&&EDL.settings.editMode)==='free';
+    const d0=+segs[i].dur||0; const g0=+segs[i].gap||0;
+    const nbrIdx=side==='r'?i+1:i-1; const nbr=segs[nbrIdx]; const nd0=nbr?(+nbr.dur||0):0; const ng0=nbr?(+nbr.gap||0):0;
     const rnd=x=>Math.round(x*100)/100;
     const mv=e=>{ const dt=(e.clientX-x0)/W*total0;
-      if(side==='r'){
+      if(free){
+        if(side==='r'){                           // change this clip's dur; next clip stays pinned via its lead gap
+          let delta=Math.max(0.2-d0, dt); segs[i].dur=rnd(d0+delta);
+          if(nbr) segs[nbrIdx].gap=rnd(Math.max(0,ng0-delta));   // shrink→gap opens; grow→gap closes then pushes next
+        } else {                                  // left edge: keep this clip's END fixed by trading dur ↔ its own lead gap
+          let delta=Math.min(d0-0.2, Math.max(-g0, dt)); segs[i].dur=rnd(d0-delta); segs[i].gap=rnd(Math.max(0,g0+delta)); }
+      } else if(side==='r'){
         if(nbr){ let delta=Math.max(0.2-d0, Math.min(dt, nd0-0.2)); segs[i].dur=rnd(d0+delta); segs[nbrIdx].dur=rnd(nd0-delta); }
         else segs[i].dur=rnd(Math.max(0.2,d0+dt)); }
       else {
@@ -839,8 +895,8 @@ function clipDrag(b,idx){
     const area=$('#tlTracks').getBoundingClientRect(); const total=totalDur()||1; let moved=false; const x0=ev.clientX;
     const mv=e=>{ if(!moved && Math.abs(e.clientX-x0)<5) return; moved=true;
       const pt=Math.max(0,Math.min(total,(e.clientX-area.left)/area.width*total));
-      let acc=0, ti=EDL.segments.length-1;
-      for(let i=0;i<EDL.segments.length;i++){ const d=Math.max(0.05,+EDL.segments[i].dur||1); if(pt<acc+d){ ti=i; break; } acc+=d; }
+      let ti=EDL.segments.length-1; const bns=clipBounds().bounds;
+      for(const bd of bns){ if(pt<bd.end){ ti=bd.idx; break; } }
       const cur=EDL.segments.indexOf(seg);
       if(cur>=0 && ti!==cur){ EDL.segments.splice(ti,0,EDL.segments.splice(cur,1)[0]); sel=ti; renderTimeline(); } };
     const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); if(!moved) selectSeg(idx); };
@@ -848,8 +904,7 @@ function clipDrag(b,idx){
   };
 }
 function snapPoints(self){            // times that overlay edges snap to
-  const pts=[0]; let acc=0;
-  EDL.segments.forEach(sg=>{ pts.push(acc); acc+=Math.max(0.05,+sg.dur||1); }); pts.push(acc);
+  const pts=[0]; clipBounds().bounds.forEach(bd=>{ pts.push(bd.start); pts.push(bd.end); });
   pts.push(totalDur()); pts.push(playhead);
   (EDL.overlays||[]).forEach(x=>{ if(x.id!==self.id){ pts.push(+x.start||0); pts.push((+x.start||0)+(+x.dur||0)); } });
   return pts;
@@ -932,6 +987,7 @@ function applyEDL(edl){
   const ms=$('#setMusic'); ms.innerHTML=MAN.music.map(m=>`<option ${m===s.music?'selected':''}>${m}</option>`).join('');
   if(!MAN.music.includes(s.music)) s.music=MAN.music[0]||'';
   $('#setMusic').value=s.music; $('#setCanvas').value=s.canvas;
+  if(s.editMode!=='free') s.editMode='roll'; $('#setEditMode').value=s.editMode;
   document.querySelectorAll('.arbtn').forEach(b=>b.classList.toggle('on', b.dataset.ar===s.canvas));
   const _px=CANVAS_PX[s.canvas]||[1080,1920]; if($('#arDim')) $('#arDim').textContent=_px[0]+'×'+_px[1];
   sel = EDL.segments.length?0:-1;
@@ -976,6 +1032,33 @@ function exportJSON(){ const name=(curProj&&curProj.name)||'project';
 function importJSON(file){ const r=new FileReader();
   r.onload=()=>{ try{ const edl=JSON.parse(r.result); applyEDL(edl); setCur(null); toast('Imported “'+(edl.name||file.name)+'” — use Save As to keep it'); }catch(e){ toast('Invalid JSON file'); } };
   r.readAsText(file); }
+
+/* ---------- AI-assisted build (clip picker → handoff manifest for Claude) ---------- */
+let aiSel=[];   // selected clip ids, in pick order
+function openAiBuild(){ stop(); aiSel=[]; $('#aiName').value=''; $('#aiBrief').value=''; $('#aiStatus').textContent='';
+  $('#aiCanvas').value=EDL.settings.canvas||'9x16';
+  const g=$('#aiGrid'); g.innerHTML='';
+  MAN.clips.forEach(c=>{ const cell=document.createElement('div'); cell.className='aicell'; cell.dataset.id=c.id;
+    cell.title=c.product+' · '+c.id+' · '+fmt(c.dur)+'s';
+    cell.innerHTML=`<span class="ord"></span><span class="pick">＋</span><img src="${c.thumb}" loading="lazy"><div class="cap">${c.label} · ${fmt(c.dur)}s</div>`;
+    cell.onclick=()=>{ const i=aiSel.indexOf(c.id); if(i>=0) aiSel.splice(i,1); else aiSel.push(c.id); refreshAiSel(); };
+    g.appendChild(cell); });
+  refreshAiSel(); $('#aiModal').style.display='flex'; }
+function refreshAiSel(){ $('#aiCount').textContent=aiSel.length+' selected';
+  document.querySelectorAll('#aiGrid .aicell').forEach(cell=>{ const i=aiSel.indexOf(cell.dataset.id);
+    cell.classList.toggle('on', i>=0); cell.querySelector('.ord').textContent=i>=0?(i+1):''; cell.querySelector('.pick').textContent=i>=0?'✓':'＋'; }); }
+function closeAiBuild(){ $('#aiModal').style.display='none'; }
+async function aiBuildGo(){ if(!aiSel.length){ $('#aiStatus').textContent='Pick at least one clip first.'; return; }
+  const payload={ name:($('#aiName').value||'').trim()||'AI build', clips:aiSel.slice(),
+    canvas:$('#aiCanvas').value, length:parseFloat($('#aiLen').value)||15, brief:($('#aiBrief').value||'').trim() };
+  $('#aiStatus').textContent='Creating build…'; $('#aiGo').disabled=true;
+  const r=await api('/api/ai-build',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  $('#aiGo').disabled=false;
+  if(r&&r.ok){ $('#aiStatus').textContent=`✓ Ready — ${r.clips} clip(s) logged at ${r.manifest}. Now tell Claude “run here”.`;
+    toast('AI build ready — tell Claude to run here'); setTimeout(closeAiBuild, 3000); }
+  else $('#aiStatus').textContent='Failed: '+((r&&r.log)||'error'); }
+$('#btnAiBuild').onclick=openAiBuild;
+$('#aiClose').onclick=closeAiBuild; $('#aiCancel').onclick=closeAiBuild; $('#aiGo').onclick=aiBuildGo;
 
 $('#btnProjLoad').onclick=()=>projLoad($('#projSelect').value);
 $('#projSelect').onchange=()=>projLoad($('#projSelect').value);

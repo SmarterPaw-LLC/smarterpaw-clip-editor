@@ -3,7 +3,7 @@
 Stdlib only. Serves the editor UI + source clips (with HTTP Range) and renders
 the timeline to MP4 via ffmpeg. Bind: http://127.0.0.1:8765/
 """
-import os, re, json, subprocess, tempfile, shutil, threading, urllib.parse, math
+import os, re, json, subprocess, tempfile, shutil, threading, urllib.parse, math, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -15,6 +15,7 @@ EXPORTS = os.path.join(PROJ, "exports")
 EDL_PATH = os.path.join(PROJ, "edl.json")
 PROJECTS = os.path.join(PROJ, "projects")
 ASSETS = os.path.join(PROJ, "assets")
+AI_BUILDS = os.path.join(PROJ, "ai-builds")
 
 _BIN = r"C:\Users\Jason\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin"
 FFMPEG = os.path.join(_BIN, "ffmpeg.exe")
@@ -185,6 +186,52 @@ def save_project(name, edl):
     with open(os.path.join(PROJECTS, fname), "w", encoding="utf-8") as f:
         json.dump(edl, f, indent=2)
     return {"file": fname, "name": name}
+
+
+def create_ai_build(name, clip_ids, canvas, length, brief):
+    """Record an 'AI build' handoff: Jason picked clips + wrote a brief in the editor.
+    We DON'T copy media — just write a manifest referencing the source clips, and append
+    a line to ai-builds/BUILD_LOG.md (the file Claude reads when Jason says 'run here')."""
+    by_id = {c["id"]: c for c in scan_sources()}
+    chosen = []
+    for cid in clip_ids:
+        c = by_id.get(cid)
+        if not c:
+            continue
+        chosen.append({"id": c["id"], "label": c["label"], "product": c["product"],
+                       "source": os.path.relpath(c["file"], PROJ).replace("\\", "/"),
+                       "url": c["url"], "dur": c["dur"], "w": c["w"], "h": c["h"]})
+    if not chosen:
+        return {"ok": False, "log": "None of the selected clips were found."}
+    now = datetime.datetime.now()
+    stamp = now.strftime("%Y%m%d-%H%M%S")
+    folder_name = f"{slug(name)}-{stamp}"
+    folder = os.path.join(AI_BUILDS, folder_name)
+    os.makedirs(folder, exist_ok=True)
+    manifest = {
+        "name": name, "status": "ready", "created": now.isoformat(timespec="seconds"),
+        "canvas": canvas, "targetLength": length, "brief": brief, "clips": chosen,
+        "_note": ("AI build handoff. status=ready means Jason finished picking clips in the editor. "
+                  "Assemble an EDL from these clips per the brief + target length, save it as a project, "
+                  "then point edl.json at it for preview/render."),
+    }
+    with open(os.path.join(folder, "manifest.json"), "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    rel_manifest = f"ai-builds/{folder_name}/manifest.json"
+    log_path = os.path.join(AI_BUILDS, "BUILD_LOG.md")
+    new_log = not os.path.exists(log_path)
+    with open(log_path, "a", encoding="utf-8") as f:
+        if new_log:
+            f.write("# AI build queue\n\n"
+                    "Each entry is a selection Jason made in the editor (New → ✨ AI build). "
+                    "When he says “run here”, read the newest **READY** manifest below and assemble the cut.\n\n")
+        f.write(f"- **{name}** — {now.strftime('%Y-%m-%d %H:%M')} · {len(chosen)} clip(s) · "
+                f"target {length}s {canvas} · status: **READY**\n"
+                f"  - manifest: `{rel_manifest}`\n"
+                f"  - brief: {brief or '(none given)'}\n"
+                f"  - clips: {', '.join(c['label'] + ' [' + c['id'] + ']' for c in chosen)}\n")
+    return {"ok": True, "folder": f"ai-builds/{folder_name}", "manifest": rel_manifest,
+            "name": name, "clips": len(chosen)}
 
 
 def seed_projects():
@@ -509,6 +556,15 @@ def render(edl, out_dir=None, out_name=None):
         lines = []
         total = 0.0
         for idx, seg in enumerate(segs):
+            gap = max(0.0, float(seg.get("gap", 0) or 0))   # lead black gap (free-mode timeline gaps)
+            if gap > 0.01:
+                gp = os.path.join(tmp, f"gap_{idx:02d}.mp4")
+                r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi",
+                         "-i", f"color=c=black:s={W}x{H}:r=30:d={gap}", "-vf", "format=yuv420p"] + ENC + [gp])
+                if r.returncode != 0:
+                    return {"ok": False, "log": f"gap {idx} failed:\n{r.stderr[-1500:]}"}
+                lines.append("file '" + gp.replace("\\", "/") + "'")
+                total += gap
             src = i2f.get(seg["id"])
             if not src:
                 return {"ok": False, "log": f"Clip not found for id {seg['id']}"}
@@ -704,6 +760,21 @@ class Handler(BaseHTTPRequestHandler):
             save_edl(data)
             try:
                 return self._json(render(data, out_dir, out_name))
+            except Exception as e:
+                return self._json({"ok": False, "log": repr(e)}, 500)
+        if path == "/api/ai-build":
+            clip_ids = data.get("clips") or []
+            if not clip_ids:
+                return self._json({"ok": False, "log": "Select at least one clip."}, 400)
+            name = (data.get("name") or "").strip() or "AI build"
+            canvas = data.get("canvas") or "9x16"
+            try:
+                length = float(data.get("length") or 15)
+            except Exception:
+                length = 15.0
+            brief = (data.get("brief") or "").strip()
+            try:
+                return self._json(create_ai_build(name, clip_ids, canvas, length, brief))
             except Exception as e:
                 return self._json({"ok": False, "log": repr(e)}, 500)
         if path == "/api/upload":
