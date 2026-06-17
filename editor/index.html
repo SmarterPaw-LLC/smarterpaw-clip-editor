@@ -136,7 +136,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.8.3</span>
+  <span class="ver" id="appVer">v1.9.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button id="btnOverlays">✚ Overlays</button>
@@ -429,6 +429,7 @@ function renderTimeline(){
         </div></div>
       <div class="nums">
         <label>in<input type="number" step="0.1" data-f="in" value="${s.in}"></label>
+        <label>out<input type="number" step="0.1" data-f="out" value="${(+s.in + +s.dur).toFixed(2)}"></label>
         <label>dur<input type="number" step="0.1" data-f="dur" value="${s.dur}"></label>
         <label>zoom<input type="number" step="0.05" min="1" data-f="zoom" value="${s.zoom||1}"></label>
         <label>anchor<select data-f="anchor">${['center','top','bottom','left','right'].map(a=>`<option ${a===(s.anchor||'center')?'selected':''}>${a}</option>`).join('')}</select></label>
@@ -448,8 +449,10 @@ function renderTimeline(){
       </div>`;
     el.querySelector('.hd').onclick=()=>selectSeg(i);
     el.querySelectorAll('[data-f]').forEach(inp=>{
-      inp.onchange=()=>{ let v=inp.value; if(['in','dur','zoom','fadeIn','fadeOut'].includes(inp.dataset.f)) v=parseFloat(v)||0;
-        EDL.segments[i][inp.dataset.f]=v; updateTotal(); if(i===sel) loadSegIntoTrim(); };
+      inp.onchange=()=>{ let v=inp.value; const f=inp.dataset.f; if(['in','dur','zoom','fadeIn','fadeOut','out'].includes(f)) v=parseFloat(v)||0;
+        if(f==='out'){ EDL.segments[i].dur=Math.max(0.1, v-(+EDL.segments[i].in||0)); }
+        else EDL.segments[i][f]=v;
+        updateTotal(); renderTimeline(); if(i===sel) loadSegIntoTrim(); };
     });
     el.querySelectorAll('[data-a]').forEach(b=>{ b.onclick=()=>segAction(b.dataset.a,i); });
     const cscrub=el.querySelector('.cscrub'), csct=el.querySelector('.csct');
@@ -802,10 +805,32 @@ function renderTracks(){
   EDL.segments.forEach((sg,i)=>{ const d=Math.max(0.05,+sg.dur||1); const b=document.createElement('div'); b.className='blk clip'+(i===sel?' sel':'');
     b.style.left=(acc/total*100)+'%'; b.style.width=(d/total*100)+'%'; const c=MAN.byId[sg.id];
     b.textContent=(i+1)+'. '+(((c&&c.label)||sg.id).slice(0,16)); b.title=b.textContent;
-    clipDrag(b,i); ct.appendChild(b); acc+=d; });
+    clipDrag(b,i);
+    const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR';
+    b.appendChild(hL); b.appendChild(hR); clipResize(hL,i,'l'); clipResize(hR,i,'r');
+    ct.appendChild(b); acc+=d; });
   if(ec.enabled){ const eb=document.createElement('div'); eb.className='blk endcard'; eb.style.left=(vidTotal/total*100)+'%'; eb.style.width=(ec.dur/total*100)+'%'; eb.textContent='End card'; eb.title='End card'; eb.onclick=ev=>{ ev.stopPropagation(); openEcModal(); }; ct.appendChild(eb); }
   const cl=document.createElement('div'); cl.className='lab'; cl.textContent='Clips'; ct.appendChild(cl); tr.appendChild(ct);
   positionPlayhead();
+}
+// drag a clip edge to change its duration; the neighbor absorbs it (roll) so total stays fixed.
+// Last clip's right edge / first clip's left edge have no neighbor, so they extend the total.
+function clipResize(handle,i,side){
+  handle.onpointerdown=ev=>{ ev.stopPropagation(); ev.preventDefault();
+    const wrap=$('#tlTracksWrap'); const W=wrap.clientWidth||wrap.getBoundingClientRect().width||1; const x0=ev.clientX; const total0=totalDur()||1;
+    const segs=EDL.segments; const d0=+segs[i].dur||0; const nbrIdx=side==='r'?i+1:i-1; const nbr=segs[nbrIdx]; const nd0=nbr?(+nbr.dur||0):0;
+    const rnd=x=>Math.round(x*100)/100;
+    const mv=e=>{ const dt=(e.clientX-x0)/W*total0;
+      if(side==='r'){
+        if(nbr){ let delta=Math.max(0.2-d0, Math.min(dt, nd0-0.2)); segs[i].dur=rnd(d0+delta); segs[nbrIdx].dur=rnd(nd0-delta); }
+        else segs[i].dur=rnd(Math.max(0.2,d0+dt)); }
+      else {
+        if(nbr){ let delta=Math.max(0.2-nd0, Math.min(dt, d0-0.2)); segs[i].dur=rnd(d0-delta); segs[nbrIdx].dur=rnd(nd0+delta); }
+        else segs[i].dur=rnd(Math.max(0.2,d0-dt)); }
+      renderTracks(); updateTotal(); };
+    const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); renderTimeline(); };
+    window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up);
+  };
 }
 // drag a clip block left/right to resequence it; click selects
 function clipDrag(b,idx){
