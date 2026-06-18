@@ -64,6 +64,7 @@
   .col h2 { font-size:12px; text-transform:uppercase; letter-spacing:.6px; color:var(--mut);
             margin:0; padding:10px 12px; position:sticky; top:0; background:var(--panel); border-bottom:1px solid var(--line); z-index:2;
             display:flex; align-items:center; gap:10px; }
+  #stageWrap.reframable:not(.panning) { cursor:grab; }
   #stageWrap.panning { cursor:grabbing; }
   #stageWrap.dragover, #bin.dragover { outline:2px dashed var(--acc,#8ab81d); outline-offset:-4px; }
   /* bin */
@@ -165,7 +166,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.27.4</span>
+  <span class="ver" id="appVer">v1.27.5</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -236,13 +237,16 @@
         <label>dur <input type="number" id="inDur" step="0.1" style="width:70px"></label>
       </div>
       <div class="row">
-        <label>zoom <input type="number" id="inZoom" step="0.05" min="1" style="width:64px"></label>
+        <label title="Zoom into the frame, then drag the preview to choose what stays in view">zoom
+          <input type="range" id="inZoomR" min="1" max="4" step="0.05" value="1" style="width:120px;vertical-align:middle">
+          <input type="number" id="inZoom" step="0.05" min="1" style="width:58px"></label>
         <label>anchor
           <select id="inAnchor">
             <option>center</option><option>top</option><option>bottom</option><option>left</option><option>right</option>
           </select></label>
+        <button class="mini" id="btnResetFrame" title="Reset zoom to 1 and re-center">⟲ Reset framing</button>
         <button class="mini" id="btnAddSel">+ Add this clip to timeline</button>
-        <span style="color:var(--mut);font-size:11px">drag preview to reframe · scroll to zoom</span>
+        <span style="color:var(--mut);font-size:11px">Tip: zoom in, then <b>drag the preview</b> to slide the crop (or scroll on the preview to zoom)</span>
       </div>
     </div>
   </div>
@@ -578,7 +582,7 @@ function renderTimeline(){
     const cscrub=el.querySelector('.cscrub'), csct=el.querySelector('.csct');
     cscrub.oninput=()=>{ const t=parseFloat(cscrub.value)||0; csct.textContent=fmt(t)+'s';
       stop(); sel=i; tl.querySelectorAll('.seg').forEach((x,xi)=>x.classList.toggle('sel',xi===i));
-      $('#inIn').value=s.in; $('#inDur').value=s.dur; $('#inZoom').value=s.zoom||1; $('#inAnchor').value=s.anchor||'center'; $('#trimName').textContent=name;
+      $('#inIn').value=s.in; $('#inDur').value=s.dur; $('#inZoom').value=s.zoom||1; $('#inZoomR').value=s.zoom||1; $('#inAnchor').value=s.anchor||'center'; $('#trimName').textContent=name;
       withClip(s.id, v=>{ if(!v) return; showVid(s.id); applyFraming(s,v); try{v.currentTime=t;}catch(e){} showCap(s.cap); });
     };
     el.querySelectorAll('[data-sa]').forEach(b=>{ b.onclick=(ev)=>{ ev.stopPropagation(); const t=parseFloat(cscrub.value)||0; const a=b.dataset.sa;
@@ -590,6 +594,7 @@ function renderTimeline(){
   });
   updateTotal();
   renderTracks();
+  const _stg=$('#stageWrap'); if(_stg) _stg.classList.toggle('reframable', sel>=0);   // grab cursor invites drag-to-reframe
 }
 function updateTotal(){ const t=totalDur(); $('#totalPill').textContent=fmt(t)+'s · '+EDL.settings.canvas;
   if(playhead>t) playhead=0;
@@ -607,7 +612,7 @@ function selectSeg(i){ stop(); sel=i; renderTimeline(); loadSegIntoTrim(); }
 function loadSegIntoTrim(){
   if(sel<0||!EDL.segments[sel]) return; const s=EDL.segments[sel]; const c=MAN.byId[s.id];
   $('#trimName').textContent=c?c.label:s.id;
-  $('#inIn').value=s.in; $('#inDur').value=s.dur; $('#inZoom').value=s.zoom||1; $('#inAnchor').value=s.anchor||'center';
+  $('#inIn').value=s.in; $('#inDur').value=s.dur; $('#inZoom').value=s.zoom||1; $('#inZoomR').value=s.zoom||1; $('#inAnchor').value=s.anchor||'center';
   withClip(s.id, v=>{ if(!v) return; showVid(s.id); applyFraming(s, v); try{v.currentTime=s.in;}catch(e){} showCap(s.cap); });
 }
 
@@ -726,8 +731,14 @@ $('#btnSetIn').onclick=()=>{ if(sel<0) return toast('Select a segment first'); c
 $('#btnSetOut').onclick=()=>{ if(sel<0) return toast('Select a segment first'); const v=activeVid(); if(!v) return; const s=EDL.segments[sel]; const d=Math.round((v.currentTime-s.in)*100)/100; if(d>0){ s.dur=d; loadSegIntoTrim(); renderTimeline(); } else toast('Playhead must be after IN'); };
 ['inIn','inDur','inZoom','inAnchor'].forEach(id=>{ $('#'+id).onchange=()=>{ if(sel<0) return; histCommit(); const s=EDL.segments[sel];
   s.in=parseFloat($('#inIn').value)||0; s.dur=parseFloat($('#inDur').value)||1; s.zoom=parseFloat($('#inZoom').value)||1;
+  $('#inZoomR').value=s.zoom;
   if(id==='inAnchor'){ s.anchor=$('#inAnchor').value; [s.panX,s.panY]=anchorFrac(s.anchor); }   // dropdown = coarse preset, resets free pan
   applyFraming(s); renderTimeline(); histCommit(); }; });
+$('#inZoomR').oninput=()=>{ if(sel<0) return; const s=EDL.segments[sel]; const z=parseFloat($('#inZoomR').value)||1; s.zoom=z; $('#inZoom').value=z; applyFraming(s); histSchedule(); };
+$('#btnResetFrame').onclick=()=>{ if(sel<0) return toast('Select a clip in the timeline first'); histCommit(); const s=EDL.segments[sel];
+  s.zoom=1; s.panX=0.5; s.panY=0.5; s.anchor='center';
+  $('#inZoom').value=1; $('#inZoomR').value=1; $('#inAnchor').value='center';
+  applyFraming(s); renderTimeline(); histCommit(); toast('Framing reset'); };
 $('#btnAddSel').onclick=()=>{ const id=$('#btnAddSel').dataset.id || (sel>=0&&EDL.segments[sel].id); if(!id) return toast('Click a clip first');
   const v=activeVid(); EDL.segments.push({id, in: v?Math.round(v.currentTime*100)/100:0, dur:2.0, cap:'', zoom:1, anchor:'center'}); sel=EDL.segments.length-1; renderTimeline(); selectSeg(sel); toast('Segment added'); };
 
@@ -756,7 +767,7 @@ $('#btnAddSel').onclick=()=>{ const id=$('#btnAddSel').dataset.id || (sel>=0&&ED
   stage.addEventListener('pointerup', endPan); stage.addEventListener('pointercancel', endPan);
   stage.addEventListener('wheel', e=>{ const s=curSeg(); if(!s||tlPlaying) return; e.preventDefault();
     let z=(+s.zoom||1) - e.deltaY*0.0015; z=Math.min(4,Math.max(1, Math.round(z*100)/100));
-    s.zoom=z; $('#inZoom').value=z; applyFraming(s); histSchedule();
+    s.zoom=z; $('#inZoom').value=z; $('#inZoomR').value=z; applyFraming(s); histSchedule();
   }, {passive:false});
 })();
 
