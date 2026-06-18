@@ -155,7 +155,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.17.0</span>
+  <span class="ver" id="appVer">v1.18.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -350,17 +350,29 @@
     <div class="hd"><span>🎬 Generate AI clip from a photo</span><button class="mini" id="genClose">✕</button></div>
     <div class="bd">
       <div class="row"><label class="k">Model</label>
-        <select id="genModel"><option value="kling">Kling — realistic motion (cheaper)</option><option value="luma">Luma — fast</option></select>
+        <select id="genModel">
+          <option value="kling-2.1">Kling 2.1 — natural motion (recommended)</option>
+          <option value="kling-2.1-pro">Kling 2.1 Pro — best quality ($$)</option>
+          <option value="kling-2-master">Kling 2 Master — top tier ($$$)</option>
+          <option value="kling-1.6-pro">Kling 1.6 Pro</option>
+          <option value="kling-1.6">Kling 1.6 — cheapest (most artifacts)</option>
+          <option value="luma-ray2">Luma Ray2</option>
+          <option value="luma">Luma</option></select>
         <label class="k" style="min-width:auto">Length</label><select id="genDur"><option value="5">5s</option><option value="10">10s</option></select>
         <label class="k" style="min-width:auto">Canvas</label>
         <select id="genCanvas"><option value="9x16">9:16</option><option value="4x5">4:5</option><option value="16x9">16:9</option></select></div>
       <div class="row"><label class="k">Category</label><input type="text" id="genCat" placeholder="ai-generated (saved under sources/youtube/&lt;category&gt;)" spellcheck="false"></div>
       <div class="row" style="align-items:flex-start"><label class="k" style="margin-top:6px">Prompt</label>
-        <textarea id="genPrompt" rows="2" placeholder="Motion to add — e.g. 'the cat sniffs and paws at the catnip joint, tail flicking, gentle camera push-in'"></textarea></div>
+        <textarea id="genPrompt" rows="2" placeholder="Keep motion simple & physical — e.g. 'gentle breathing, slight head turn, tail sways slowly, subtle camera drift'"></textarea></div>
+      <div class="row" style="align-items:flex-start"><label class="k" style="margin-top:6px">Avoid</label>
+        <textarea id="genNeg" rows="1" placeholder="negative prompt">morphing, distortion, warping, extra limbs, deformed paws, flicker, jitter, melting</textarea></div>
+      <div class="row"><label class="k">Motion</label>
+        <input type="range" id="genCfg" min="0.2" max="1" step="0.05" value="0.5" style="flex:1">
+        <span id="genCfgV" style="font-size:11px;color:var(--mut);min-width:120px">guidance 0.50 (lower = looser/more natural)</span></div>
       <div class="row" style="justify-content:space-between"><label class="k" style="min-width:auto">Pick a photo to animate</label><span id="genPick" style="font-size:12px;color:var(--mut)">none selected</span></div>
       <div class="row"><input type="text" id="genFilter" placeholder="🔍 filter…" style="flex:1" spellcheck="false"><select id="genCatSel"></select></div>
       <div id="genGrid" class="aigrid"></div>
-      <div class="row" style="justify-content:flex-end;gap:8px"><button class="ghost" id="genCancel">Cancel</button><button class="primary" id="genGo">🎬 Generate clip</button></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button class="ghost" id="genCancel">Cancel</button><button class="ghost" id="genAgain" title="Run again with the same photo + settings for another variant">↻ Regenerate</button><button class="primary" id="genGo">🎬 Generate clip</button></div>
       <div class="status" id="genStatus"></div>
     </div>
   </div>
@@ -1215,7 +1227,8 @@ function renderGenGrid(){ const g=$('#genGrid'); const sc=g.scrollTop; g.innerHT
 function closeGen(){ genPoll&&clearInterval(genPoll); genPoll=null; $('#genModal').style.display='none'; }
 async function genGo(){ if(!genSel){ $('#genStatus').textContent='Pick a photo first.'; return; }
   const payload={image:genSel, prompt:$('#genPrompt').value, model:$('#genModel').value, canvas:$('#genCanvas').value,
-    duration:parseInt($('#genDur').value)||5, category:($('#genCat').value||'ai-generated').trim()};
+    duration:parseInt($('#genDur').value)||5, category:($('#genCat').value||'ai-generated').trim(),
+    negative:$('#genNeg').value, cfg:parseFloat($('#genCfg').value)};
   $('#genGo').disabled=true; $('#genStatus').textContent='Submitting to '+payload.model+'…';
   const r=await api('/api/gen-video',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   if(!r||!r.ok){ $('#genGo').disabled=false; $('#genStatus').textContent='Failed: '+((r&&r.log)||'error'); return; }
@@ -1224,8 +1237,9 @@ async function genGo(){ if(!genSel){ $('#genStatus').textContent='Pick a photo f
     if(s.status==='done'){ clearInterval(genPoll); genPoll=null; $('#genGo').disabled=false; $('#genStatus').textContent='✓ Clip ready ('+s.clip+') — added to clips.'; toast('AI clip generated'); await boot(true); }
     else if(!s.ok){ clearInterval(genPoll); genPoll=null; $('#genGo').disabled=false; $('#genStatus').textContent='Failed: '+(s.log||'error'); }
     else $('#genStatus').textContent='Generating… '+secs+'s'+(s.queue!=null?(' (queue '+s.queue+')'):''); }, 6000); }
-$('#btnGenAI').onclick=openGen; $('#genClose').onclick=closeGen; $('#genCancel').onclick=closeGen; $('#genGo').onclick=genGo;
+$('#btnGenAI').onclick=openGen; $('#genClose').onclick=closeGen; $('#genCancel').onclick=closeGen; $('#genGo').onclick=genGo; $('#genAgain').onclick=genGo;
 $('#genFilter').oninput=renderGenGrid; $('#genCatSel').onchange=renderGenGrid;
+$('#genCfg').oninput=e=>{ $('#genCfgV').textContent='guidance '+(+e.target.value).toFixed(2)+' (lower = looser/more natural)'; };
 
 $('#btnProjLoad').onclick=()=>projLoad($('#projSelect').value);
 $('#projSelect').onchange=()=>projLoad($('#projSelect').value);

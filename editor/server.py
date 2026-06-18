@@ -240,9 +240,14 @@ UGC_PIC_ROOT = os.path.join(PROJ, "sources", "UGC_pictures")
 UGC_VID_ROOT = os.path.join(PROJ, "sources", "UGC_video")
 GEN_OUT = os.path.join(SRC_ROOT, "ai-generated")   # generated clips land here (under sources/youtube → scanned as clips)
 IMG_EXT = (".jpg", ".jpeg", ".png", ".webp")
-FAL_MODELS = {   # friendly name → fal model id (verified/adjusted live)
-    "kling": "fal-ai/kling-video/v1.6/standard/image-to-video",
-    "luma":  "fal-ai/luma-dream-machine/image-to-video",
+FAL_MODELS = {   # friendly name → fal model id (all verified to exist on fal)
+    "kling-2.1":      "fal-ai/kling-video/v2.1/standard/image-to-video",
+    "kling-2.1-pro":  "fal-ai/kling-video/v2.1/pro/image-to-video",
+    "kling-2-master": "fal-ai/kling-video/v2/master/image-to-video",
+    "kling-1.6-pro":  "fal-ai/kling-video/v1.6/pro/image-to-video",
+    "kling-1.6":      "fal-ai/kling-video/v1.6/standard/image-to-video",
+    "luma-ray2":      "fal-ai/luma-dream-machine/ray-2/image-to-video",
+    "luma":           "fal-ai/luma-dream-machine/image-to-video",
 }
 _gen_jobs = {}   # request_id → {model_id, category, saved}
 
@@ -286,22 +291,30 @@ def _fal_req(url, method="GET", key=None, body=None, timeout=60):
         return r.status, json.loads(r.read().decode("utf-8"))
 
 
-def gen_submit(image_rel, prompt, model, canvas, duration, category):
+def gen_submit(image_rel, prompt, model, canvas, duration, category, negative="", cfg=None):
     key = fal_key()
     if not key:
         return {"ok": False, "log": "No fal.ai key found (editor/.fal_key or FAL_KEY env var)."}
     full = os.path.normpath(os.path.join(PROJ, image_rel))
     if not full.startswith(PROJ) or not os.path.isfile(full):
         return {"ok": False, "log": "Image not found: " + str(image_rel)}
-    model_id = FAL_MODELS.get(model, FAL_MODELS["kling"])
+    model = model if model in FAL_MODELS else "kling-2.1"
+    model_id = FAL_MODELS[model]
     ext = os.path.splitext(full)[1].lower().lstrip(".")
     mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp"}.get(ext, "jpeg")
     with open(full, "rb") as f:
         data_uri = "data:image/%s;base64,%s" % (mime, base64.b64encode(f.read()).decode())
     ar = {"9x16": "9:16", "16x9": "16:9", "4x5": "9:16"}.get(canvas, "9:16")
     body = {"prompt": prompt or "subtle natural motion, cinematic", "image_url": data_uri, "aspect_ratio": ar}
-    if model == "kling":
+    if model.startswith("kling"):
         body["duration"] = "10" if int(duration or 5) >= 8 else "5"
+        if negative:
+            body["negative_prompt"] = negative
+        if cfg is not None:
+            try:
+                body["cfg_scale"] = float(cfg)
+            except Exception:
+                pass
     try:
         _, sub = _fal_req("https://queue.fal.run/" + model_id, "POST", key, body, timeout=90)
     except urllib.error.HTTPError as e:
@@ -970,8 +983,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "log": "No image selected."}, 400)
             try:
                 return self._json(gen_submit(img, (data.get("prompt") or "").strip(),
-                                             data.get("model") or "kling", data.get("canvas") or "9x16",
-                                             data.get("duration") or 5, data.get("category") or "ai-generated"))
+                                             data.get("model") or "kling-2.1", data.get("canvas") or "9x16",
+                                             data.get("duration") or 5, data.get("category") or "ai-generated",
+                                             (data.get("negative") or "").strip(), data.get("cfg")))
             except Exception as e:
                 return self._json({"ok": False, "log": repr(e)}, 500)
         if path == "/api/upload":
