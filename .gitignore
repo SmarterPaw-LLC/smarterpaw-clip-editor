@@ -21,6 +21,11 @@ editor/thumbs/
 __pycache__/
 *.pyc
 
+# --- Secrets / API keys (NEVER commit) ---
+editor/.fal_key
+*.fal_key
+.env
+
 # --- Local/editor state ---
 .claude/settings.local.json
 # user's saved project files (auto-seeded from edl.json on first run)
