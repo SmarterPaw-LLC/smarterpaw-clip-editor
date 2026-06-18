@@ -174,7 +174,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.28.1</span>
+  <span class="ver" id="appVer">v1.29.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -242,7 +242,13 @@
         <button class="mini" id="btnSetIn">⇤ Set IN = playhead</button>
         <button class="mini" id="btnSetOut">Set OUT = playhead ⇥</button>
         <label>in <input type="number" id="inIn" step="0.1" style="width:70px"></label>
-        <label>dur <input type="number" id="inDur" step="0.1" style="width:70px"></label>
+        <label title="Trim length in the SOURCE clip (seconds)">dur <input type="number" id="inDur" step="0.1" style="width:70px"></label>
+        <label title="Slow-motion (&lt;1×) or fast-forward (&gt;1×). Changes how long the clip occupies the timeline.">speed
+          <select id="inSpeed">
+            <option value="0.25">0.25× slow-mo</option><option value="0.5">0.5×</option><option value="0.75">0.75×</option>
+            <option value="1">1× normal</option><option value="1.5">1.5×</option><option value="2">2× fast</option><option value="3">3×</option><option value="4">4×</option>
+          </select></label>
+        <span id="inSpeedLen" style="color:var(--mut);font-size:11px"></span>
       </div>
       <div class="row">
         <label title="Zoom into the frame, then drag the preview to choose what stays in view">zoom
@@ -575,14 +581,17 @@ function chCount(){ let n=Math.max(1, +EDL.channels||1);   // channels hold both
   (EDL.segments||[]).forEach(s=>{ n=Math.max(n,(+s.ch||0)+1); });
   (EDL.overlays||[]).forEach(o=>{ n=Math.max(n,(+o.ch||0)+1); }); return n; }
 function chEmpty(ch){ return !(EDL.segments||[]).some(s=>(+s.ch||0)===ch) && !(EDL.overlays||[]).some(o=>(+o.ch||0)===ch); }
+// Per-clip playback speed. dur stays SOURCE seconds; timeline footprint = dur/speed.
+function segSpeed(s){ return Math.max(0.1, Math.min(10, +s.speed||1)); }
+function segLen(s){ return Math.max(0.05, (Math.max(0.05,+s.dur||1))/segSpeed(s)); }   // timeline span
 // Base track = channel 0, laid out sequentially with lead gaps (the master story timeline).
 function clipBounds(){ let acc=0; const b=[];
-  (EDL.segments||[]).forEach((s,i)=>{ if((+s.ch||0)!==0) return; const g=Math.max(0,+s.gap||0), d=Math.max(0.05,+s.dur||1);
+  (EDL.segments||[]).forEach((s,i)=>{ if((+s.ch||0)!==0) return; const g=Math.max(0,+s.gap||0), d=segLen(s);
     b.push({gapStart:acc, start:acc+g, end:acc+g+d, gap:g, dur:d, seg:s, idx:i}); acc+=g+d; });
   return {bounds:b, vidTotal:acc}; }
 // Full multi-channel layout: base spans (ch0, sequential) + absolutely-positioned upper clips (ch≥1, by t0).
 function layout(){ const base=clipBounds(); const all=base.bounds.map(o=>Object.assign({ch:0},o)); let vt=base.vidTotal;
-  (EDL.segments||[]).forEach((s,i)=>{ const ch=+s.ch||0; if(ch===0) return; const t0=Math.max(0,+s.t0||0), d=Math.max(0.05,+s.dur||1);
+  (EDL.segments||[]).forEach((s,i)=>{ const ch=+s.ch||0; if(ch===0) return; const t0=Math.max(0,+s.t0||0), d=segLen(s);
     all.push({seg:s, idx:i, ch, start:t0, end:t0+d, dur:d, gap:0}); if(t0+d>vt) vt=t0+d; });
   return {base:base.bounds, all, vidTotal:vt}; }
 // Topmost clip visible at master-clock time t (higher channel covers lower; tie → later in the array).
@@ -609,6 +618,7 @@ function renderTimeline(){
         <label>dur<input type="number" step="0.1" data-f="dur" value="${s.dur}"></label>
         <label>zoom<input type="number" step="0.05" min="1" data-f="zoom" value="${s.zoom||1}"></label>
         <label>anchor<select data-f="anchor">${['center','top','bottom','left','right'].map(a=>`<option ${a===(s.anchor||'center')?'selected':''}>${a}</option>`).join('')}</select></label>
+        <label title="Playback speed (slow-mo / fast)">speed<select data-f="speed">${[0.25,0.5,0.75,1,1.5,2,3,4].map(sp=>`<option value="${sp}" ${(+s.speed||1)===sp?'selected':''}>${sp}×</option>`).join('')}</select></label>
       </div>
       <div class="nums"><label>fade in<input type="number" step="0.1" min="0" data-f="fadeIn" value="${s.fadeIn||0}"></label>
         <label>fade out<input type="number" step="0.1" min="0" data-f="fadeOut" value="${s.fadeOut||0}"></label></div>
@@ -625,7 +635,8 @@ function renderTimeline(){
       </div>`;
     el.querySelector('.hd').onclick=()=>selectSeg(i);
     el.querySelectorAll('[data-f]').forEach(inp=>{
-      inp.onchange=()=>{ let v=inp.value; const f=inp.dataset.f; if(['in','dur','zoom','fadeIn','fadeOut','out'].includes(f)) v=parseFloat(v)||0;
+      inp.onchange=()=>{ let v=inp.value; const f=inp.dataset.f; if(['in','dur','zoom','fadeIn','fadeOut','out','speed'].includes(f)) v=parseFloat(v)||0;
+        if(f==='speed') v=v||1;
         if(f==='out'){ EDL.segments[i].dur=Math.max(0.1, v-(+EDL.segments[i].in||0)); }
         else EDL.segments[i][f]=v;
         updateTotal(); renderTimeline(); if(i===sel) loadSegIntoTrim(); };
@@ -634,7 +645,7 @@ function renderTimeline(){
     const cscrub=el.querySelector('.cscrub'), csct=el.querySelector('.csct');
     cscrub.oninput=()=>{ const t=parseFloat(cscrub.value)||0; csct.textContent=fmt(t)+'s';
       stop(); sel=i; tl.querySelectorAll('.seg').forEach((x,xi)=>x.classList.toggle('sel',xi===i));
-      $('#inIn').value=s.in; $('#inDur').value=s.dur; $('#inZoom').value=s.zoom||1; $('#inZoomR').value=s.zoom||1; $('#inAnchor').value=s.anchor||'center'; $('#trimName').textContent=name;
+      $('#inIn').value=s.in; $('#inDur').value=s.dur; $('#inZoom').value=s.zoom||1; $('#inZoomR').value=s.zoom||1; $('#inAnchor').value=s.anchor||'center'; $('#inSpeed').value=String(s.speed||1); updateSpeedHint(s); $('#trimName').textContent=name;
       withClip(s.id, v=>{ if(!v) return; showVid(s.id); applyFraming(s,v); try{v.currentTime=t;}catch(e){} showCap(s.cap); });
     };
     el.querySelectorAll('[data-sa]').forEach(b=>{ b.onclick=(ev)=>{ ev.stopPropagation(); const t=parseFloat(cscrub.value)||0; const a=b.dataset.sa;
@@ -664,7 +675,7 @@ function selectSeg(i){ stop(); sel=i; renderTimeline(); loadSegIntoTrim(); }
 function loadSegIntoTrim(){
   if(sel<0||!EDL.segments[sel]) return; const s=EDL.segments[sel]; const c=MAN.byId[s.id];
   $('#trimName').textContent=c?c.label:s.id;
-  $('#inIn').value=s.in; $('#inDur').value=s.dur; $('#inZoom').value=s.zoom||1; $('#inZoomR').value=s.zoom||1; $('#inAnchor').value=s.anchor||'center';
+  $('#inIn').value=s.in; $('#inDur').value=s.dur; $('#inZoom').value=s.zoom||1; $('#inZoomR').value=s.zoom||1; $('#inAnchor').value=s.anchor||'center'; $('#inSpeed').value=String(s.speed||1); updateSpeedHint(s);
   withClip(s.id, v=>{ if(!v) return; showVid(s.id); applyFraming(s, v); try{v.currentTime=s.in;}catch(e){} showCap(s.cap); });
 }
 
@@ -683,7 +694,7 @@ function seekToPlayhead(){
     const hit=topAt(playhead);
     if(!hit){ showVid(null); showCap(''); $('#endcard').style.display='none'; renderOverlays(playhead); positionPlayhead(); return; }  // black gap
     const s=hit.seg, off=hit.off, v=getVid(s.id);
-    if(v){ showVid(s.id); applyFraming(s,v); try{v.currentTime=(+s.in||0)+off;}catch(e){}
+    if(v){ showVid(s.id); applyFraming(s,v); try{v.currentTime=(+s.in||0)+off*segSpeed(s);}catch(e){}
       let op=1; const fi=+s.fadeIn||0, fo=+s.fadeOut||0, dd=hit.dur;   // show clip fade while scrubbing
       if(fi>0 && off<fi) op=Math.max(0,off/fi);
       if(fo>0 && off>dd-fo) op=Math.min(op,Math.max(0,(dd-off)/fo));
@@ -692,7 +703,7 @@ function seekToPlayhead(){
   } else if(ec.enabled){                                 // playhead is in the end-card region
     showCap('');
     if(ec.bg.mode==='transparent'){ const hit=topAt(vidTotal-0.001); if(hit){ const v=getVid(hit.seg.id);
-      if(v){ showVid(hit.seg.id); applyFraming(hit.seg,v); try{v.currentTime=(+hit.seg.in||0)+hit.dur+(playhead-vidTotal);}catch(e){} } } }
+      if(v){ showVid(hit.seg.id); applyFraming(hit.seg,v); try{v.currentTime=(+hit.seg.in||0)+(+hit.seg.dur||0)+(playhead-vidTotal)*segSpeed(hit.seg);}catch(e){} } } }
     buildEndcard(ec); $('#endcard').style.display='flex';
   } else { showVid(null); $('#endcard').style.display='none'; }
   renderOverlays(playhead); positionPlayhead();
@@ -704,16 +715,17 @@ function playRange(seg, onDone){
   cancelAnimationFrame(segRaf); clearTimeout(segTO);
   const my=++pbToken;
   const v=getVid(seg.id);
-  const start=Math.max(0,+seg.in||0), dur=Math.max(0.05,+seg.dur||1), end=start+dur;
+  const spd=segSpeed(seg);
+  const start=Math.max(0,+seg.in||0), srcDur=Math.max(0.05,+seg.dur||1), end=start+srcDur, wall=srcDur/spd;
   let done=false;
-  const finish=()=>{ if(done||my!==pbToken) return; done=true; clearTimeout(segTO); cancelAnimationFrame(segRaf); if(v){try{v.pause();}catch(e){}} if(onDone) onDone(); };
-  segTO=setTimeout(finish, dur*1000+1200);   // backstop so the timeline never stalls
+  const finish=()=>{ if(done||my!==pbToken) return; done=true; clearTimeout(segTO); cancelAnimationFrame(segRaf); if(v){try{v.pause();v.playbackRate=1;}catch(e){}} if(onDone) onDone(); };
+  segTO=setTimeout(finish, wall*1000+1200);   // backstop so the timeline never stalls
   if(!v){ return; }
   const watch=()=>{ if(my!==pbToken) return;
     if(v.currentTime>=end-0.03 || v.ended){ finish(); return; }
     segRaf=requestAnimationFrame(watch); };
   const go=()=>{ if(my!==pbToken) return; v.onseeked=null; applyFraming(seg, v); showVid(seg.id); showCap(seg.cap);
-    const p=v.play(); if(p&&p.catch) p.catch(()=>{}); segRaf=requestAnimationFrame(watch); };
+    try{v.playbackRate=spd;}catch(_){} const p=v.play(); if(p&&p.catch) p.catch(()=>{}); segRaf=requestAnimationFrame(watch); };
   const seekThenGo=()=>{ if(my!==pbToken) return;
     if(Math.abs(v.currentTime-start)>0.06){ v.onseeked=()=>{ v.onseeked=null; go(); }; try{v.currentTime=start;}catch(e){ go(); } }
     else go(); };
@@ -756,14 +768,16 @@ function playTimeline(){
       if(curKey!=='GAP'){ curKey='GAP'; for(const k in vids){ try{vids[k].pause();}catch(_){} } showVid(null); showCap(''); }
       renderOverlays(playhead); positionPlayhead(); return;
     }
-    const s=hit.seg, v=getVid(s.id), want=(+s.in||0)+hit.off;
+    const spd=segSpeed(hit.seg);
+    const s=hit.seg, v=getVid(s.id), want=(+s.in||0)+hit.off*spd;
     if(s!==curKey){                                     // entered a new (topmost) clip
       curKey=s;
       for(const k in vids){ if(vids[k]!==v){ try{vids[k].pause();}catch(_){} } }
-      if(v){ applyFraming(s,v); showVid(s.id); try{v.currentTime=Math.max(0,want);}catch(_){}
+      if(v){ applyFraming(s,v); showVid(s.id); try{v.playbackRate=spd;}catch(_){} try{v.currentTime=Math.max(0,want);}catch(_){}
         const p=v.play(); if(p&&p.catch)p.catch(()=>{}); }
       showCap(s.cap);
     } else if(v){                                      // same clip: keep it synced + playing
+      if(v.playbackRate!==spd){ try{v.playbackRate=spd;}catch(_){} }
       if(Math.abs(v.currentTime-want)>0.35){ try{v.currentTime=Math.max(0,want);}catch(_){} }
       if(v.paused){ const p=v.play(); if(p&&p.catch)p.catch(()=>{}); }
     }
@@ -781,9 +795,10 @@ $('#scrub').oninput=e=>{ stop(); playhead=parseFloat(e.target.value)||0; seekToP
 $('#btnPlaySeg').onclick=()=>{ if(sel<0) return toast('Select a segment first'); stop(); playRange(EDL.segments[sel], ()=>{}); };
 $('#btnSetIn').onclick=()=>{ if(sel<0) return toast('Select a segment first'); const v=activeVid(); if(!v) return; EDL.segments[sel].in=Math.round(v.currentTime*100)/100; loadSegIntoTrim(); renderTimeline(); };
 $('#btnSetOut').onclick=()=>{ if(sel<0) return toast('Select a segment first'); const v=activeVid(); if(!v) return; const s=EDL.segments[sel]; const d=Math.round((v.currentTime-s.in)*100)/100; if(d>0){ s.dur=d; loadSegIntoTrim(); renderTimeline(); } else toast('Playhead must be after IN'); };
-['inIn','inDur','inZoom','inAnchor'].forEach(id=>{ $('#'+id).onchange=()=>{ if(sel<0) return; histCommit(); const s=EDL.segments[sel];
+function updateSpeedHint(s){ const el=$('#inSpeedLen'); if(!el) return; const spd=segSpeed(s); el.textContent=(spd!==1)?('= '+fmt(segLen(s))+'s on timeline'):''; }
+['inIn','inDur','inZoom','inAnchor','inSpeed'].forEach(id=>{ $('#'+id).onchange=()=>{ if(sel<0) return; histCommit(); const s=EDL.segments[sel];
   s.in=parseFloat($('#inIn').value)||0; s.dur=parseFloat($('#inDur').value)||1; s.zoom=parseFloat($('#inZoom').value)||1;
-  $('#inZoomR').value=s.zoom;
+  s.speed=parseFloat($('#inSpeed').value)||1; $('#inZoomR').value=s.zoom; updateSpeedHint(s);
   if(id==='inAnchor'){ s.anchor=$('#inAnchor').value; [s.panX,s.panY]=anchorFrac(s.anchor); }   // dropdown = coarse preset, resets free pan
   applyFraming(s); renderTimeline(); histCommit(); }; });
 $('#inZoomR').oninput=()=>{ if(sel<0) return; const s=EDL.segments[sel]; const z=parseFloat($('#inZoomR').value)||1; s.zoom=z; $('#inZoom').value=z; applyFraming(s); histSchedule(); };

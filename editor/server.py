@@ -870,12 +870,16 @@ def render(edl, out_dir=None, out_name=None):
             else:
                 cx, cy = crop_xy(seg.get("anchor", "center"), W, H)
             base = f"scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={W}:{H}:{cx}:{cy},setsar=1,fps=30,format=yuv420p"
-            dur = float(seg["dur"])
+            dur = float(seg["dur"])                     # dur = SOURCE seconds consumed
+            spd = min(10.0, max(0.1, float(seg.get("speed", 1) or 1)))
+            outlen = dur / spd                          # timeline (output) seconds
+            if abs(spd - 1.0) > 1e-3:
+                base = f"setpts={1.0/spd:.6f}*PTS," + base   # slow (<1) / speed up (>1)
             sfi = float(seg.get("fadeIn", 0) or 0); sfo = float(seg.get("fadeOut", 0) or 0)
             if sfi > 0:
                 base += f",fade=t=in:st=0:d={sfi}"
             if sfo > 0:
-                base += f",fade=t=out:st={max(0,dur-sfo)}:d={sfo}"
+                base += f",fade=t=out:st={max(0,outlen-sfo)}:d={sfo}"
             is_last = (idx == last_real)
             cap = (seg.get("cap") or "").strip()
             cap_dt = ""
@@ -890,25 +894,27 @@ def render(edl, out_dir=None, out_name=None):
                           f"box=1:boxcolor=black@0.30:boxborderw=18:x=(w-text_w)/2:y={cap_y}")
             so = os.path.join(tmp, f"seg_{idx:02d}.mp4")
             if is_last and ec_transparent:
-                # extend the last clip by the end-card duration and fade the CTA overlay in over it
-                ext = dur + ec_dur
-                vbase = base + (("," + cap_dt + f":enable='lt(t,{dur})'") if cap_dt else "")
+                # extend the last clip by the end-card duration and fade the CTA overlay in over it.
+                # The clip portion lasts `outlen` timeline seconds (after any speed change), then holds.
+                ext = outlen + ec_dur
+                src_read = dur + ec_dur * spd          # source seconds covering the held tail
+                vbase = base + (("," + cap_dt + f":enable='lt(t,{outlen})'") if cap_dt else "")
                 fc = (f"[0:v]{vbase}[v];"
-                      f"[1:v]format=rgba,fade=t=in:st={dur}:d=0.4:alpha=1[g];"
-                      f"[v][g]overlay=0:0:enable='gte(t,{dur})'[out]")
-                r = run([FFMPEG, "-y", "-loglevel", "error", "-ss", str(seg["in"]), "-i", src,
-                         "-t", str(ext), "-loop", "1", "-i", ec_png,
-                         "-filter_complex", fc, "-map", "[out]"] + ENC + [so])
+                      f"[1:v]format=rgba,fade=t=in:st={outlen}:d=0.4:alpha=1[g];"
+                      f"[v][g]overlay=0:0:enable='gte(t,{outlen})'[out]")
+                r = run([FFMPEG, "-y", "-loglevel", "error", "-ss", str(seg["in"]), "-t", str(src_read), "-i", src,
+                         "-loop", "1", "-i", ec_png,
+                         "-filter_complex", fc, "-map", "[out]", "-t", str(ext)] + ENC + [so])
                 if r.returncode != 0:
                     return {"ok": False, "log": f"seg {idx} (transparent end card) failed:\n{r.stderr[-1500:]}"}
                 total += ext
             else:
                 vf = base + (("," + cap_dt) if cap_dt else "")
-                r = run([FFMPEG, "-y", "-loglevel", "error", "-ss", str(seg["in"]), "-i", src,
-                         "-t", str(dur), "-vf", vf] + ENC + [so])
+                r = run([FFMPEG, "-y", "-loglevel", "error", "-ss", str(seg["in"]), "-t", str(dur), "-i", src,
+                         "-vf", vf, "-t", str(outlen)] + ENC + [so])
                 if r.returncode != 0:
                     return {"ok": False, "log": f"seg {idx} failed:\n{r.stderr[-1500:]}"}
-                total += dur
+                total += outlen
             lines.append("file '" + so.replace("\\", "/") + "'")
         # end card: solid/gradient gets its own clip; transparent is already baked into the last segment
         if ec_on and not ec_transparent:
