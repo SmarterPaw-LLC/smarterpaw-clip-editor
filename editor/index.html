@@ -81,10 +81,14 @@
   .clip .qadd:hover { background:var(--acc,#8ab81d); border-color:var(--acc,#8ab81d); color:#10240a; }
   .clip.dragging { opacity:.5; }
   .emptyhint { color:var(--mut); font-size:12px; padding:14px 12px; line-height:1.5; border:1px dashed var(--line); border-radius:8px; margin:8px; }
-  #clipGrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(58px,1fr)); gap:6px; max-height:46vh; overflow:auto; padding:4px; }
+  #clipGrid, #libGrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(58px,1fr)); gap:6px; max-height:46vh; overflow:auto; padding:4px; }
+  #libGrid { grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); }
   .clipcell { aspect-ratio:1; background:#3a3a3a; border:1px solid var(--line); border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:6px; }
   .clipcell:hover { border-color:var(--acc,#8ab81d); background:#4a4a4a; }
   .clipcell img { max-width:100%; max-height:100%; object-fit:contain; }
+  .libcell { position:relative; aspect-ratio:1; background:#222 center/cover no-repeat; border:1px solid var(--line); border-radius:8px; cursor:pointer; overflow:hidden; }
+  .libcell:hover { border-color:var(--acc,#8ab81d); }
+  .libcell .nm { position:absolute; left:0; right:0; bottom:0; font-size:9px; line-height:1.2; padding:2px 3px; background:linear-gradient(transparent,#000c); color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #timeline.clipdrop, #tlTracksWrap.clipdrop { outline:2px dashed var(--acc,#8ab81d); outline-offset:-3px; background:rgba(138,184,29,.07); }
   /* center */
   .center { display:flex; flex-direction:column; align-items:center; gap:10px; padding:12px; overflow:auto; }
@@ -170,7 +174,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.28.0</span>
+  <span class="ver" id="appVer">v1.28.1</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -330,7 +334,7 @@
   <div class="modal-card">
     <div class="modal-hd"><b>✚ Overlays</b><button class="mini" id="ovClose">✕ Done</button></div>
     <div class="modal-body">
-      <div><button class="mini" id="ovAddText">＋ Text</button> <button class="mini" id="ovAddShape">＋ Shape</button> <button class="mini" id="ovAddImage">＋ Image</button> <button class="mini" id="ovAddClip">🎨 Clip art</button>
+      <div><button class="mini" id="ovAddText">＋ Text</button> <button class="mini" id="ovAddShape">＋ Shape</button> <button class="mini" id="ovAddImage">＋ Image</button> <button class="mini" id="ovAddClip">🎨 Clip art</button> <button class="mini" id="ovAddLib">📚 Library</button>
         <input type="file" id="ovFile" accept="image/*" style="display:none"></div>
       <div style="font-size:11px;color:var(--mut)">Tip: scrub the timeline to where an element should appear, then drag it on the preview to position it.</div>
       <hr>
@@ -353,6 +357,34 @@
       <div style="font-size:11px;color:var(--mut);margin:5px 0">Free for commercial use (via Iconify: Noto/Twemoji emoji, Material, Phosphor, Lucide…). Color applies to single-color icons; emoji keep their own colors.</div>
       <div id="clipGrid"></div>
       <div id="clipStatus" style="font-size:12px;color:var(--mut);min-height:16px;margin-top:4px"></div>
+    </div>
+  </div>
+</div>
+
+<div id="libModal" class="modal" style="display:none">
+  <div class="modal-card" style="max-width:620px">
+    <div class="modal-hd"><b>📚 Image Library</b><button class="mini" id="libClose">✕ Close</button></div>
+    <div class="modal-body">
+      <div id="libAuth">
+        <div style="font-size:12px;color:var(--mut);margin-bottom:10px">Sign in with your SmarterPaw social-tool account to browse the shared image library.</div>
+        <div class="row" style="gap:8px"><input type="email" id="libEmail" placeholder="email" style="flex:1" autocomplete="username"></div>
+        <div class="row" style="gap:8px;margin-top:6px"><input type="password" id="libPass" placeholder="password" style="flex:1" autocomplete="current-password">
+          <button class="primary" id="libSignIn">Sign in</button></div>
+        <div id="libAuthMsg" style="font-size:12px;color:var(--mut);min-height:16px;margin-top:6px"></div>
+      </div>
+      <div id="libBrowse" style="display:none">
+        <div class="row" style="gap:8px;align-items:center">
+          <input type="text" id="libQuery" placeholder="Search name or tag…" style="flex:1">
+          <select id="libBrand" title="Brand"><option value="">All brands</option><option value="meowi">Meowi</option><option value="doggi">Doggi</option><option value="kkz">KKZ</option></select>
+          <select id="libCat" title="Category"><option value="">All categories</option></select>
+        </div>
+        <div class="row" style="justify-content:space-between;align-items:center;margin:4px 0">
+          <span id="libCount" style="font-size:11px;color:var(--mut)"></span>
+          <span><button class="mini" id="libRefresh">↻ Refresh</button> <button class="mini" id="libSignOut">Sign out</button></span>
+        </div>
+        <div id="libGrid"></div>
+        <div id="libStatus" style="font-size:12px;color:var(--mut);min-height:16px;margin-top:4px"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -1221,6 +1253,84 @@ async function pickClip(name){
     closeClipPicker(); toast('Clip art added — drag it on the preview to place it');
   }catch(e){ $('#clipStatus').textContent='Couldn’t add that icon — try another.'; }
 }
+/* ---------- shared Image Library (same Supabase project as the social-image tool) ---------- */
+const SB_URL='https://ttyxodttyeykjijffgql.supabase.co';
+const SB_ANON='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0eXhvZHR0eWV5a2ppamZmZ3FsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1ODM5MjcsImV4cCI6MjA5NDE1OTkyN30.784lD_-utaZc9-0m1GMH37AGyjcCa7RApYI2ZNE97Do';
+const SB_KEY='meowi_sb_session';
+let sbSession=null; try{ sbSession=JSON.parse(localStorage.getItem(SB_KEY)||'null'); }catch(e){}
+let libItems=[], libCats={};
+function sbSave(){ try{ localStorage.setItem(SB_KEY, JSON.stringify(sbSession)); }catch(e){} }
+function sbClear(){ sbSession=null; try{ localStorage.removeItem(SB_KEY); }catch(e){} }
+async function sbSignIn(email,password){
+  const r=await fetch(SB_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{'apikey':SB_ANON,'Content-Type':'application/json'},body:JSON.stringify({email,password})});
+  const j=await r.json(); if(!r.ok) throw new Error(j.error_description||j.msg||j.error||'sign-in failed');
+  sbSession={access_token:j.access_token,refresh_token:j.refresh_token,expires_at:j.expires_at||(Math.floor(Date.now()/1000)+(j.expires_in||3600)),email:(j.user&&j.user.email)||email}; sbSave();
+}
+async function sbRefresh(){ if(!sbSession||!sbSession.refresh_token) return false;
+  try{ const r=await fetch(SB_URL+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{'apikey':SB_ANON,'Content-Type':'application/json'},body:JSON.stringify({refresh_token:sbSession.refresh_token})});
+    const j=await r.json(); if(!r.ok||!j.access_token) return false;
+    sbSession={access_token:j.access_token,refresh_token:j.refresh_token,expires_at:j.expires_at||(Math.floor(Date.now()/1000)+(j.expires_in||3600)),email:(j.user&&j.user.email)||sbSession.email}; sbSave(); return true;
+  }catch(e){ return false; } }
+async function sbRest(pathQs){
+  if(!sbSession) throw new Error('not signed in');
+  if(sbSession.expires_at && sbSession.expires_at < Math.floor(Date.now()/1000)+30){ await sbRefresh(); }
+  const go=()=>fetch(SB_URL+'/rest/v1/'+pathQs,{headers:{'apikey':SB_ANON,'Authorization':'Bearer '+sbSession.access_token}});
+  let r=await go(); if(r.status===401){ if(await sbRefresh()) r=await go(); }
+  if(!r.ok) throw new Error('library request failed ('+r.status+')'); return r.json();
+}
+function libPublicUrl(path){ return SB_URL+'/storage/v1/object/public/image-library/'+path.split('/').map(encodeURIComponent).join('/'); }
+function openLibrary(){ $('#libModal').style.display='flex'; if(sbSession){ libShowBrowse(); } else { libShowAuth(); } }
+function closeLibrary(){ $('#libModal').style.display='none'; }
+function libShowAuth(msg){ $('#libAuth').style.display=''; $('#libBrowse').style.display='none'; $('#libAuthMsg').textContent=msg||''; if(sbSession&&sbSession.email) $('#libEmail').value=sbSession.email; }
+function libShowBrowse(){ $('#libAuth').style.display='none'; $('#libBrowse').style.display=''; if(!libItems.length) libLoad(); else libRender(); }
+async function libLoad(){ $('#libStatus').textContent='Loading library…';
+  try{
+    const cats=await sbRest('image_library_categories?select=id,name&order=name');
+    libCats={}; (cats||[]).forEach(c=>libCats[c.id]=c.name);
+    const sel=$('#libCat'); sel.innerHTML='<option value="">All categories</option>'+(cats||[]).map(c=>`<option value="${c.id}">${(c.name||'').replace(/</g,'&lt;')}</option>`).join('');
+    libItems=await sbRest('image_library_items?select=id,name,storage_path,category_id,tags,brand&order=created_at.desc');
+    $('#libStatus').textContent=''; libRender();
+  }catch(e){ $('#libStatus').textContent=''; if((''+e).includes('not signed')||(''+e).includes('401')){ sbClear(); libShowAuth('Session expired — sign in again.'); } else $('#libStatus').textContent='Could not load library: '+e.message; }
+}
+function libRender(){
+  const grid=$('#libGrid'); const q=($('#libQuery').value||'').trim().toLowerCase(), brand=$('#libBrand').value, cat=$('#libCat').value;
+  let items=libItems.filter(it=>{
+    if(brand && (it.brand||'')!==brand) return false;
+    if(cat && String(it.category_id||'')!==cat) return false;
+    if(q){ const hay=((it.name||'')+' '+((it.tags||[]).join(' '))).toLowerCase(); if(!hay.includes(q)) return false; }
+    return true;
+  });
+  $('#libCount').textContent=items.length+' of '+libItems.length+' images';
+  if(!items.length){ grid.innerHTML='<div style="grid-column:1/-1;color:var(--mut);font-size:12px;padding:8px">No matches.</div>'; return; }
+  grid.innerHTML='';
+  items.slice(0,400).forEach(it=>{ const cell=document.createElement('button'); cell.className='libcell'; cell.title=(it.name||'')+(it.brand?(' · '+it.brand):'');
+    cell.style.backgroundImage='url("'+libPublicUrl(it.storage_path)+'")';
+    cell.innerHTML='<span class="nm">'+((it.name||'untitled').replace(/</g,'&lt;'))+'</span>';
+    cell.onclick=()=>pickLibraryImage(it); grid.appendChild(cell);
+  });
+}
+async function pickLibraryImage(it){
+  $('#libStatus').textContent='Adding '+(it.name||'image')+'…';
+  try{
+    const blob=await fetch(libPublicUrl(it.storage_path)).then(r=>{ if(!r.ok) throw new Error('download failed'); return r.blob(); });
+    const data=await new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(blob); });
+    const nm='lib_'+((it.name||'image').replace(/[^a-z0-9]+/gi,'_').slice(0,40))+'_'+(it.id)+'.'+((it.storage_path.split('.').pop()||'png').toLowerCase());
+    const res=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nm,data})});
+    if(!res||!res.ok){ $('#libStatus').textContent='Upload failed.'; return; }
+    histCommit(); EDL.overlays=EDL.overlays||[];
+    const o={id:uid(),type:'image',src:res.src,scale:0.3,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
+    EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead);
+    closeLibrary(); toast('Library image added — drag it on the preview to place it');
+  }catch(e){ $('#libStatus').textContent='Couldn’t add that image: '+e.message; }
+}
+$('#ovAddLib').onclick=openLibrary; $('#libClose').onclick=closeLibrary;
+$('#libSignIn').onclick=async()=>{ const em=$('#libEmail').value.trim(), pw=$('#libPass').value; if(!em||!pw){ $('#libAuthMsg').textContent='Enter email and password.'; return; }
+  $('#libAuthMsg').textContent='Signing in…'; try{ await sbSignIn(em,pw); $('#libPass').value=''; libShowBrowse(); }catch(e){ $('#libAuthMsg').textContent='Sign-in failed: '+e.message; } };
+$('#libPass').onkeydown=e=>{ if(e.key==='Enter') $('#libSignIn').click(); };
+$('#libSignOut').onclick=()=>{ sbClear(); libItems=[]; libShowAuth('Signed out.'); };
+$('#libRefresh').onclick=()=>{ libItems=[]; libLoad(); };
+$('#libQuery').oninput=libRender; $('#libBrand').onchange=libRender; $('#libCat').onchange=libRender;
+
 $('#ovAddClip').onclick=openClipPicker; $('#clipClose').onclick=closeClipPicker;
 $('#clipQuery').oninput=e=>{ clearTimeout(clipTimer); clipTimer=setTimeout(()=>clipSearch(e.target.value), 350); };
 $('#clipQuery').onkeydown=e=>{ if(e.key==='Enter'){ clearTimeout(clipTimer); clipSearch(e.target.value); } };
