@@ -124,7 +124,8 @@ def ingest_upload(raw, orig_name, category):
             if r.returncode != 0:
                 raise RuntimeError((r.stderr or "ffmpeg failed")[-400:])
         _probe_cache.pop(dest, None)
-        return os.path.relpath(dest, PROJ).replace("\\", "/"), cat
+        cid = os.path.splitext(os.path.basename(dest))[0]
+        return os.path.relpath(dest, PROJ).replace("\\", "/"), cat, cid
     finally:
         try:
             os.remove(tmpf)
@@ -1100,10 +1101,10 @@ class Handler(BaseHTTPRequestHandler):
             if not raw:
                 return self._json({"ok": False, "log": "empty file"}, 400)
             try:
-                rel, cat = ingest_upload(raw, data.get("name", "clip.mp4"), data.get("category", "uploads"))
+                rel, cat, cid = ingest_upload(raw, data.get("name", "clip.mp4"), data.get("category", "uploads"))
             except Exception as e:
                 return self._json({"ok": False, "log": repr(e)}, 500)
-            return self._json({"ok": True, "category": cat, "file": rel})
+            return self._json({"ok": True, "category": cat, "file": rel, "id": cid})
         self.send_error(404)
 
     def _serve_file(self, full):
