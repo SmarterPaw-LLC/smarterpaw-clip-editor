@@ -155,7 +155,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.22.0</span>
+  <span class="ver" id="appVer">v1.22.1</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -736,7 +736,7 @@ function hexA(hex,a){ hex=(hex||'#000000').replace('#',''); if(hex.length===3) h
 // Bubble-sticker text → canvas (ported from the social image tool: offscreen white-stroke shadow,
 // thick round white outline, white fill, gradient fill). Rendered at EXPORT resolution so the
 // preview (scaled down) and the render bake (used 1:1) are identical. Supports multi-line
-// (\n + word-wrap to bubble width), kerning, and line spacing.
+// (\n = line break, auto-sized to widest line), kerning, line spacing, and outline width (bleed).
 function buildStickerCanvas(o){
   const exportW=(CANVAS_PX[EDL.settings.canvas]||[1080,1920])[0];
   const sizePx=Math.max(10,(o.size||0.07)*exportW);
@@ -749,19 +749,18 @@ function buildStickerCanvas(o){
   const align=o.align||'center';
   const kernPx=Math.round((+o.kerning||0)*sizePx);
   const gapPx=Math.round((o.lineGap!=null?o.lineGap:0.08)*sizePx);
-  const outline=Math.max(6,Math.round(sizePx*0.22));
+  const outlineScale=(o.bleed!=null&&o.bleed>0)?o.bleed:0.22;   // outline thickness as a fraction of font size
+  const outline=Math.max(6,Math.round(sizePx*outlineScale));
   const shadow=Math.max(2,Math.round(sizePx*0.06));
   const sdx=Math.max(1,Math.round(sizePx*0.04)), sdy=Math.max(2,Math.round(sizePx*0.08));
   const strokeBleed=Math.ceil(outline*1.5)+sdx+Math.ceil(shadow)+8;
-  const cw=Math.max(60,Math.round((o.bubbleWidth!=null?o.bubbleWidth:0.85)*exportW));
-  const maxW=Math.max(20,cw-strokeBleed*2);
   function ctxSet(c){ c.font=font; c.textAlign=align; c.textBaseline='alphabetic'; if('letterSpacing' in c){ try{c.letterSpacing=kernPx+'px';}catch(e){} } }
   const m=document.createElement('canvas').getContext('2d'); ctxSet(m);
   const measure=t=>m.measureText(t).width;
-  const rows=[];                                   // word-wrap each \n line to maxW
-  (o.text||' ').split('\n').forEach(ln=>{ const words=(ln||' ').split(' '); let cur='';
-    words.forEach(w=>{ const test=cur?cur+' '+w:w; if(measure(test)>maxW && cur){ rows.push(cur); cur=w; } else cur=test; });
-    rows.push(cur); });
+  const rows=(o.text||' ').split('\n').map(s=>s.length?s:' ');   // one row per line (Enter); auto-size to widest line
+  const maxLineW=rows.reduce((mx,t)=>Math.max(mx,measure(t)),0);
+  const cw=Math.max(60,Math.ceil(maxLineW+strokeBleed*2));
+  const maxW=cw-strokeBleed*2;
   const TOP=Math.round(sizePx*0.32), BOT=Math.round(sizePx*0.32);
   let y=TOP; const rowPos=[]; rows.forEach((t,i)=>{ y+=sizePx; rowPos.push({text:t,y:y}); if(i<rows.length-1) y+=gapPx; });
   const textBottom=y, textH=textBottom-TOP;
@@ -814,7 +813,7 @@ function renderOverlays(time){
     if(!visible){ el.style.display='none'; return; }
     el.style.display='';
     if(ekey==='sticker'){
-      const key=[o.text,o.font,o.size,o.gradStart,o.gradEnd,o.gradType,o.gradAngle,o.bubbleWidth,o.kerning,o.lineGap,o.align,EDL.settings.canvas,(o.shadow&&o.shadow.on),(o.shadow&&o.shadow.color),(o.shadow&&o.shadow.opacity)].join('|');
+      const key=[o.text,o.font,o.size,o.gradStart,o.gradEnd,o.gradType,o.gradAngle,o.bleed,o.kerning,o.lineGap,o.align,EDL.settings.canvas,(o.shadow&&o.shadow.on),(o.shadow&&o.shadow.color),(o.shadow&&o.shadow.opacity)].join('|');
       if(el._stkey!==key){ const r=buildStickerCanvas(o); el.src=r.canvas.toDataURL('image/png'); el._cw=r.cw; el._ew=r.exportW; el._stkey=key; }   // re-bake only when props change
       el.style.width=(el._cw/el._ew*100)+'%'; el.style.height='auto'; }
     else if(o.type==='image'){ const u=o.src?('/'+encodeURI(o.src)):''; if(el.getAttribute('src')!==u) el.setAttribute('src',u); el.style.width=((o.scale||0.3)*W)+'px'; el.style.height='auto'; }
@@ -886,7 +885,7 @@ function buildOvEditor(){
         <label>To <input type="color" id="ovStTo" value="${o.gradEnd||'#3c8e14'}"></label>
         <label>Style <select id="ovStType"><option value="linear">Linear</option><option value="radial">Radial</option></select></label></div>
       <div id="ovStAngRow"><label>Direction <input type="range" id="ovStAngle" min="0" max="360" step="5" value="${o.gradAngle!=null?o.gradAngle:180}"></label> <span id="ovStAngV" style="font-size:11px;color:var(--mut)">${o.gradAngle!=null?o.gradAngle:180}°</span></div>
-      <div id="ovStickRow2"><label>Width <input type="range" id="ovStWidth" min="0.2" max="1" step="0.02" value="${o.bubbleWidth!=null?o.bubbleWidth:0.85}"></label>
+      <div id="ovStickRow2"><label>Outline <input type="range" id="ovStBleed" min="0.06" max="0.5" step="0.02" value="${o.bleed!=null?o.bleed:0.22}"></label>
         <label>Kerning <input type="range" id="ovStKern" min="-0.05" max="0.4" step="0.01" value="${o.kerning!=null?o.kerning:0}"></label></div>
       <div id="ovStickRow3"><label>Line spacing <input type="range" id="ovStGap" min="-0.3" max="0.6" step="0.02" value="${o.lineGap!=null?o.lineGap:0.08}"></label></div>
       <div><label>Size <input type="range" id="ovSize" min="0.02" max="0.18" step="0.005" value="${o.size}"></label></div>`;
@@ -934,7 +933,7 @@ function buildOvEditor(){
     const s2=o.shadow||(o.shadow={}); s2.on=$('#ovShOn').checked; s2.color=$('#ovShColor').value; s2.blur=parseFloat($('#ovShBlur').value)||0; s2.opacity=parseFloat($('#ovShOp').value); s2.dx=parseFloat($('#ovShX').value)||0; s2.dy=parseFloat($('#ovShY').value)||0;
     if(o.type==='text'){ o.text=$('#ovText').value; o.font=$('#ovFont').value; o.size=parseFloat($('#ovSize').value)||0.06; o.style=$('#ovStyle').value;
       if(o.style==='sticker'){ o.gradStart=$('#ovStFrom').value; o.gradEnd=$('#ovStTo').value; o.gradType=$('#ovStType').value; o.gradAngle=parseFloat($('#ovStAngle').value);
-        o.bubbleWidth=parseFloat($('#ovStWidth').value); o.kerning=parseFloat($('#ovStKern').value); o.lineGap=parseFloat($('#ovStGap').value);
+        o.bleed=parseFloat($('#ovStBleed').value); o.kerning=parseFloat($('#ovStKern').value); o.lineGap=parseFloat($('#ovStGap').value);
         if($('#ovStAngV')) $('#ovStAngV').textContent=(o.gradAngle||0)+'°'; }
       else { o.color=$('#ovColor').value; o.button=$('#ovBtn').checked; o.bg=$('#ovBg').value; }
       ovTextRows(); }
