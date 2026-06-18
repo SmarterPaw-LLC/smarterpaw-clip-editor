@@ -155,7 +155,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.22.1</span>
+  <span class="ver" id="appVer">v1.23.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -733,6 +733,34 @@ $('#ecLogoY').oninput=()=>{ normEndcard(EDL.settings).logo.y=parseFloat($('#ecLo
 let ovEdit=false, ovSel=null;
 function hexA(hex,a){ hex=(hex||'#000000').replace('#',''); if(hex.length===3) hex=hex.split('').map(c=>c+c).join('');
   const r=parseInt(hex.slice(0,2),16)||0,g=parseInt(hex.slice(2,4),16)||0,b=parseInt(hex.slice(4,6),16)||0; return `rgba(${r},${g},${b},${a==null?1:a})`; }
+
+/* ---------- overlay animations (preview + render share these formulas) ---------- */
+const ANIM_DEFS={
+  fadeIn:  {label:'Fade in',       def:{d:0.5},            ctrls:[['d','Seconds','num',0,5,0.1]]},
+  fadeOut: {label:'Fade out',      def:{d:0.5},            ctrls:[['d','Seconds','num',0,5,0.1]]},
+  pulse:   {label:'Opacity pulse', def:{amp:0.5,speed:1.5},ctrls:[['amp','Amount','range',0,0.9,0.05],['speed','Speed','range',0.2,5,0.1]]},
+  jitter:  {label:'Jitter',        def:{amp:0.012,speed:11},ctrls:[['amp','Amount','range',0,0.05,0.002],['speed','Speed','range',2,20,1]]},
+  float:   {label:'Float',         def:{amp:0.02,speed:0.6},ctrls:[['amp','Amount','range',0,0.06,0.004],['speed','Speed','range',0.1,2,0.1]]},
+  slideIn: {label:'Slide in',      def:{d:0.5,dir:'left',dist:0.2},ctrls:[['d','Seconds','num',0.1,3,0.1],['dir','From','sel',['left','right','up','down']],['dist','Distance','range',0.05,0.6,0.05]]},
+  bounceIn:{label:'Bounce in',     def:{d:0.6,amp:0.12},   ctrls:[['d','Seconds','num',0.2,2,0.1],['amp','Height','range',0.02,0.3,0.02]]},
+};
+// Returns {dx,dy (px in W units), op (0..1)} for overlay o at local time lt within duration dur.
+function animState(o, lt, dur, W){ let dx=0,dy=0,op=1; const T=Math.max(0,lt);
+  (o.anims||[]).forEach(a=>{ switch(a.type){
+    case 'fadeIn': { const d=Math.max(0.01,a.d||0.5); op*=Math.max(0,Math.min(1,T/d)); break; }
+    case 'fadeOut': { const d=Math.max(0.01,a.d||0.5); op*=Math.max(0,Math.min(1,(dur-T)/d)); break; }
+    case 'pulse': { const amp=a.amp!=null?a.amp:0.5, sp=a.speed||1.5; op*=1-amp*(0.5-0.5*Math.cos(2*Math.PI*sp*T)); break; }
+    case 'jitter': { const amp=(a.amp!=null?a.amp:0.012)*W, sp=a.speed||11;
+      dx+=amp*(Math.sin(2*Math.PI*sp*T)+0.7*Math.sin(2*Math.PI*sp*1.7*T+1.1))/1.7;
+      dy+=amp*(Math.cos(2*Math.PI*sp*1.3*T)+0.7*Math.sin(2*Math.PI*sp*2.1*T+0.5))/1.7; break; }
+    case 'float': { const amp=(a.amp!=null?a.amp:0.02)*W, sp=a.speed||0.6; dy+=amp*Math.sin(2*Math.PI*sp*T); break; }
+    case 'slideIn': { const d=Math.max(0.01,a.d||0.5), dist=(a.dist!=null?a.dist:0.2)*W; if(T<d){ const e=Math.pow(1-T/d,2), dir=a.dir||'left';
+      if(dir==='left')dx-=e*dist; else if(dir==='right')dx+=e*dist; else if(dir==='up')dy-=e*dist; else dy+=e*dist; } break; }
+    case 'bounceIn': { const d=Math.max(0.01,a.d||0.6), amp=(a.amp!=null?a.amp:0.12)*W; if(T<d){ const k=T/d; dy+=-amp*Math.exp(-3*k)*Math.cos(2*Math.PI*1.6*k)*(1-k); } break; }
+  }});
+  return {dx,dy,op:Math.max(0,Math.min(1,op))}; }
+function migrateAnims(o){ if(o.anims) return; o.anims=[];   // legacy fadeIn/fadeOut → animation entries
+  if(+o.fadeIn>0) o.anims.push({type:'fadeIn',d:+o.fadeIn}); if(+o.fadeOut>0) o.anims.push({type:'fadeOut',d:+o.fadeOut}); }
 // Bubble-sticker text → canvas (ported from the social image tool: offscreen white-stroke shadow,
 // thick round white outline, white fill, gradient fill). Rendered at EXPORT resolution so the
 // preview (scaled down) and the render bake (used 1:1) are identical. Supports multi-line
@@ -803,6 +831,7 @@ function renderOverlays(time){
   const ids=new Set((EDL.overlays||[]).map(o=>o.id));
   for(const id in ovEls){ if(!ids.has(id)){ ovEls[id].remove(); delete ovEls[id]; } }
   (EDL.overlays||[]).forEach((o,idx)=>{
+    migrateAnims(o);
     const active = time>=o.start && time < o.start+(+o.dur||0);
     const visible = active || (ovEdit && o.id===ovSel);
     const ekey=(o.type==='text'&&o.style==='sticker')?'sticker':o.type;   // sticker text renders as a baked canvas image
@@ -828,13 +857,12 @@ function renderOverlays(time){
       el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.whiteSpace='nowrap'; el.style.color=o.color||'#fff';
       if(o.button){ el.style.background=o.bg||'#f07830'; const p=(o.size||0.06)*W; el.style.padding=(p*0.38)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.3)+'px'; el.style.textShadow='none'; }
       else { el.style.background='none'; el.style.padding='0'; el.style.borderRadius='0'; el.style.textShadow='0 2px 6px rgba(0,0,0,.6)'; } }
-    el.style.left=((o.x||0.5)*100)+'%'; el.style.top=((o.y||0.5)*100)+'%'; el.style.transform='translate(-50%,-50%)';
+    const A=animState(o, time-o.start, +o.dur||0, W);   // overlay animations (offset + opacity)
+    el.style.left=((o.x||0.5)*100)+'%'; el.style.top=((o.y||0.5)*100)+'%';
+    el.style.transform='translate(-50%,-50%) translate('+A.dx.toFixed(2)+'px,'+A.dy.toFixed(2)+'px)';
     const sh=o.shadow||{};   // sticker bakes its own shadow into the canvas, so no extra CSS filter for it
     el.style.filter = (ekey!=='sticker' && sh.on) ? `drop-shadow(${(sh.dx!=null?sh.dx:0.004)*W}px ${(sh.dy!=null?sh.dy:0.006)*W}px ${(sh.blur!=null?sh.blur:0.01)*W}px ${hexA(sh.color||'#000000', sh.opacity!=null?sh.opacity:0.5)})` : 'none';
-    let op=1; if(active){ const fi=+o.fadeIn||0, fo=+o.fadeOut||0, dd=+o.dur||0;
-      if(fi>0 && time<o.start+fi) op=Math.max(0,(time-o.start)/fi);
-      if(fo>0 && time>o.start+dd-fo) op=Math.min(op,Math.max(0,(o.start+dd-time)/fo)); }
-    el.style.opacity=op;
+    el.style.opacity=active?A.op:0;
     if(ovEdit){ el.style.pointerEvents='auto'; el.style.cursor='move'; el.style.outline=(o.id===ovSel)?'2px dashed #5b8cff':'none'; el.style.outlineOffset='3px'; dragify(el,o); }
     else { el.style.pointerEvents='none'; el.style.outline='none'; }
   });
@@ -872,6 +900,7 @@ function renderOvList(){
 function buildOvEditor(){
   const box=$('#ovEditor'); if(!box) return; const o=(EDL.overlays||[]).find(x=>x.id===ovSel);
   if(!o){ box.innerHTML='<div style="color:var(--mut);font-size:12px">Select an overlay to edit it.</div>'; return; }
+  migrateAnims(o);
   let h=`<div class="sec">Timing</div><div><label>Start <input type="number" id="ovStart" step="0.1" style="width:58px" value="${o.start}"> s</label>
     <label>Dur <input type="number" id="ovDur" step="0.1" style="width:58px" value="${o.dur}"> s</label>
     <button class="mini" id="ovHere">⤓ at playhead</button></div>`;
@@ -914,8 +943,8 @@ function buildOvEditor(){
       <label>Opacity <input type="range" id="ovShOp" min="0" max="1" step="0.05" value="${sh.opacity}"></label></div>
     <div><label>Offset X <input type="range" id="ovShX" min="-0.03" max="0.03" step="0.002" value="${sh.dx}"></label>
       <label>Y <input type="range" id="ovShY" min="-0.03" max="0.03" step="0.002" value="${sh.dy}"></label></div>`;
-  h+=`<div class="sec">Animation</div><div><label>Fade in <input type="number" id="ovFi" step="0.1" min="0" style="width:54px" value="${o.fadeIn||0}"> s</label>
-    <label>Fade out <input type="number" id="ovFo" step="0.1" min="0" style="width:54px" value="${o.fadeOut||0}"> s</label></div>`;
+  h+=`<div class="sec">Animation</div><div id="ovAnimList"></div>
+    <div style="margin-top:4px"><select id="ovAnimAdd"></select></div>`;
   h+=`<div style="color:var(--mut);font-size:11px;margin-top:6px">Drag the element on the preview to position it · drag its bar on the timeline to move/restack.</div>`;
   box.innerHTML=h;
   if($('#ovFont')) $('#ovFont').value=o.font;
@@ -929,7 +958,6 @@ function buildOvEditor(){
     $('#ovStAngRow').style.display=(st && $('#ovStType').value!=='radial')?'':'none'; }
   if($('#ovStyle')){ $('#ovStyle').value=(o.style==='sticker')?'sticker':'plain'; $('#ovStType').value=o.gradType||'linear'; ovTextRows(); }
   const upd=()=>{ o.start=parseFloat($('#ovStart').value)||0; o.dur=parseFloat($('#ovDur').value)||1;
-    o.fadeIn=parseFloat($('#ovFi').value)||0; o.fadeOut=parseFloat($('#ovFo').value)||0;
     const s2=o.shadow||(o.shadow={}); s2.on=$('#ovShOn').checked; s2.color=$('#ovShColor').value; s2.blur=parseFloat($('#ovShBlur').value)||0; s2.opacity=parseFloat($('#ovShOp').value); s2.dx=parseFloat($('#ovShX').value)||0; s2.dy=parseFloat($('#ovShY').value)||0;
     if(o.type==='text'){ o.text=$('#ovText').value; o.font=$('#ovFont').value; o.size=parseFloat($('#ovSize').value)||0.06; o.style=$('#ovStyle').value;
       if(o.style==='sticker'){ o.gradStart=$('#ovStFrom').value; o.gradEnd=$('#ovStTo').value; o.gradType=$('#ovStType').value; o.gradAngle=parseFloat($('#ovStAngle').value);
@@ -944,6 +972,20 @@ function buildOvEditor(){
     else o.scale=parseFloat($('#ovScale').value)||0.3;
     renderOverlays(playhead); renderOvList(); };
   box.querySelectorAll('input,select,textarea').forEach(el=>{ el.oninput=upd; el.onchange=upd; });
+  function animCtrl(ai,a,c){ const key=c[0],label=c[1],kind=c[2],v=a[key];
+    if(kind==='sel') return `<label>${label} <select data-ai="${ai}" data-k="${key}" class="anc">${c[3].map(op=>`<option ${op===v?'selected':''}>${op}</option>`).join('')}</select></label>`;
+    const t=kind==='num'?'number':'range'; return `<label>${label} <input type="${t}" class="anc" data-ai="${ai}" data-k="${key}" min="${c[3]}" max="${c[4]}" step="${c[5]}" value="${v}" ${kind==='num'?'style="width:50px"':''}></label>`; }
+  function renderAnimList(){ const L=$('#ovAnimList'); if(!L) return; const anims=o.anims||[];
+    L.innerHTML = anims.length ? anims.map((a,ai)=>{ const def=ANIM_DEFS[a.type]||{label:a.type,ctrls:[]};
+      return `<div class="ecline" style="flex-direction:column;align-items:stretch;gap:4px"><div style="display:flex;align-items:center;gap:6px"><b style="flex:1;font-size:12px">${def.label}</b><button class="mini anrm" data-ai="${ai}" title="remove">✕</button></div><div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--mut)">${def.ctrls.map(c=>animCtrl(ai,a,c)).join('')}</div></div>`;
+    }).join('') : '<div style="color:var(--mut);font-size:11px">No animations yet.</div>';
+    const have=new Set(anims.map(a=>a.type));
+    $('#ovAnimAdd').innerHTML='<option value="">＋ Add animation…</option>'+Object.keys(ANIM_DEFS).filter(t=>!have.has(t)).map(t=>`<option value="${t}">${ANIM_DEFS[t].label}</option>`).join('');
+    L.querySelectorAll('.anc').forEach(el=>{ el.oninput=el.onchange=()=>{ let v=el.value; if(el.type==='number'||el.type==='range') v=parseFloat(v); o.anims[+el.dataset.ai][el.dataset.k]=v; renderOverlays(playhead); }; });
+    L.querySelectorAll('.anrm').forEach(b=>{ b.onclick=()=>{ histCommit(); o.anims.splice(+b.dataset.ai,1); renderAnimList(); renderOverlays(playhead); }; });
+  }
+  $('#ovAnimAdd').onchange=()=>{ const t=$('#ovAnimAdd').value; if(!t) return; histCommit(); (o.anims=o.anims||[]).push(Object.assign({type:t},JSON.parse(JSON.stringify(ANIM_DEFS[t].def)))); renderAnimList(); renderOverlays(playhead); };
+  renderAnimList();
   if($('#ovHere')) $('#ovHere').onclick=()=>{ o.start=Math.round(playhead*100)/100; $('#ovStart').value=o.start; renderOvList(); renderOverlays(playhead); };
   if($('#ovReplace')) $('#ovReplace').onclick=()=>pickImage(src=>{ o.src=src; renderOverlays(playhead); renderOvList(); });
 }

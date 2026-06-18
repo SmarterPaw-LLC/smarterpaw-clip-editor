@@ -515,6 +515,45 @@ def build_sticker_png(o, W, H, out):
     _with_shadow(img, {"shadow": so}, W).save(out)
 
 
+def _anim_exprs(o, s, dur, W, tv="t"):
+    """Build ffmpeg expressions (time var `tv`) for overlay animations:
+    (dx_px, dy_px position offsets, alpha multiplier 0..1, has_opacity). Mirrors animState() in the UI.
+    Falls back to legacy fadeIn/fadeOut when no `anims` list is present."""
+    e = s + dur
+    anims = o.get("anims")
+    if anims is None:
+        anims = []
+        if float(o.get("fadeIn", 0) or 0) > 0: anims.append({"type": "fadeIn", "d": float(o.get("fadeIn"))})
+        if float(o.get("fadeOut", 0) or 0) > 0: anims.append({"type": "fadeOut", "d": float(o.get("fadeOut"))})
+    lt = "(%s-%g)" % (tv, s)
+    dxs, dys, amul = [], [], []
+    for a in anims:
+        ty = a.get("type")
+        if ty == "fadeIn":
+            d = max(0.01, float(a.get("d", 0.5))); amul.append("min(1,max(0,(%s-%g)/%g))" % (tv, s, d))
+        elif ty == "fadeOut":
+            d = max(0.01, float(a.get("d", 0.5))); amul.append("min(1,max(0,(%g-%s)/%g))" % (e, tv, d))
+        elif ty == "pulse":
+            amp = float(a.get("amp", 0.5)); sp = float(a.get("speed", 1.5)); amul.append("(1-%g*(0.5-0.5*cos(2*PI*%g*%s)))" % (amp, sp, lt))
+        elif ty == "jitter":
+            amp = float(a.get("amp", 0.012)) * W; sp = float(a.get("speed", 11))
+            dxs.append("%g*(sin(2*PI*%g*%s)+0.7*sin(2*PI*%g*%s+1.1))/1.7" % (amp, sp, lt, sp * 1.7, lt))
+            dys.append("%g*(cos(2*PI*%g*%s)+0.7*sin(2*PI*%g*%s+0.5))/1.7" % (amp, sp * 1.3, lt, sp * 2.1, lt))
+        elif ty == "float":
+            amp = float(a.get("amp", 0.02)) * W; sp = float(a.get("speed", 0.6)); dys.append("%g*sin(2*PI*%g*%s)" % (amp, sp, lt))
+        elif ty == "slideIn":
+            d = max(0.01, float(a.get("d", 0.5))); dist = float(a.get("dist", 0.2)) * W; dr = a.get("dir", "left")
+            term = "if(lt(%s,%g),pow(1-%s/%g,2)*%g,0)" % (lt, d, lt, d, dist)
+            (dxs if dr in ("left", "right") else dys).append(("-" if dr in ("left", "up") else "") + term)
+        elif ty == "bounceIn":
+            d = max(0.01, float(a.get("d", 0.6))); amp = float(a.get("amp", 0.12)) * W
+            dys.append("if(lt(%s,%g),-%g*exp(-3*%s/%g)*cos(2*PI*1.6*%s/%g)*(1-%s/%g),0)" % (lt, d, amp, lt, d, lt, d, lt, d))
+    dx = "+".join("(%s)" % x for x in dxs) if dxs else "0"
+    dy = "+".join("(%s)" % x for x in dys) if dys else "0"
+    am = "max(0,min(1,%s))" % ("*".join("(%s)" % x for x in amul)) if amul else "1"
+    return dx, dy, am, bool(amul)
+
+
 def apply_overlays(silent, overlays, W, H, tmp):
     """Composite free-floating text/image/shape overlays over the full timeline (global time),
     preserving list order as z-order (later = on top)."""
@@ -540,12 +579,8 @@ def apply_overlays(silent, overlays, W, H, tmp):
             ff = esc_path(_font_path(o.get("font", "cooper")))
             size = max(8, int(W * float(o.get("size", 0.06))))
             col = (o.get("color", "#ffffff") or "#ffffff").replace("#", "0x")
-            fi = float(o.get("fadeIn", 0) or 0); fo = float(o.get("fadeOut", 0) or 0)
-            alpha = ""
-            if fi > 0 or fo > 0:
-                ai = f"min(1,(t-{s})/{fi})" if fi > 0 else "1"
-                ao = f"min(1,({e}-t)/{fo})" if fo > 0 else "1"
-                alpha = f":alpha='max(0,min({ai},{ao}))'"
+            adx, ady, aam, _ = _anim_exprs(o, s, float(o.get("dur", 3)), W, "t")
+            alpha = f":alpha='{aam}'"
             sh = o.get("shadow") or {}
             shopt = ""
             if sh.get("on"):
@@ -553,7 +588,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 sop = float(sh.get("opacity", 0.5)); scol = (sh.get("color", "#000000") or "#000000").replace("#", "0x")
                 shopt = f":shadowx={sdx}:shadowy={sdy}:shadowcolor={scol}@{sop}"
             common = (f"fontfile='{ff}':textfile='{esc_path(tf)}':fontcolor={col}:fontsize={size}:"
-                      f"x=w*{ox}-text_w/2:y=h*{oy}-text_h/2:{en}{alpha}{shopt}")
+                      f"x='w*{ox}-text_w/2+({adx})':y='h*{oy}-text_h/2+({ady})':{en}{alpha}{shopt}")
             if o.get("button"):
                 bgc = (o.get("bg", "#f07830") or "#f07830").replace("#", "0x")
                 dt = f"drawtext={common}:box=1:boxcolor={bgc}:boxborderw={int(size*0.4)}"
@@ -583,18 +618,18 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     p = os.path.join(tmp, f"img_{k}.png"); im.save(p); scale_w = None
                 else:
                     scale_w = max(1, int(W * float(o.get("scale", 0.3))))
-            fi = float(o.get("fadeIn", 0) or 0); fo = float(o.get("fadeOut", 0) or 0)
+            dur_o = float(o.get("dur", 3))
+            odx, ody, _, _ = _anim_exprs(o, s, dur_o, W, "t")          # position (overlay time = t)
+            _, _, amT, has_op = _anim_exprs(o, s, dur_o, W, "T")        # opacity (geq pixel time = T)
             inputs += ["-loop", "1", "-t", str(e), "-i", p]
             filt = []
             if scale_w:
                 filt.append(f"scale={scale_w}:-1")
             filt.append("format=rgba")
-            if fi > 0:
-                filt.append(f"fade=t=in:st={s}:d={fi}:alpha=1")
-            if fo > 0:
-                filt.append(f"fade=t=out:st={max(0,e-fo)}:d={fo}:alpha=1")
+            if has_op:                                                  # animate alpha per-frame (geq T = timeline t)
+                filt.append(f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({amT})'")
             fc.append(f"[{ii}:v]" + ",".join(filt) + f"[oi{k}]")
-            fc.append(f"[{last}][oi{k}]overlay=x=W*{ox}-w/2:y=H*{oy}-h/2:{en}[v{k}]")
+            fc.append(f"[{last}][oi{k}]overlay=x='W*{ox}-w/2+({odx})':y='H*{oy}-h/2+({ody})':{en}[v{k}]")
             last = f"v{k}"; ii += 1
     if not fc:
         return silent, None
