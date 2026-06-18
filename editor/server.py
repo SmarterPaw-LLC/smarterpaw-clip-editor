@@ -484,6 +484,37 @@ def build_shape_png(o, W, H, out):
     _with_shadow(img, o, W).save(out)
 
 
+def build_sticker_png(o, W, H, out):
+    """Bubble-sticker text (ported from the social image tool): bold font, thick white
+    outline, gradient fill, drop shadow. Single line -> transparent PNG sized to the text."""
+    from PIL import Image, ImageDraw, ImageFont
+    text = (o.get("text") or "").strip() or " "
+    size = max(10, int(W * float(o.get("size", 0.07))))
+    try:
+        font = ImageFont.truetype(_font_path(o.get("font", "cooper")), size)
+    except Exception:
+        font = ImageFont.truetype(FONT_FILES["arial"], size)
+    outline = max(4, int(round(size * float(o.get("bleed", 0.22)))))   # white sticker border thickness
+    g_from = o.get("gradStart", "#8ab81d"); g_to = o.get("gradEnd", "#3c8e14")
+    tmp = Image.new("RGBA", (10, 10)); md = ImageDraw.Draw(tmp)
+    bb = md.textbbox((0, 0), text, font=font, stroke_width=outline)
+    pad = outline + max(6, int(size * 0.12))
+    cw, ch = (bb[2] - bb[0]) + pad * 2, (bb[3] - bb[1]) + pad * 2
+    img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    px, py = pad - bb[0], pad - bb[1]
+    d.text((px, py), text, font=font, fill=(255, 255, 255, 255),
+           stroke_width=outline, stroke_fill=(255, 255, 255, 255))   # white sticker outline + base
+    grad = _gradient_rgba(cw, ch, g_from, g_to, float(o.get("gradAngle", 180)), o.get("gradType", "linear"), 255)
+    mask = Image.new("L", (cw, ch), 0)
+    ImageDraw.Draw(mask).text((px, py), text, font=font, fill=255)   # glyph interior only (no stroke)
+    img.paste(grad, (0, 0), mask)
+    so = dict(o.get("shadow") or {})
+    if not so.get("on"):                                  # default sticker pop shadow if none set
+        so = {"on": True, "color": "#103300", "blur": 0.008, "dx": 0.003, "dy": 0.006, "opacity": 0.45}
+    _with_shadow(img, {"shadow": so}, W).save(out)
+
+
 def apply_overlays(silent, overlays, W, H, tmp):
     """Composite free-floating text/image/shape overlays over the full timeline (global time),
     preserving list order as z-order (later = on top)."""
@@ -500,7 +531,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
         s = float(o.get("start", 0)); e = s + float(o.get("dur", 3))
         ox, oy = float(o.get("x", 0.5)), float(o.get("y", 0.5))
         en = f"enable='between(t,{s},{e})'"
-        if t == "text":
+        if t == "text" and o.get("style") != "sticker":
             if not (o.get("text") or "").strip():
                 continue
             tf = os.path.join(tmp, f"ov_{k}.txt")
@@ -530,7 +561,13 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 dt = f"drawtext={common}:borderw=6:bordercolor=black@0.6"
             fc.append(f"[{last}]{dt}[v{k}]"); last = f"v{k}"
         else:
-            if t == "shape":
+            if t == "text":                       # sticker-style text → rendered as a PNG
+                if not (o.get("text") or "").strip():
+                    continue
+                p = os.path.join(tmp, f"sticker_{k}.png")
+                build_sticker_png(o, W, H, p)
+                scale_w = None
+            elif t == "shape":
                 p = os.path.join(tmp, f"shape_{k}.png")
                 build_shape_png(o, W, H, p)
                 scale_w = None

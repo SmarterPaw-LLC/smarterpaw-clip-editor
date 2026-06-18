@@ -155,7 +155,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.20.0</span>
+  <span class="ver" id="appVer">v1.21.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -757,11 +757,18 @@ function renderOverlays(time){
       el.style.borderRadius=((o.radius||0.04)*W)+'px';
       el.style.border=((o.strokeW||0)>0)?(((o.strokeW)*W)+'px solid '+(o.stroke||'#ffffff')):'none'; }
     else { el.textContent=o.text||''; el.style.fontFamily=FONTS[o.font]||FONTS.cooper; el.style.fontWeight='800'; el.style.lineHeight='1';
-      el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.color=o.color||'#fff'; el.style.whiteSpace='nowrap';
-      if(o.button){ el.style.background=o.bg||'#f07830'; const p=(o.size||0.06)*W; el.style.padding=(p*0.38)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.3)+'px'; el.style.textShadow='none'; }
-      else { el.style.background='none'; el.style.padding='0'; el.style.borderRadius='0'; el.style.textShadow='0 2px 6px rgba(0,0,0,.6)'; } }
+      el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.whiteSpace='nowrap';
+      if(o.style==='sticker'){ const fs=(o.size||0.07)*W, ang=o.gradAngle!=null?o.gradAngle:180, c1=o.gradStart||'#8ab81d', c2=o.gradEnd||'#3c8e14';
+        el.style.background=(o.gradType==='radial')?('radial-gradient(circle, '+c1+', '+c2+')'):('linear-gradient('+ang+'deg, '+c1+', '+c2+')');
+        el.style.webkitBackgroundClip='text'; el.style.backgroundClip='text'; el.style.color='transparent';
+        el.style.webkitTextStroke=Math.max(3,fs*0.16)+'px #fff'; el.style.paintOrder='stroke fill'; el.style.padding='0'; el.style.borderRadius='0'; el.style.textShadow='none'; }
+      else { el.style.background=o.button?(o.bg||'#f07830'):'none'; el.style.webkitBackgroundClip=''; el.style.backgroundClip=''; el.style.color=o.color||'#fff'; el.style.webkitTextStroke=''; el.style.paintOrder='';
+        if(o.button){ const p=(o.size||0.06)*W; el.style.padding=(p*0.38)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.3)+'px'; el.style.textShadow='none'; }
+        else { el.style.padding='0'; el.style.borderRadius='0'; el.style.textShadow='0 2px 6px rgba(0,0,0,.6)'; } } }
     el.style.left=((o.x||0.5)*100)+'%'; el.style.top=((o.y||0.5)*100)+'%'; el.style.transform='translate(-50%,-50%)';
-    const sh=o.shadow||{}; el.style.filter = sh.on ? `drop-shadow(${(sh.dx!=null?sh.dx:0.004)*W}px ${(sh.dy!=null?sh.dy:0.006)*W}px ${(sh.blur!=null?sh.blur:0.01)*W}px ${hexA(sh.color||'#000000', sh.opacity!=null?sh.opacity:0.5)})` : 'none';
+    const sh=o.shadow||{}; const stickerSh=(o.type==='text'&&o.style==='sticker'&&!sh.on);
+    el.style.filter = sh.on ? `drop-shadow(${(sh.dx!=null?sh.dx:0.004)*W}px ${(sh.dy!=null?sh.dy:0.006)*W}px ${(sh.blur!=null?sh.blur:0.01)*W}px ${hexA(sh.color||'#000000', sh.opacity!=null?sh.opacity:0.5)})`
+      : stickerSh ? `drop-shadow(${0.003*W}px ${0.006*W}px ${0.008*W}px rgba(16,51,0,.45))` : 'none';
     let op=1; if(active){ const fi=+o.fadeIn||0, fo=+o.fadeOut||0, dd=+o.dur||0;
       if(fi>0 && time<o.start+fi) op=Math.max(0,(time-o.start)/fi);
       if(fo>0 && time>o.start+dd-fo) op=Math.min(op,Math.max(0,(o.start+dd-time)/fo)); }
@@ -808,10 +815,15 @@ function buildOvEditor(){
     <button class="mini" id="ovHere">⤓ at playhead</button></div>`;
   if(o.type==='text'){
     h+=`<div class="sec">Text</div><div><input type="text" id="ovText" style="width:100%" value="${(o.text||'').replace(/"/g,'&quot;')}"></div>
-      <div><label>Font <select id="ovFont"><option value="cooper">Cooper</option><option value="meowijuana">Meowijuana</option><option value="arial">Arial</option></select></label>
-      <label>Color <input type="color" id="ovColor" value="${o.color}"></label></div>
-      <div><label>Size <input type="range" id="ovSize" min="0.02" max="0.18" step="0.005" value="${o.size}"></label></div>
-      <div><label class="ck"><input type="checkbox" id="ovBtn" ${o.button?'checked':''}> button</label> <input type="color" id="ovBg" value="${o.bg}" title="button color"></div>`;
+      <div><label>Style <select id="ovStyle"><option value="plain">Plain</option><option value="sticker">Bubble sticker</option></select></label>
+      <label>Font <select id="ovFont"><option value="cooper">Cooper</option><option value="meowijuana">Meowijuana</option><option value="arial">Arial</option></select></label></div>
+      <div id="ovPlainRow"><label>Color <input type="color" id="ovColor" value="${o.color||'#ffffff'}"></label>
+        <label class="ck"><input type="checkbox" id="ovBtn" ${o.button?'checked':''}> button</label> <input type="color" id="ovBg" value="${o.bg||'#f07830'}" title="button color"></div>
+      <div id="ovStickRow"><label>From <input type="color" id="ovStFrom" value="${o.gradStart||'#8ab81d'}"></label>
+        <label>To <input type="color" id="ovStTo" value="${o.gradEnd||'#3c8e14'}"></label>
+        <label>Style <select id="ovStType"><option value="linear">Linear</option><option value="radial">Radial</option></select></label></div>
+      <div id="ovStAngRow"><label>Direction <input type="range" id="ovStAngle" min="0" max="360" step="5" value="${o.gradAngle!=null?o.gradAngle:180}"></label> <span id="ovStAngV" style="font-size:11px;color:var(--mut)">${o.gradAngle!=null?o.gradAngle:180}°</span></div>
+      <div><label>Size <input type="range" id="ovSize" min="0.02" max="0.18" step="0.005" value="${o.size}"></label></div>`;
   } else if(o.type==='shape'){
     h+=`<div class="sec">Shape (rounded rectangle)</div>
       <div><label>Fill <select id="ovFillType"><option value="solid">Solid</option><option value="gradient">Gradient</option></select></label>
@@ -846,10 +858,17 @@ function buildOvEditor(){
     $('#ovSolidRow').style.display=g?'none':''; $('#ovGradRow').style.display=g?'':'none';
     $('#ovGradAngRow').style.display=(g && $('#ovGradType').value!=='radial')?'':'none'; }
   if($('#ovFillType')){ $('#ovFillType').value=(o.fillType==='gradient')?'gradient':'solid'; $('#ovGradType').value=o.gradType||'linear'; ovShapeRows(); }
+  function ovTextRows(){ if(!$('#ovStyle')) return; const st=$('#ovStyle').value==='sticker';
+    $('#ovPlainRow').style.display=st?'none':''; $('#ovStickRow').style.display=st?'':'none';
+    $('#ovStAngRow').style.display=(st && $('#ovStType').value!=='radial')?'':'none'; }
+  if($('#ovStyle')){ $('#ovStyle').value=(o.style==='sticker')?'sticker':'plain'; $('#ovStType').value=o.gradType||'linear'; ovTextRows(); }
   const upd=()=>{ o.start=parseFloat($('#ovStart').value)||0; o.dur=parseFloat($('#ovDur').value)||1;
     o.fadeIn=parseFloat($('#ovFi').value)||0; o.fadeOut=parseFloat($('#ovFo').value)||0;
     const s2=o.shadow||(o.shadow={}); s2.on=$('#ovShOn').checked; s2.color=$('#ovShColor').value; s2.blur=parseFloat($('#ovShBlur').value)||0; s2.opacity=parseFloat($('#ovShOp').value); s2.dx=parseFloat($('#ovShX').value)||0; s2.dy=parseFloat($('#ovShY').value)||0;
-    if(o.type==='text'){ o.text=$('#ovText').value; o.font=$('#ovFont').value; o.color=$('#ovColor').value; o.size=parseFloat($('#ovSize').value)||0.06; o.button=$('#ovBtn').checked; o.bg=$('#ovBg').value; }
+    if(o.type==='text'){ o.text=$('#ovText').value; o.font=$('#ovFont').value; o.size=parseFloat($('#ovSize').value)||0.06; o.style=$('#ovStyle').value;
+      if(o.style==='sticker'){ o.gradStart=$('#ovStFrom').value; o.gradEnd=$('#ovStTo').value; o.gradType=$('#ovStType').value; o.gradAngle=parseFloat($('#ovStAngle').value); if($('#ovStAngV')) $('#ovStAngV').textContent=(o.gradAngle||0)+'°'; }
+      else { o.color=$('#ovColor').value; o.button=$('#ovBtn').checked; o.bg=$('#ovBg').value; }
+      ovTextRows(); }
     else if(o.type==='shape'){ o.fillType=$('#ovFillType').value; o.fill=$('#ovFill').value; o.opacity=parseFloat($('#ovOpacity').value);
       o.gradStart=$('#ovGradStart').value; o.gradEnd=$('#ovGradEnd').value; o.gradType=$('#ovGradType').value; o.gradAngle=parseFloat($('#ovGradAngle').value);
       o.w=parseFloat($('#ovW').value)||0.5; o.h=parseFloat($('#ovH').value)||0.2; o.radius=parseFloat($('#ovRadius').value)||0; o.strokeW=parseFloat($('#ovStrokeW').value)||0; o.stroke=$('#ovStroke').value;
