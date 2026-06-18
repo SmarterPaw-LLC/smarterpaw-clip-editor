@@ -1003,6 +1003,16 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path in ("/", "/index.html"):
             return self._serve_file(os.path.join(EDITOR, "index.html"))
+        if path == "/api/srcsig":
+            # cheap fingerprint of the source library so the UI can auto-refresh when clips change
+            n = 0; mx = 0.0
+            for root, _d, files in os.walk(SRC_ROOT):
+                for fn in files:
+                    if fn.lower().endswith(".mp4"):
+                        n += 1
+                        try: mx = max(mx, os.path.getmtime(os.path.join(root, fn)))
+                        except OSError: pass
+            return self._json({"n": n, "m": round(mx, 2)})
         if path == "/api/manifest":
             with _manifest_lock:
                 clips = scan_sources()

@@ -174,7 +174,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.29.0</span>
+  <span class="ver" id="appVer">v1.30.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -184,6 +184,9 @@
   <button id="btnSave">Save</button>
   <button class="primary" id="btnRender">▶ Render MP4</button>
 </header>
+
+<div id="staleBanner" style="display:none;background:#7a1f1f;color:#fff;padding:8px 14px;font-size:13px;text-align:center">
+  ⚠ Your editor's backend is out of date — <b>close and reopen “Start Meowi Editor.bat”</b> to enable uploading clips and auto‑refresh.</div>
 
 <div class="projbar">
   <span class="lbl">Project</span>
@@ -1746,7 +1749,24 @@ async function boot(reload){
   else { applyEDL(await api('/api/edl')); setCur(null); }
   $('#status').textContent=MAN.clips.length+' clips loaded · '+list.length+' saved project(s).';
 }
-boot();
+
+/* ---------- auto-refresh the source library when clips change (no manual Reload needed) ---------- */
+let _srcSig=null, _srcStale=false;
+async function pollSrc(){
+  try{
+    const r=await fetch('/api/srcsig');
+    if(r.status===404){ if(!_srcStale){ _srcStale=true; $('#staleBanner').style.display=''; } return; }   // old backend
+    if(_srcStale){ _srcStale=false; $('#staleBanner').style.display='none'; }
+    const s=await r.json(); const sig=s.n+':'+s.m;
+    if(_srcSig===null){ _srcSig=sig; return; }
+    if(sig!==_srcSig){ _srcSig=sig;
+      MAN=await api('/api/manifest'); MAN.byId={}; MAN.clips.forEach(c=>MAN.byId[c.id]=c);
+      renderBin(); $('#status').textContent=MAN.clips.length+' clips loaded';
+      toast('Source clips updated');
+    }
+  }catch(e){}
+}
+boot().then(()=>{ pollSrc(); setInterval(pollSrc, 4000); window.addEventListener('focus', pollSrc); });
 </script>
 </body>
 </html>
