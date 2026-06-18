@@ -3,7 +3,7 @@
 Stdlib only. Serves the editor UI + source clips (with HTTP Range) and renders
 the timeline to MP4 via ffmpeg. Bind: http://127.0.0.1:8765/
 """
-import os, re, json, subprocess, tempfile, shutil, threading, urllib.parse, math, datetime
+import os, re, json, subprocess, tempfile, shutil, threading, urllib.parse, urllib.request, urllib.error, base64, time, math, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -232,6 +232,125 @@ def create_ai_build(name, clip_ids, canvas, length, brief):
                 f"  - clips: {', '.join(c['label'] + ' [' + c['id'] + ']' for c in chosen)}\n")
     return {"ok": True, "folder": f"ai-builds/{folder_name}", "manifest": rel_manifest,
             "name": name, "clips": len(chosen)}
+
+
+# ---------- fal.ai image→video generation ----------
+FAL_KEY_FILE = os.path.join(EDITOR, ".fal_key")
+UGC_PIC_ROOT = os.path.join(PROJ, "sources", "UGC_pictures")
+UGC_VID_ROOT = os.path.join(PROJ, "sources", "UGC_video")
+GEN_OUT = os.path.join(SRC_ROOT, "ai-generated")   # generated clips land here (under sources/youtube → scanned as clips)
+IMG_EXT = (".jpg", ".jpeg", ".png", ".webp")
+FAL_MODELS = {   # friendly name → fal model id (verified/adjusted live)
+    "kling": "fal-ai/kling-video/v1.6/standard/image-to-video",
+    "luma":  "fal-ai/luma-dream-machine/image-to-video",
+}
+_gen_jobs = {}   # request_id → {model_id, category, saved}
+
+
+def fal_key():
+    k = os.environ.get("FAL_KEY")
+    if k and k.strip():
+        return k.strip()
+    try:
+        with open(FAL_KEY_FILE, encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return None
+
+
+def scan_images():
+    """Source photos available to animate (UGC_pictures + any images in UGC_video)."""
+    out = []
+    for root in (UGC_PIC_ROOT, UGC_VID_ROOT):
+        if not os.path.isdir(root):
+            continue
+        for r, _d, files in os.walk(root):
+            for fn in files:
+                if not fn.lower().endswith(IMG_EXT):
+                    continue
+                full = os.path.join(r, fn)
+                rel = os.path.relpath(full, PROJ).replace("\\", "/")
+                product = os.path.basename(r)
+                label = re.sub(r"\s+", " ", os.path.splitext(fn)[0]).strip()[:60]
+                out.append({"path": rel, "url": "/" + urllib.parse.quote(rel),
+                            "label": label, "product": product})
+    out.sort(key=lambda c: (c["product"], c["label"]))
+    return out
+
+
+def _fal_req(url, method="GET", key=None, body=None, timeout=60):
+    headers = {"Authorization": "Key " + key, "Content-Type": "application/json"}
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.status, json.loads(r.read().decode("utf-8"))
+
+
+def gen_submit(image_rel, prompt, model, canvas, duration, category):
+    key = fal_key()
+    if not key:
+        return {"ok": False, "log": "No fal.ai key found (editor/.fal_key or FAL_KEY env var)."}
+    full = os.path.normpath(os.path.join(PROJ, image_rel))
+    if not full.startswith(PROJ) or not os.path.isfile(full):
+        return {"ok": False, "log": "Image not found: " + str(image_rel)}
+    model_id = FAL_MODELS.get(model, FAL_MODELS["kling"])
+    ext = os.path.splitext(full)[1].lower().lstrip(".")
+    mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp"}.get(ext, "jpeg")
+    with open(full, "rb") as f:
+        data_uri = "data:image/%s;base64,%s" % (mime, base64.b64encode(f.read()).decode())
+    ar = {"9x16": "9:16", "16x9": "16:9", "4x5": "9:16"}.get(canvas, "9:16")
+    body = {"prompt": prompt or "subtle natural motion, cinematic", "image_url": data_uri, "aspect_ratio": ar}
+    if model == "kling":
+        body["duration"] = "10" if int(duration or 5) >= 8 else "5"
+    try:
+        _, sub = _fal_req("https://queue.fal.run/" + model_id, "POST", key, body, timeout=90)
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "log": "fal submit %s: %s" % (e.code, e.read().decode("utf-8", "replace")[:900])}
+    except Exception as e:
+        return {"ok": False, "log": "fal submit error: " + repr(e)}
+    rid = sub.get("request_id")
+    if not rid:
+        return {"ok": False, "log": "fal: no request_id in " + json.dumps(sub)[:500]}
+    _gen_jobs[rid] = {"status_url": sub.get("status_url"), "response_url": sub.get("response_url"),
+                      "category": slug(category or "ai-generated"), "saved": None}
+    return {"ok": True, "request_id": rid, "model": model}
+
+
+def gen_status(rid):
+    key = fal_key()
+    job = _gen_jobs.get(rid)
+    if not key or not job:
+        return {"ok": False, "log": "Unknown job (server restarted?). Re-submit."}
+    if job.get("saved"):
+        return {"ok": True, "status": "done", "clip": job["saved"]}
+    try:                                            # fal returns the exact status/result URLs (app-root, not full subpath)
+        _, st = _fal_req(job["status_url"], "GET", key, None, 30)
+    except Exception as e:
+        return {"ok": True, "status": "pending", "note": "status check failed, retrying: " + repr(e)[:200]}
+    s = st.get("status")
+    if s in ("IN_QUEUE", "IN_PROGRESS"):
+        return {"ok": True, "status": "pending", "queue": st.get("queue_position")}
+    if s and s not in ("COMPLETED",):
+        return {"ok": False, "log": "fal status %s: %s" % (s, json.dumps(st)[:600])}
+    try:
+        _, res = _fal_req(job["response_url"], "GET", key, None, 60)
+    except Exception as e:
+        return {"ok": False, "log": "fal result fetch error: " + repr(e)}
+    vurl = (res.get("video") or {}).get("url") or res.get("video_url")
+    if not vurl:
+        return {"ok": False, "log": "No video url in result: " + json.dumps(res)[:600]}
+    out_dir = os.path.join(SRC_ROOT, job["category"])
+    os.makedirs(out_dir, exist_ok=True)
+    out_name = "ai_%s_%s.mp4" % (job["category"], datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    out_path = os.path.join(out_dir, out_name)
+    try:
+        with urllib.request.urlopen(vurl, timeout=120) as r, open(out_path, "wb") as f:
+            shutil.copyfileobj(r, f)
+    except Exception as e:
+        return {"ok": False, "log": "download failed: " + repr(e)}
+    rel = os.path.relpath(out_path, PROJ).replace("\\", "/")
+    job["saved"] = rel
+    return {"ok": True, "status": "done", "clip": rel, "category": job["category"]}
 
 
 def seed_projects():
@@ -776,7 +895,7 @@ class Handler(BaseHTTPRequestHandler):
                     break
             return self._json({"clips": clips, "music": list_music(),
                                "canvases": list(CANVAS.keys()), "logo": logo, "assets": list_assets(),
-                               "exportsDir": EXPORTS})
+                               "exportsDir": EXPORTS, "falKey": bool(fal_key())})
         if path == "/api/edl":
             return self._json(load_edl())
         if path == "/api/projects":
@@ -788,6 +907,11 @@ class Handler(BaseHTTPRequestHandler):
             if p is None:
                 return self._json({"error": "not found"}, 404)
             return self._json(p)
+        if path == "/api/images":
+            return self._json({"images": scan_images(), "falKey": bool(fal_key())})
+        if path == "/api/gen-status":
+            qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            return self._json(gen_status((qs.get("id") or [""])[0]))
         full = self._safe_path(path)
         if full and os.path.isfile(full):
             return self._serve_file(full)
@@ -838,6 +962,16 @@ class Handler(BaseHTTPRequestHandler):
             brief = (data.get("brief") or "").strip()
             try:
                 return self._json(create_ai_build(name, clip_ids, canvas, length, brief))
+            except Exception as e:
+                return self._json({"ok": False, "log": repr(e)}, 500)
+        if path == "/api/gen-video":
+            img = data.get("image") or ""
+            if not img:
+                return self._json({"ok": False, "log": "No image selected."}, 400)
+            try:
+                return self._json(gen_submit(img, (data.get("prompt") or "").strip(),
+                                             data.get("model") or "kling", data.get("canvas") or "9x16",
+                                             data.get("duration") or 5, data.get("category") or "ai-generated"))
             except Exception as e:
                 return self._json({"ok": False, "log": repr(e)}, 500)
         if path == "/api/upload":

@@ -155,12 +155,13 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.16.0</span>
+  <span class="ver" id="appVer">v1.17.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
   <button class="ghost" id="btnRedo" title="Redo (Ctrl+Shift+Z / Ctrl+Y)" disabled>↷ Redo</button>
   <button id="btnOverlays">✚ Overlays</button>
+  <button id="btnGenAI" title="Generate a video clip from a photo (fal.ai)">🎬 AI clip</button>
   <button class="ghost" id="btnReload">Reload clips</button>
   <button id="btnSave">Save</button>
   <button class="primary" id="btnRender">▶ Render MP4</button>
@@ -340,6 +341,27 @@
       <div id="aiGrid" class="aigrid"></div>
       <div class="row" style="justify-content:flex-end;gap:8px"><button class="ghost" id="aiCancel">Cancel</button><button class="primary" id="aiGo">✨ Create build &amp; notify Claude</button></div>
       <div class="status" id="aiStatus"></div>
+    </div>
+  </div>
+</div>
+
+<div id="genModal" class="cmodal" style="display:none">
+  <div class="card" style="width:820px">
+    <div class="hd"><span>🎬 Generate AI clip from a photo</span><button class="mini" id="genClose">✕</button></div>
+    <div class="bd">
+      <div class="row"><label class="k">Model</label>
+        <select id="genModel"><option value="kling">Kling — realistic motion (cheaper)</option><option value="luma">Luma — fast</option></select>
+        <label class="k" style="min-width:auto">Length</label><select id="genDur"><option value="5">5s</option><option value="10">10s</option></select>
+        <label class="k" style="min-width:auto">Canvas</label>
+        <select id="genCanvas"><option value="9x16">9:16</option><option value="4x5">4:5</option><option value="16x9">16:9</option></select></div>
+      <div class="row"><label class="k">Category</label><input type="text" id="genCat" placeholder="ai-generated (saved under sources/youtube/&lt;category&gt;)" spellcheck="false"></div>
+      <div class="row" style="align-items:flex-start"><label class="k" style="margin-top:6px">Prompt</label>
+        <textarea id="genPrompt" rows="2" placeholder="Motion to add — e.g. 'the cat sniffs and paws at the catnip joint, tail flicking, gentle camera push-in'"></textarea></div>
+      <div class="row" style="justify-content:space-between"><label class="k" style="min-width:auto">Pick a photo to animate</label><span id="genPick" style="font-size:12px;color:var(--mut)">none selected</span></div>
+      <div class="row"><input type="text" id="genFilter" placeholder="🔍 filter…" style="flex:1" spellcheck="false"><select id="genCatSel"></select></div>
+      <div id="genGrid" class="aigrid"></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button class="ghost" id="genCancel">Cancel</button><button class="primary" id="genGo">🎬 Generate clip</button></div>
+      <div class="status" id="genStatus"></div>
     </div>
   </div>
 </div>
@@ -1168,6 +1190,42 @@ async function aiBuildGo(){ if(!aiSel.length){ $('#aiStatus').textContent='Pick 
 $('#btnAiBuild').onclick=openAiBuild;
 $('#aiClose').onclick=closeAiBuild; $('#aiCancel').onclick=closeAiBuild; $('#aiGo').onclick=aiBuildGo;
 $('#aiFilter').oninput=renderAiGrid; $('#aiCat').onchange=renderAiGrid;
+
+/* ---------- AI clip generation (fal.ai image→video) ---------- */
+let genImages=[], genSel=null, genPoll=null;
+async function openGen(){ stop(); genSel=null; genPoll&&clearInterval(genPoll); genPoll=null;
+  $('#genStatus').textContent=''; $('#genPrompt').value=''; $('#genCat').value=''; $('#genFilter').value=''; $('#genPick').textContent='none selected';
+  $('#genCanvas').value=EDL.settings.canvas||'9x16'; $('#genGo').disabled=false;
+  const r=await api('/api/images'); genImages=r.images||[];
+  if(!r.falKey){ $('#genStatus').textContent='⚠ No fal.ai key found on the server (editor/.fal_key).'; }
+  const cats=[...new Set(genImages.map(i=>i.product))].sort();
+  $('#genCatSel').innerHTML='<option value="">All categories</option>'+cats.map(p=>`<option>${p}</option>`).join('');
+  renderGenGrid(); $('#genModal').style.display='flex'; }
+function renderGenGrid(){ const g=$('#genGrid'); const sc=g.scrollTop; g.innerHTML='';
+  const q=($('#genFilter').value||'').trim().toLowerCase(), cat=$('#genCatSel').value;
+  const list=genImages.filter(i=>(!cat||i.product===cat)&&(!q||((i.label||'')+' '+i.product).toLowerCase().includes(q)));
+  if(!list.length){ g.innerHTML='<div style="grid-column:1/-1;color:var(--mut);font-size:12px;padding:8px">No photos found — drop images in sources/UGC_pictures/&lt;category&gt;/</div>'; return; }
+  let cur=null;
+  list.forEach(im=>{ if(im.product!==cur){ cur=im.product; const hd=document.createElement('div'); hd.className='grphd'; hd.innerHTML=`<b>${cur}</b> <span>${list.filter(x=>x.product===cur).length}</span>`; g.appendChild(hd); }
+    const cell=document.createElement('div'); cell.className='aicell'+(genSel===im.path?' on':''); cell.dataset.path=im.path; cell.title=im.label;
+    cell.innerHTML=`<span class="pick">${genSel===im.path?'✓':'＋'}</span><img src="${im.url}" loading="lazy"><div class="cap">${im.label}</div>`;
+    cell.onclick=()=>{ genSel=im.path; $('#genPick').textContent=im.label; if(!$('#genCat').value.trim()) $('#genCat').value=im.product; renderGenGrid(); };
+    g.appendChild(cell); });
+  g.scrollTop=sc; }
+function closeGen(){ genPoll&&clearInterval(genPoll); genPoll=null; $('#genModal').style.display='none'; }
+async function genGo(){ if(!genSel){ $('#genStatus').textContent='Pick a photo first.'; return; }
+  const payload={image:genSel, prompt:$('#genPrompt').value, model:$('#genModel').value, canvas:$('#genCanvas').value,
+    duration:parseInt($('#genDur').value)||5, category:($('#genCat').value||'ai-generated').trim()};
+  $('#genGo').disabled=true; $('#genStatus').textContent='Submitting to '+payload.model+'…';
+  const r=await api('/api/gen-video',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  if(!r||!r.ok){ $('#genGo').disabled=false; $('#genStatus').textContent='Failed: '+((r&&r.log)||'error'); return; }
+  $('#genStatus').textContent='Generating… (1–3 min — keep this open)'; let secs=0; const id=r.request_id;
+  genPoll=setInterval(async()=>{ secs+=6; const s=await api('/api/gen-status?id='+encodeURIComponent(id));
+    if(s.status==='done'){ clearInterval(genPoll); genPoll=null; $('#genGo').disabled=false; $('#genStatus').textContent='✓ Clip ready ('+s.clip+') — added to clips.'; toast('AI clip generated'); await boot(true); }
+    else if(!s.ok){ clearInterval(genPoll); genPoll=null; $('#genGo').disabled=false; $('#genStatus').textContent='Failed: '+(s.log||'error'); }
+    else $('#genStatus').textContent='Generating… '+secs+'s'+(s.queue!=null?(' (queue '+s.queue+')'):''); }, 6000); }
+$('#btnGenAI').onclick=openGen; $('#genClose').onclick=closeGen; $('#genCancel').onclick=closeGen; $('#genGo').onclick=genGo;
+$('#genFilter').oninput=renderGenGrid; $('#genCatSel').onchange=renderGenGrid;
 
 $('#btnProjLoad').onclick=()=>projLoad($('#projSelect').value);
 $('#projSelect').onchange=()=>projLoad($('#projSelect').value);
