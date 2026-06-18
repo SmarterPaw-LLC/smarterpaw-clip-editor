@@ -62,7 +62,10 @@
   #tlRuler { cursor:pointer; }
   .col { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:auto; }
   .col h2 { font-size:12px; text-transform:uppercase; letter-spacing:.6px; color:var(--mut);
-            margin:0; padding:10px 12px; position:sticky; top:0; background:var(--panel); border-bottom:1px solid var(--line); z-index:2; }
+            margin:0; padding:10px 12px; position:sticky; top:0; background:var(--panel); border-bottom:1px solid var(--line); z-index:2;
+            display:flex; align-items:center; gap:10px; }
+  #stageWrap.panning { cursor:grabbing; }
+  #stageWrap.dragover, #bin.dragover { outline:2px dashed var(--acc,#8ab81d); outline-offset:-4px; }
   /* bin */
   .grp { padding:8px 10px 2px; font-size:11px; color:var(--acc); text-transform:uppercase; letter-spacing:.5px; }
   .clip { display:flex; gap:8px; padding:6px 10px; cursor:pointer; align-items:center; }
@@ -155,7 +158,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.26.0</span>
+  <span class="ver" id="appVer">v1.27.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -187,7 +190,8 @@
   <div class="topRow">
   <!-- SOURCE BIN -->
   <div class="col" id="binCol">
-    <h2>Source clips</h2>
+    <h2>Source clips <button class="mini" id="btnAddClip" title="Add video files (drag clips here or onto the preview)" style="margin-left:auto">＋ Add clips</button></h2>
+    <input type="file" id="fileAddClip" accept="video/*,.mp4,.mov,.webm,.m4v" multiple style="display:none">
     <div id="bin"></div>
   </div>
 
@@ -231,6 +235,7 @@
             <option>center</option><option>top</option><option>bottom</option><option>left</option><option>right</option>
           </select></label>
         <button class="mini" id="btnAddSel">+ Add this clip to timeline</button>
+        <span style="color:var(--mut);font-size:11px">drag preview to reframe · scroll to zoom</span>
       </div>
     </div>
   </div>
@@ -384,8 +389,16 @@ function sizeStage(){
 }
 
 function anchorPos(a){ return {center:'50% 50%',top:'50% 0%',bottom:'50% 100%',left:'0% 50%',right:'100% 50%'}[a]||'50% 50%'; }
+function anchorFrac(a){ return {center:[.5,.5],top:[.5,0],bottom:[.5,1],left:[0,.5],right:[1,.5]}[a]||[.5,.5]; }
+function framePos(seg){   // free pan (panX/panY) overrides the coarse anchor preset
+  if(seg.panX!=null||seg.panY!=null){
+    const x=Math.min(1,Math.max(0,seg.panX==null?0.5:seg.panX)), y=Math.min(1,Math.max(0,seg.panY==null?0.5:seg.panY));
+    return (x*100).toFixed(3)+'% '+(y*100).toFixed(3)+'%';
+  }
+  return anchorPos(seg.anchor);
+}
 function applyFraming(seg, v){ v=v||vids[activeId]; if(!v) return;
-  const pos=anchorPos(seg.anchor); const z=Math.max(seg.zoom||1,1);
+  const pos=framePos(seg); const z=Math.max(seg.zoom||1,1);
   v.style.objectPosition=pos; v.style.transformOrigin=pos; v.style.transform = z>1?`scale(${z})`:'none';
 }
 function showCap(text){ const o=$('#capOverlay'); if(text&&text.trim()){ o.querySelector('span').textContent=text; o.style.display='block'; } else { o.style.display='none'; } }
@@ -667,11 +680,41 @@ $('#scrub').oninput=e=>{ stop(); playhead=parseFloat(e.target.value)||0; seekToP
 $('#btnPlaySeg').onclick=()=>{ if(sel<0) return toast('Select a segment first'); stop(); playRange(EDL.segments[sel], ()=>{}); };
 $('#btnSetIn').onclick=()=>{ if(sel<0) return toast('Select a segment first'); const v=activeVid(); if(!v) return; EDL.segments[sel].in=Math.round(v.currentTime*100)/100; loadSegIntoTrim(); renderTimeline(); };
 $('#btnSetOut').onclick=()=>{ if(sel<0) return toast('Select a segment first'); const v=activeVid(); if(!v) return; const s=EDL.segments[sel]; const d=Math.round((v.currentTime-s.in)*100)/100; if(d>0){ s.dur=d; loadSegIntoTrim(); renderTimeline(); } else toast('Playhead must be after IN'); };
-['inIn','inDur','inZoom','inAnchor'].forEach(id=>{ $('#'+id).onchange=()=>{ if(sel<0) return; const s=EDL.segments[sel];
-  s.in=parseFloat($('#inIn').value)||0; s.dur=parseFloat($('#inDur').value)||1; s.zoom=parseFloat($('#inZoom').value)||1; s.anchor=$('#inAnchor').value;
-  applyFraming(s); renderTimeline(); }; });
+['inIn','inDur','inZoom','inAnchor'].forEach(id=>{ $('#'+id).onchange=()=>{ if(sel<0) return; histCommit(); const s=EDL.segments[sel];
+  s.in=parseFloat($('#inIn').value)||0; s.dur=parseFloat($('#inDur').value)||1; s.zoom=parseFloat($('#inZoom').value)||1;
+  if(id==='inAnchor'){ s.anchor=$('#inAnchor').value; [s.panX,s.panY]=anchorFrac(s.anchor); }   // dropdown = coarse preset, resets free pan
+  applyFraming(s); renderTimeline(); histCommit(); }; });
 $('#btnAddSel').onclick=()=>{ const id=$('#btnAddSel').dataset.id || (sel>=0&&EDL.segments[sel].id); if(!id) return toast('Click a clip first');
   const v=activeVid(); EDL.segments.push({id, in: v?Math.round(v.currentTime*100)/100:0, dur:2.0, cap:'', zoom:1, anchor:'center'}); sel=EDL.segments.length-1; renderTimeline(); selectSeg(sel); toast('Segment added'); };
+
+/* ---------- reframe in the preview: drag to pan · scroll to zoom (active timeline segment) ---------- */
+(function(){
+  const stage=$('#stageWrap'); if(!stage) return;
+  let pan=null;
+  function curSeg(){ return (sel>=0 && EDL.segments[sel]) ? EDL.segments[sel] : null; }
+  stage.addEventListener('pointerdown', e=>{
+    if(tlPlaying) return;
+    if(e.target.closest('#overlayLayer')||e.target.closest('#endcard')) return;   // overlays keep their own drag
+    const s=curSeg(); if(!s) return;
+    histCommit();
+    const f=(s.panX!=null||s.panY!=null)?[s.panX==null?.5:s.panX,s.panY==null?.5:s.panY]:anchorFrac(s.anchor);
+    pan={x:e.clientX,y:e.clientY,px:f[0],py:f[1]};
+    try{ stage.setPointerCapture(e.pointerId); }catch(_){}
+    stage.classList.add('panning'); e.preventDefault();
+  });
+  stage.addEventListener('pointermove', e=>{ if(!pan) return; const s=curSeg(); if(!s){pan=null;return;}
+    const w=stage.clientWidth||1, h=stage.clientHeight||1;
+    s.panX=Math.min(1,Math.max(0, pan.px - (e.clientX-pan.x)/w));
+    s.panY=Math.min(1,Math.max(0, pan.py - (e.clientY-pan.y)/h));
+    applyFraming(s);
+  });
+  function endPan(){ if(!pan) return; pan=null; stage.classList.remove('panning'); renderTimeline(); histCommit(); }
+  stage.addEventListener('pointerup', endPan); stage.addEventListener('pointercancel', endPan);
+  stage.addEventListener('wheel', e=>{ const s=curSeg(); if(!s||tlPlaying) return; e.preventDefault();
+    let z=(+s.zoom||1) - e.deltaY*0.0015; z=Math.min(4,Math.max(1, Math.round(z*100)/100));
+    s.zoom=z; $('#inZoom').value=z; applyFraming(s); histSchedule();
+  }, {passive:false});
+})();
 
 /* ---------- settings ---------- */
 const CANVAS_PX={'9x16':[1080,1920],'4x5':[1080,1350],'16x9':[1920,1080]};
@@ -1252,6 +1295,33 @@ $('#exGo').onclick=async()=>{
   }catch(e){ $('#exStatus').textContent='❌ '+e; } finally{ go.disabled=false; go.textContent='▶ Render'; }
 };
 $('#btnReload').onclick=()=>boot(true);
+
+/* ---------- add clips (upload + drag-drop) ---------- */
+function fileToB64(f){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(r.error); r.readAsDataURL(f); }); }
+function isVideoFile(f){ return (f.type||'').startsWith('video/') || /\.(mp4|mov|webm|m4v|mkv|avi)$/i.test(f.name||''); }
+async function uploadClips(files){
+  files=[...files].filter(isVideoFile); if(!files.length) return toast('No video files');
+  const cat=(prompt('Add to which category folder?', 'uploads')||'').trim().toLowerCase().replace(/[^a-z0-9_-]/g,'')||'uploads';
+  let ok=0;
+  for(let i=0;i<files.length;i++){ const f=files[i];
+    $('#status').textContent=`Uploading ${i+1}/${files.length}: ${f.name}… (converting if needed)`;
+    try{ const data=await fileToB64(f);
+      const r=await api('/api/upload-clip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:f.name,category:cat,data})});
+      if(r&&r.ok) ok++; else toast('Failed: '+f.name+(r&&r.log?(' — '+r.log):''));
+    }catch(err){ toast('Failed: '+f.name); }
+  }
+  toast(ok+'/'+files.length+' clip(s) added to "'+cat+'"');
+  await boot(true);
+}
+$('#btnAddClip').onclick=()=>$('#fileAddClip').click();
+$('#fileAddClip').onchange=e=>{ if(e.target.files.length) uploadClips(e.target.files); e.target.value=''; };
+(function(){ function wireDrop(el){ if(!el) return;
+    el.addEventListener('dragover', e=>{ if([...(e.dataTransfer.items||[])].some(it=>it.kind==='file')){ e.preventDefault(); el.classList.add('dragover'); } });
+    el.addEventListener('dragleave', e=>{ if(e.target===el) el.classList.remove('dragover'); });
+    el.addEventListener('drop', e=>{ e.preventDefault(); el.classList.remove('dragover'); const fs=[...(e.dataTransfer.files||[])]; if(fs.length) uploadClips(fs); });
+  }
+  wireDrop($('#stageWrap')); wireDrop($('#bin'));
+})();
 $('#btnPlayTl').onclick=()=>{ if(tlPlaying) stop(); else playTimeline(); };
 $('#btnAddCh').onclick=addChannel;
 $('#btnStop').onclick=stop;

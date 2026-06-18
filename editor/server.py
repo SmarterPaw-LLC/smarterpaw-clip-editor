@@ -86,6 +86,52 @@ def id_to_file():
     return {c["id"]: c["file"] for c in scan_sources()}
 
 
+def vcodec(path):
+    r = run([FFPROBE, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", path])
+    return (r.stdout or "").strip().lower()
+
+
+def ingest_upload(raw, orig_name, category):
+    """Save an uploaded video into sources/youtube/<category>/ as a browser-playable
+    .mp4 (remux if already H.264, else re-encode). Returns (rel_path, category)."""
+    cat = re.sub(r"[^A-Za-z0-9_-]", "", (category or "uploads").lower()) or "uploads"
+    dest_dir = os.path.join(SRC_ROOT, cat)
+    os.makedirs(dest_dir, exist_ok=True)
+    src_ext = os.path.splitext(orig_name)[1].lower() or ".bin"
+    stem = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.splitext(os.path.basename(orig_name))[0]) or "clip"
+    # unique destination .mp4
+    dest = os.path.join(dest_dir, stem + ".mp4")
+    n = 2
+    while os.path.exists(dest):
+        dest = os.path.join(dest_dir, f"{stem}_{n}.mp4")
+        n += 1
+    fd, tmpf = tempfile.mkstemp(suffix=src_ext)
+    os.close(fd)
+    try:
+        with open(tmpf, "wb") as f:
+            f.write(raw)
+        codec = vcodec(tmpf)
+        ok = False
+        if src_ext == ".mp4" and codec == "h264":
+            r = run([FFMPEG, "-y", "-loglevel", "error", "-i", tmpf,
+                     "-c", "copy", "-movflags", "+faststart", dest])
+            ok = r.returncode == 0 and os.path.exists(dest)
+        if not ok:
+            r = run([FFMPEG, "-y", "-loglevel", "error", "-i", tmpf,
+                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                     "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", dest])
+            if r.returncode != 0:
+                raise RuntimeError((r.stderr or "ffmpeg failed")[-400:])
+        _probe_cache.pop(dest, None)
+        return os.path.relpath(dest, PROJ).replace("\\", "/"), cat
+    finally:
+        try:
+            os.remove(tmpf)
+        except OSError:
+            pass
+
+
 def ensure_thumbs(clips):
     os.makedirs(THUMBS, exist_ok=True)
     for c in clips:
@@ -815,7 +861,13 @@ def render(edl, out_dir=None, out_name=None):
                 return {"ok": False, "log": f"Clip not found for id {seg['id']}"}
             z = max(float(seg.get("zoom", 1.0)), 1.0)
             sw, sh = math.ceil(W * z), math.ceil(H * z)
-            cx, cy = crop_xy(seg.get("anchor", "center"), W, H)
+            px, py = seg.get("panX"), seg.get("panY")
+            if px is not None or py is not None:
+                px = min(1.0, max(0.0, float(px) if px is not None else 0.5))
+                py = min(1.0, max(0.0, float(py) if py is not None else 0.5))
+                cx, cy = f"(iw-{W})*{px:.5f}", f"(ih-{H})*{py:.5f}"
+            else:
+                cx, cy = crop_xy(seg.get("anchor", "center"), W, H)
             base = f"scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={W}:{H}:{cx}:{cy},setsar=1,fps=30,format=yuv420p"
             dur = float(seg["dur"])
             sfi = float(seg.get("fadeIn", 0) or 0); sfo = float(seg.get("fadeOut", 0) or 0)
@@ -1036,6 +1088,22 @@ class Handler(BaseHTTPRequestHandler):
             with open(os.path.join(ASSETS, name), "wb") as f:
                 f.write(raw)
             return self._json({"ok": True, "src": "assets/" + name})
+        if path == "/api/upload-clip":
+            import base64
+            b64 = data.get("data", "")
+            if "," in b64:
+                b64 = b64.split(",", 1)[1]
+            try:
+                raw = base64.b64decode(b64)
+            except Exception:
+                return self._json({"ok": False, "log": "bad clip data"}, 400)
+            if not raw:
+                return self._json({"ok": False, "log": "empty file"}, 400)
+            try:
+                rel, cat = ingest_upload(raw, data.get("name", "clip.mp4"), data.get("category", "uploads"))
+            except Exception as e:
+                return self._json({"ok": False, "log": repr(e)}, 500)
+            return self._json({"ok": True, "category": cat, "file": rel})
         self.send_error(404)
 
     def _serve_file(self, full):
