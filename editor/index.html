@@ -155,7 +155,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.19.0</span>
+  <span class="ver" id="appVer">v1.20.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -750,7 +750,11 @@ function renderOverlays(time){
     el.style.display='';
     if(o.type==='image'){ const u=o.src?('/'+encodeURI(o.src)):''; if(el.getAttribute('src')!==u) el.setAttribute('src',u); el.style.width=((o.scale||0.3)*W)+'px'; el.style.height='auto'; }
     else if(o.type==='shape'){ el.style.boxSizing='border-box'; el.style.width=((o.w||0.5)*100)+'%'; el.style.height=((o.h||0.2)*100)+'%';
-      el.style.background=hexA(o.fill||'#000000', o.opacity!=null?o.opacity:0.5); el.style.borderRadius=((o.radius||0.04)*W)+'px';
+      const sop=(o.opacity!=null?o.opacity:0.5);
+      if(o.fillType==='gradient'){ const c1=hexA(o.gradStart||o.fill||'#000000',sop), c2=hexA(o.gradEnd||'#ffffff',sop);
+        el.style.background=(o.gradType==='radial')?('radial-gradient(circle, '+c1+', '+c2+')'):('linear-gradient('+(o.gradAngle!=null?o.gradAngle:180)+'deg, '+c1+', '+c2+')'); }
+      else el.style.background=hexA(o.fill||'#000000', sop);
+      el.style.borderRadius=((o.radius||0.04)*W)+'px';
       el.style.border=((o.strokeW||0)>0)?(((o.strokeW)*W)+'px solid '+(o.stroke||'#ffffff')):'none'; }
     else { el.textContent=o.text||''; el.style.fontFamily=FONTS[o.font]||FONTS.cooper; el.style.fontWeight='800'; el.style.lineHeight='1';
       el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.color=o.color||'#fff'; el.style.whiteSpace='nowrap';
@@ -810,8 +814,13 @@ function buildOvEditor(){
       <div><label class="ck"><input type="checkbox" id="ovBtn" ${o.button?'checked':''}> button</label> <input type="color" id="ovBg" value="${o.bg}" title="button color"></div>`;
   } else if(o.type==='shape'){
     h+=`<div class="sec">Shape (rounded rectangle)</div>
-      <div><label>Fill <input type="color" id="ovFill" value="${o.fill}"></label>
+      <div><label>Fill <select id="ovFillType"><option value="solid">Solid</option><option value="gradient">Gradient</option></select></label>
         <label>Opacity <input type="range" id="ovOpacity" min="0" max="1" step="0.05" value="${o.opacity}"></label></div>
+      <div id="ovSolidRow"><label>Color <input type="color" id="ovFill" value="${o.fill}"></label></div>
+      <div id="ovGradRow"><label>From <input type="color" id="ovGradStart" value="${o.gradStart||o.fill||'#000000'}"></label>
+        <label>To <input type="color" id="ovGradEnd" value="${o.gradEnd||'#ffffff'}"></label>
+        <label>Style <select id="ovGradType"><option value="linear">Linear</option><option value="radial">Radial</option></select></label></div>
+      <div id="ovGradAngRow"><label>Direction <input type="range" id="ovGradAngle" min="0" max="360" step="5" value="${o.gradAngle!=null?o.gradAngle:180}"></label> <span id="ovGradAngV" style="font-size:11px;color:var(--mut)">${o.gradAngle!=null?o.gradAngle:180}°</span></div>
       <div><label>Width <input type="range" id="ovW" min="0.05" max="1" step="0.01" value="${o.w}"></label>
         <label>Height <input type="range" id="ovH" min="0.03" max="1" step="0.01" value="${o.h}"></label></div>
       <div><label>Radius <input type="range" id="ovRadius" min="0" max="0.3" step="0.005" value="${o.radius}"></label></div>
@@ -833,11 +842,18 @@ function buildOvEditor(){
   h+=`<div style="color:var(--mut);font-size:11px;margin-top:6px">Drag the element on the preview to position it · drag its bar on the timeline to move/restack.</div>`;
   box.innerHTML=h;
   if($('#ovFont')) $('#ovFont').value=o.font;
+  function ovShapeRows(){ if(!$('#ovFillType')) return; const g=$('#ovFillType').value==='gradient';
+    $('#ovSolidRow').style.display=g?'none':''; $('#ovGradRow').style.display=g?'':'none';
+    $('#ovGradAngRow').style.display=(g && $('#ovGradType').value!=='radial')?'':'none'; }
+  if($('#ovFillType')){ $('#ovFillType').value=(o.fillType==='gradient')?'gradient':'solid'; $('#ovGradType').value=o.gradType||'linear'; ovShapeRows(); }
   const upd=()=>{ o.start=parseFloat($('#ovStart').value)||0; o.dur=parseFloat($('#ovDur').value)||1;
     o.fadeIn=parseFloat($('#ovFi').value)||0; o.fadeOut=parseFloat($('#ovFo').value)||0;
     const s2=o.shadow||(o.shadow={}); s2.on=$('#ovShOn').checked; s2.color=$('#ovShColor').value; s2.blur=parseFloat($('#ovShBlur').value)||0; s2.opacity=parseFloat($('#ovShOp').value); s2.dx=parseFloat($('#ovShX').value)||0; s2.dy=parseFloat($('#ovShY').value)||0;
     if(o.type==='text'){ o.text=$('#ovText').value; o.font=$('#ovFont').value; o.color=$('#ovColor').value; o.size=parseFloat($('#ovSize').value)||0.06; o.button=$('#ovBtn').checked; o.bg=$('#ovBg').value; }
-    else if(o.type==='shape'){ o.fill=$('#ovFill').value; o.opacity=parseFloat($('#ovOpacity').value); o.w=parseFloat($('#ovW').value)||0.5; o.h=parseFloat($('#ovH').value)||0.2; o.radius=parseFloat($('#ovRadius').value)||0; o.strokeW=parseFloat($('#ovStrokeW').value)||0; o.stroke=$('#ovStroke').value; }
+    else if(o.type==='shape'){ o.fillType=$('#ovFillType').value; o.fill=$('#ovFill').value; o.opacity=parseFloat($('#ovOpacity').value);
+      o.gradStart=$('#ovGradStart').value; o.gradEnd=$('#ovGradEnd').value; o.gradType=$('#ovGradType').value; o.gradAngle=parseFloat($('#ovGradAngle').value);
+      o.w=parseFloat($('#ovW').value)||0.5; o.h=parseFloat($('#ovH').value)||0.2; o.radius=parseFloat($('#ovRadius').value)||0; o.strokeW=parseFloat($('#ovStrokeW').value)||0; o.stroke=$('#ovStroke').value;
+      if($('#ovGradAngV')) $('#ovGradAngV').textContent=(o.gradAngle||0)+'°'; ovShapeRows(); }
     else o.scale=parseFloat($('#ovScale').value)||0.3;
     renderOverlays(playhead); renderOvList(); };
   box.querySelectorAll('input,select').forEach(el=>{ el.oninput=upd; el.onchange=upd; });

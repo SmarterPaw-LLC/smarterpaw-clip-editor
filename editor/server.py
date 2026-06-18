@@ -425,22 +425,62 @@ def _with_shadow(img, o, W):
     return base
 
 
+def _gradient_rgba(w, h, start, end, angle=180.0, gtype="linear", alpha=255):
+    """A w×h RGBA gradient matching CSS linear-gradient(<angle>deg)/radial-gradient(circle).
+    angle: 0=up, 90=right, 180=down (clockwise). Uses a 256-step LUT for speed."""
+    from PIL import Image
+    s = _rgba(start, alpha); e = _rgba(end, alpha)
+    lut = [tuple(int(s[i] + (e[i] - s[i]) * (k / 255.0)) for i in range(4)) for k in range(256)]
+    cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
+    data = [None] * (w * h)
+    if gtype == "radial":
+        maxr = (math.hypot(cx, cy) or 1.0)
+        for y in range(h):
+            row = y * w
+            for x in range(w):
+                t = math.hypot(x - cx, y - cy) / maxr
+                data[row + x] = lut[255 if t >= 1 else int(t * 255)]
+    else:
+        th = math.radians(angle)
+        dx, dy = math.sin(th), -math.cos(th)
+        L = (abs(w * math.sin(th)) + abs(h * math.cos(th))) or 1.0
+        for y in range(h):
+            row = y * w; yc = (y - cy) * dy
+            for x in range(w):
+                t = ((x - cx) * dx + yc + L / 2.0) / L
+                data[row + x] = lut[0 if t <= 0 else 255 if t >= 1 else int(t * 255)]
+    img = Image.new("RGBA", (w, h)); img.putdata(data)
+    return img
+
+
 def build_shape_png(o, W, H, out):
-    """Rounded rectangle (fill+opacity, optional border) -> transparent PNG."""
+    """Rounded rectangle (solid or gradient fill, optional border) -> transparent PNG."""
     from PIL import Image, ImageDraw
     sw = max(1, int(W * float(o.get("w", 0.5))))
     sh = max(1, int(H * float(o.get("h", 0.2))))
-    img = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
     rad = max(0, min(int(W * float(o.get("radius", 0.04))), min(sw, sh) // 2))
     alpha = int(max(0.0, min(1.0, float(o.get("opacity", 0.5)))) * 255)
-    fill = _rgba(o.get("fill", "#000000"), alpha)
     bw = max(0, int(W * float(o.get("strokeW", 0))))
-    if bw > 0:
-        d.rounded_rectangle([bw // 2, bw // 2, sw - 1 - bw // 2, sh - 1 - bw // 2],
-                            radius=rad, fill=fill, outline=_rgba(o.get("stroke", "#ffffff"), 255), width=bw)
+    if (o.get("fillType") == "gradient"):
+        grad = _gradient_rgba(sw, sh, o.get("gradStart", o.get("fill", "#000000")),
+                              o.get("gradEnd", "#ffffff"), float(o.get("gradAngle", 180)),
+                              o.get("gradType", "linear"), alpha)
+        mask = Image.new("L", (sw, sh), 0)
+        ImageDraw.Draw(mask).rounded_rectangle([0, 0, sw - 1, sh - 1], radius=rad, fill=255)
+        img = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+        img.paste(grad, (0, 0), mask)
+        if bw > 0:
+            ImageDraw.Draw(img).rounded_rectangle([bw // 2, bw // 2, sw - 1 - bw // 2, sh - 1 - bw // 2],
+                                                  radius=rad, outline=_rgba(o.get("stroke", "#ffffff"), 255), width=bw)
     else:
-        d.rounded_rectangle([0, 0, sw - 1, sh - 1], radius=rad, fill=fill)
+        img = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        fill = _rgba(o.get("fill", "#000000"), alpha)
+        if bw > 0:
+            d.rounded_rectangle([bw // 2, bw // 2, sw - 1 - bw // 2, sh - 1 - bw // 2],
+                                radius=rad, fill=fill, outline=_rgba(o.get("stroke", "#ffffff"), 255), width=bw)
+        else:
+            d.rounded_rectangle([0, 0, sw - 1, sh - 1], radius=rad, fill=fill)
     _with_shadow(img, o, W).save(out)
 
 
