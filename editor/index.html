@@ -165,7 +165,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.27.3</span>
+  <span class="ver" id="appVer">v1.27.4</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -1455,6 +1455,8 @@ function projSave(){ if(curProj) saveAs(curProj.name); else projSaveAs(); }
 function projSaveAs(){ const n=prompt('Save project as:', curProj?curProj.name+' copy':'New Project'); if(n&&n.trim()) saveAs(n.trim()); }
 function projNew(){ if(!confirm('Start a new blank timeline? Unsaved changes will be lost.')) return;
   applyEDL({name:'', settings:{canvas:EDL.settings.canvas||'9x16', music:MAN.music[0]||'', endcard:['MEOWIJUANA','CATNIP JOINTS','SHOP NOW'], captionSize:0.058, captionY:0.62, endcardDur:2.6}, segments:[]});
+  EDL.settings.endcard.enabled=false;   // new projects start with the end card OFF (defaults stay pre-filled if turned on)
+  updateTotal(); renderTracks();
   setCur(null); }
 async function projDelete(){ if(!curProj) return toast('No saved project selected');
   if(!confirm('Delete project “'+curProj.name+'”? This removes the file.')) return;
