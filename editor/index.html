@@ -155,7 +155,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.18.0</span>
+  <span class="ver" id="appVer">v1.18.1</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -372,6 +372,7 @@
       <div class="row" style="justify-content:space-between"><label class="k" style="min-width:auto">Pick a photo to animate</label><span id="genPick" style="font-size:12px;color:var(--mut)">none selected</span></div>
       <div class="row"><input type="text" id="genFilter" placeholder="🔍 filter…" style="flex:1" spellcheck="false"><select id="genCatSel"></select></div>
       <div id="genGrid" class="aigrid"></div>
+      <div style="font-size:11px;color:var(--acc);background:#3a2a0e;border:1px solid #5a3f12;border-radius:6px;padding:6px 9px">⚠ Each Generate / Regenerate charges real fal.ai credits — roughly <b>$0.25–$1.50 per clip</b> depending on model &amp; length (Kling 2.1 Pro / Master &amp; 10s cost more). There are no free retries. <a class="dl" href="https://fal.ai/pricing" target="_blank">fal pricing ↗</a></div>
       <div class="row" style="justify-content:flex-end;gap:8px"><button class="ghost" id="genCancel">Cancel</button><button class="ghost" id="genAgain" title="Run again with the same photo + settings for another variant">↻ Regenerate</button><button class="primary" id="genGo">🎬 Generate clip</button></div>
       <div class="status" id="genStatus"></div>
     </div>
