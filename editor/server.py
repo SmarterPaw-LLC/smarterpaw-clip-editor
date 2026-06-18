@@ -595,6 +595,13 @@ def _anim_exprs(o, s, dur, W, tv="t"):
         elif ty == "bounceIn":
             d = max(0.01, float(a.get("d", 0.6))); amp = float(a.get("amp", 0.12)) * W
             dys.append("if(lt(%s,%g),-%g*exp(-3*%s/%g)*cos(2*PI*1.6*%s/%g)*(1-%s/%g),0)" % (lt, d, amp, lt, d, lt, d, lt, d))
+        elif ty == "dropIn":
+            d = max(0.01, float(a.get("d", 0.6))); dist = float(a.get("dist", 0.5)) * W
+            k = "((%s)/%g)" % (lt, d); eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (k, k)
+            dys.append("if(lt(%s,%g),-%g*(1-%s),0)" % (lt, d, dist, eb))
+        elif ty == "popIn":
+            d = max(0.01, float(a.get("d", 0.45)))   # scale isn't animatable on an ffmpeg overlay → render as a quick fade-in
+            amul.append("min(1,max(0,(%s)/%g))" % (lt, d * 0.5))
         elif ty == "blink":
             sp = float(a.get("speed", 2)); amul.append("gte(sin(2*PI*%g*%s),0)" % (sp, lt))
         elif ty == "wiggle":
@@ -721,8 +728,11 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     rex, gex, bex = "r(X,Y)", "g(X,Y)", "b(X,Y)"
                 aex = "alpha(X,Y)*(%s)" % amT if has_op else "alpha(X,Y)"
                 filt.append(f"geq=r='{rex}':g='{gex}':b='{bex}':a='{aex}'")
-            if orot:                                                    # rotate (wiggle/spin) around center, transparent fill
-                filt.append(f"rotate='{orot}':c=none:ow='hypot(iw,ih)':oh='hypot(iw,ih)'")
+            srot = float(o.get("rot", 0) or 0)                          # static rotation (degrees) + any anim rotation
+            rot_terms = ([orot] if orot else []) + ([f"{math.radians(srot):.6f}"] if abs(srot) > 1e-6 else [])
+            if rot_terms:
+                rexpr = "+".join(f"({r})" for r in rot_terms)
+                filt.append(f"rotate='{rexpr}':c=none:ow='hypot(iw,ih)':oh='hypot(iw,ih)'")
             fc.append(f"[{ii}:v]" + ",".join(filt) + f"[oi{k}]")
             fc.append(f"[{last}][oi{k}]overlay=x='W*{ox}-w/2+({odx})':y='H*{oy}-h/2+({ody})':{en}[v{k}]")
             last = f"v{k}"; ii += 1

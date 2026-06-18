@@ -174,7 +174,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.30.0</span>
+  <span class="ver" id="appVer">v1.31.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -911,6 +911,8 @@ const ANIM_DEFS={
   float:   {label:'Float',         def:{amp:0.02,speed:0.6},ctrls:[['amp','Amount','range',0,0.06,0.004],['speed','Speed','range',0.1,2,0.1]]},
   slideIn: {label:'Slide in',      def:{d:0.5,dir:'left',dist:0.2},ctrls:[['d','Seconds','num',0.1,3,0.1],['dir','From','sel',['left','right','up','down']],['dist','Distance','range',0.05,0.6,0.05]]},
   bounceIn:{label:'Bounce in',     def:{d:0.6,amp:0.12},   ctrls:[['d','Seconds','num',0.2,2,0.1],['amp','Height','range',0.02,0.3,0.02]]},
+  dropIn:  {label:'Drop in',       def:{d:0.6,dist:0.5},   ctrls:[['d','Seconds','num',0.2,2,0.1],['dist','Height','range',0.1,1,0.05]]},
+  popIn:   {label:'Pop in',        def:{d:0.45},           ctrls:[['d','Seconds','num',0.15,1.5,0.05]]},
   blink:   {label:'Blink',         def:{speed:2},          ctrls:[['speed','Speed','range',0.5,8,0.5]]},
   wiggle:  {label:'Wiggle (rotate)',png:true,def:{amp:8,speed:2},ctrls:[['amp','Degrees','range',1,30,1],['speed','Speed','range',0.2,6,0.2]]},
   spin:    {label:'Spin',          png:true,def:{speed:0.5,dir:'cw'},ctrls:[['speed','Rev/sec','range',0.05,2,0.05],['dir','Direction','sel',['cw','ccw']]]},
@@ -922,8 +924,9 @@ function sparkleField(a){ const n=Math.max(1,Math.round(a.count||6)), out=[];
   for(let i=0;i<n;i++){ const ang=i*2.39996, r=0.35+0.6*(((i+1)*0.618034)%1);
     out.push({cx:Math.cos(ang)*r, cy:Math.sin(ang)*r, ph:i*1.7, sc:0.7+0.6*(((i+1)*0.318)%1)}); } return out; }
 function sparkleOp(t, ph, speed){ return Math.pow(Math.max(0,Math.sin(2*Math.PI*speed*t+ph)),3); }   // sharp twinkle pop
-// Returns {dx,dy (px in W units), op (0..1)} for overlay o at local time lt within duration dur.
-function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0; const T=Math.max(0,lt);
+function _easeOutBack(k){ const c1=1.70158,c3=c1+1; return 1+c3*Math.pow(k-1,3)+c1*Math.pow(k-1,2); }
+// Returns {dx,dy (px in W units), op (0..1), rot (deg), sc (scale)} for overlay o at local time lt.
+function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1; const T=Math.max(0,lt);
   (o.anims||[]).forEach(a=>{ switch(a.type){
     case 'blink': { const sp=a.speed||2; op*=(Math.sin(2*Math.PI*sp*T)>=0)?1:0; break; }
     case 'wiggle': { const amp=a.amp!=null?a.amp:8, sp=a.speed||2; rot+=amp*Math.sin(2*Math.PI*sp*T); break; }
@@ -938,8 +941,10 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0; const T=Math.max(0,
     case 'slideIn': { const d=Math.max(0.01,a.d||0.5), dist=(a.dist!=null?a.dist:0.2)*W; if(T<d){ const e=Math.pow(1-T/d,2), dir=a.dir||'left';
       if(dir==='left')dx-=e*dist; else if(dir==='right')dx+=e*dist; else if(dir==='up')dy-=e*dist; else dy+=e*dist; } break; }
     case 'bounceIn': { const d=Math.max(0.01,a.d||0.6), amp=(a.amp!=null?a.amp:0.12)*W; if(T<d){ const k=T/d; dy+=-amp*Math.exp(-3*k)*Math.cos(2*Math.PI*1.6*k)*(1-k); } break; }
+    case 'dropIn': { const d=Math.max(0.01,a.d||0.6), dist=(a.dist!=null?a.dist:0.5)*W; if(T<d){ const k=T/d; dy-=dist*(1-_easeOutBack(k)); } break; }
+    case 'popIn': { const d=Math.max(0.01,a.d||0.45); if(T<d){ const k=T/d; sc*=Math.max(0,_easeOutBack(k)); op*=Math.min(1,k/0.3); } break; }
   }});
-  return {dx,dy,op:Math.max(0,Math.min(1,op)),rot}; }
+  return {dx,dy,op:Math.max(0,Math.min(1,op)),rot,sc}; }
 function migrateAnims(o){ if(o.anims) return; o.anims=[];   // legacy fadeIn/fadeOut → animation entries
   if(+o.fadeIn>0) o.anims.push({type:'fadeIn',d:+o.fadeIn}); if(+o.fadeOut>0) o.anims.push({type:'fadeOut',d:+o.fadeOut}); }
 // Bubble-sticker text → canvas (ported from the social image tool: offscreen white-stroke shadow,
@@ -990,6 +995,28 @@ function buildStickerCanvas(o){
   ctx.save(); ctxSet(ctx); ctx.fillStyle=grad(ctx); rowPos.forEach(rp=>ctx.fillText(rp.text,X,rp.y)); ctx.restore();   // pass 4: gradient
   return {canvas:cv, cw, ch:totalH, exportW};
 }
+// Plain-text overlay → canvas (matches the preview look) so a ROTATED text overlay renders rotated
+// (drawtext can't rotate; we bake to PNG and let the server's rotate filter handle it).
+function buildTextOverlayCanvas(o){
+  const exportW=(CANVAS_PX[EDL.settings.canvas]||[1080,1920])[0];
+  const size=Math.max(8,(o.size||0.06)*exportW), fam=(FONTS[o.font]||FONTS.cooper), font='800 '+size+'px '+fam;
+  const text=(o.text||'').replace(/\n/g,' ');
+  const m=document.createElement('canvas').getContext('2d'); m.font=font;
+  const tw=Math.max(1,m.measureText(text).width);
+  const rr=(c,x,y,w,hh,r)=>{ r=Math.min(r,w/2,hh/2); c.beginPath(); c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+hh,r); c.arcTo(x+w,y+hh,x,y+hh,r); c.arcTo(x,y+hh,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath(); };
+  let cw,ch,cv,c;
+  if(o.button){ const padX=size*0.55, padY=size*0.38, rad=size*0.3;
+    cw=Math.ceil(tw+padX*2); ch=Math.ceil(size*1.25+padY*2); cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; c=cv.getContext('2d'); c.font=font;
+    c.fillStyle=o.bg||'#f07830'; rr(c,0,0,cw,ch,rad); c.fill();
+    c.fillStyle=o.color||'#ffffff'; c.textAlign='center'; c.textBaseline='middle'; c.fillText(text,cw/2,ch/2+size*0.03);
+  } else { const pad=Math.ceil(size*0.7);
+    cw=Math.ceil(tw+pad*2); ch=Math.ceil(size*1.5+pad*2); cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; c=cv.getContext('2d'); c.font=font;
+    c.textAlign='center'; c.textBaseline='middle';
+    c.shadowColor='rgba(0,0,0,0.6)'; c.shadowBlur=size*0.12; c.shadowOffsetX=0; c.shadowOffsetY=size*0.08;
+    c.fillStyle=o.color||'#ffffff'; c.fillText(text,cw/2,ch/2);
+  }
+  return {canvas:cv, cw, exportW};
+}
 // For render: bake each sticker-text overlay to a PNG (same canvas as preview), upload it,
 // and swap it to an image overlay so the server composites the identical pixels.
 async function bakeStickersForRender(edl){
@@ -998,7 +1025,13 @@ async function bakeStickersForRender(edl){
     if(o.type==='text' && o.style==='sticker' && (o.text||'').trim()){
       try{ const r=buildStickerCanvas(o); const data=r.canvas.toDataURL('image/png');
         const up=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'sticker_'+o.id+'.png',data})});
-        if(up&&up.ok){ out.push({id:o.id,type:'image',src:up.src,scale:r.cw/r.exportW,x:o.x,y:o.y,start:o.start,dur:o.dur,ch:o.ch,anims:o.anims}); continue; }
+        if(up&&up.ok){ out.push({id:o.id,type:'image',src:up.src,scale:r.cw/r.exportW,x:o.x,y:o.y,start:o.start,dur:o.dur,ch:o.ch,rot:o.rot,anims:o.anims}); continue; }
+      }catch(e){}
+    }
+    else if(o.type==='text' && o.style!=='sticker' && (+o.rot||0)!==0 && (o.text||'').trim()){
+      try{ const r=buildTextOverlayCanvas(o); const data=r.canvas.toDataURL('image/png');
+        const up=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'text_'+o.id+'.png',data})});
+        if(up&&up.ok){ out.push({id:o.id,type:'image',src:up.src,scale:r.cw/r.exportW,x:o.x,y:o.y,start:o.start,dur:o.dur,ch:o.ch,rot:o.rot,anims:o.anims}); continue; }
       }catch(e){}
     }
     out.push(o);
@@ -1077,7 +1110,8 @@ function renderOverlays(time){
       else { el.style.background='none'; el.style.padding='0'; el.style.borderRadius='0'; el.style.textShadow='0 2px 6px rgba(0,0,0,.6)'; } }
     const A=animState(o, time-o.start, +o.dur||0, W);   // overlay animations (offset + opacity)
     el.style.left=((o.x||0.5)*100)+'%'; el.style.top=((o.y||0.5)*100)+'%';
-    el.style.transform='translate(-50%,-50%) translate('+A.dx.toFixed(2)+'px,'+A.dy.toFixed(2)+'px) rotate('+(A.rot||0).toFixed(2)+'deg)';
+    const rotDeg=(A.rot||0)+(+o.rot||0);   // static rotation + animation rotation
+    el.style.transform='translate(-50%,-50%) translate('+A.dx.toFixed(2)+'px,'+A.dy.toFixed(2)+'px) rotate('+rotDeg.toFixed(2)+'deg) scale('+(A.sc!=null?A.sc:1).toFixed(3)+')';
     const sh=o.shadow||{};   // sticker bakes its own shadow into the canvas, so no extra CSS filter for it
     el.style.filter = (ekey!=='sticker' && sh.on) ? `drop-shadow(${(sh.dx!=null?sh.dx:0.004)*W}px ${(sh.dy!=null?sh.dy:0.006)*W}px ${(sh.blur!=null?sh.blur:0.01)*W}px ${hexA(sh.color||'#000000', sh.opacity!=null?sh.opacity:0.5)})` : 'none';
     el.style.opacity=active?A.op:0;
@@ -1156,6 +1190,10 @@ function buildOvEditor(){
     h+=`<div class="sec">Image</div><div><label>Size <input type="range" id="ovScale" min="0.05" max="1" step="0.01" value="${o.scale}"></label>
       <button class="mini" id="ovReplace">Replace…</button></div>`;
   }
+  h+=`<div class="sec">Transform</div>
+    <div><label>Rotate <input type="range" id="ovRot" min="-180" max="180" step="1" value="${+o.rot||0}"></label>
+      <span id="ovRotV" style="font-size:11px;color:var(--mut)">${+o.rot||0}°</span>
+      <button class="mini" id="ovRot0" title="reset to 0">⟲</button></div>`;
   const sh=o.shadow||(o.shadow={on:false,color:'#000000',blur:0.01,dx:0.004,dy:0.006,opacity:0.5});
   h+=`<div class="sec">Shadow</div>
     <div><label class="ck"><input type="checkbox" id="ovShOn" ${sh.on?'checked':''}> Drop shadow</label> <input type="color" id="ovShColor" value="${sh.color||'#000000'}"></div>
@@ -1178,6 +1216,7 @@ function buildOvEditor(){
     $('#ovStAngRow').style.display=(st && $('#ovStType').value!=='radial')?'':'none'; }
   if($('#ovStyle')){ $('#ovStyle').value=(o.style==='sticker')?'sticker':'plain'; $('#ovStType').value=o.gradType||'linear'; ovTextRows(); }
   const upd=()=>{ o.start=parseFloat($('#ovStart').value)||0; o.dur=parseFloat($('#ovDur').value)||1;
+    if($('#ovRot')){ o.rot=parseFloat($('#ovRot').value)||0; if($('#ovRotV')) $('#ovRotV').textContent=(o.rot||0)+'°'; }
     const s2=o.shadow||(o.shadow={}); s2.on=$('#ovShOn').checked; s2.color=$('#ovShColor').value; s2.blur=parseFloat($('#ovShBlur').value)||0; s2.opacity=parseFloat($('#ovShOp').value); s2.dx=parseFloat($('#ovShX').value)||0; s2.dy=parseFloat($('#ovShY').value)||0;
     if(o.type==='text'){ o.text=$('#ovText').value; o.font=$('#ovFont').value; o.size=parseFloat($('#ovSize').value)||0.06; o.style=$('#ovStyle').value;
       if(o.style==='sticker'){ o.gradStart=$('#ovStFrom').value; o.gradEnd=$('#ovStTo').value; o.gradType=$('#ovStType').value; o.gradAngle=parseFloat($('#ovStAngle').value);
@@ -1192,6 +1231,7 @@ function buildOvEditor(){
     else o.scale=parseFloat($('#ovScale').value)||0.3;
     renderOverlays(playhead); renderOvList(); };
   box.querySelectorAll('input,select,textarea').forEach(el=>{ el.oninput=upd; el.onchange=upd; });
+  if($('#ovRot0')) $('#ovRot0').onclick=()=>{ $('#ovRot').value=0; upd(); };
   function animCtrl(ai,a,c){ const key=c[0],label=c[1],kind=c[2],v=a[key];
     if(kind==='text'){ return `<label>${label} <input type="text" class="anc" data-ai="${ai}" data-k="${key}" value="${(v||'').replace(/"/g,'&quot;')}" style="width:46px;text-align:center"></label>`; }
     if(kind==='img'){ const fn=(v||'').split('/').pop()||'none'; return `<label>${label} <button class="mini anpick" data-ai="${ai}" data-k="${key}">${v?'Replace':'Choose'}…</button> <span style="font-size:10px;color:var(--mut)">${fn}</span></label>`; }
