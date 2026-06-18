@@ -81,6 +81,10 @@
   .clip .qadd:hover { background:var(--acc,#8ab81d); border-color:var(--acc,#8ab81d); color:#10240a; }
   .clip.dragging { opacity:.5; }
   .emptyhint { color:var(--mut); font-size:12px; padding:14px 12px; line-height:1.5; border:1px dashed var(--line); border-radius:8px; margin:8px; }
+  #clipGrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(58px,1fr)); gap:6px; max-height:46vh; overflow:auto; padding:4px; }
+  .clipcell { aspect-ratio:1; background:#3a3a3a; border:1px solid var(--line); border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:6px; }
+  .clipcell:hover { border-color:var(--acc,#8ab81d); background:#4a4a4a; }
+  .clipcell img { max-width:100%; max-height:100%; object-fit:contain; }
   #timeline.clipdrop, #tlTracksWrap.clipdrop { outline:2px dashed var(--acc,#8ab81d); outline-offset:-3px; background:rgba(138,184,29,.07); }
   /* center */
   .center { display:flex; flex-direction:column; align-items:center; gap:10px; padding:12px; overflow:auto; }
@@ -166,7 +170,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.27.5</span>
+  <span class="ver" id="appVer">v1.28.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -326,13 +330,29 @@
   <div class="modal-card">
     <div class="modal-hd"><b>✚ Overlays</b><button class="mini" id="ovClose">✕ Done</button></div>
     <div class="modal-body">
-      <div><button class="mini" id="ovAddText">＋ Text</button> <button class="mini" id="ovAddShape">＋ Shape</button> <button class="mini" id="ovAddImage">＋ Image</button>
+      <div><button class="mini" id="ovAddText">＋ Text</button> <button class="mini" id="ovAddShape">＋ Shape</button> <button class="mini" id="ovAddImage">＋ Image</button> <button class="mini" id="ovAddClip">🎨 Clip art</button>
         <input type="file" id="ovFile" accept="image/*" style="display:none"></div>
       <div style="font-size:11px;color:var(--mut)">Tip: scrub the timeline to where an element should appear, then drag it on the preview to position it.</div>
       <hr>
       <div id="ovList" style="display:flex;flex-direction:column;gap:6px"></div>
       <hr>
       <div id="ovEditor"></div>
+    </div>
+  </div>
+</div>
+
+<div id="clipModal" class="modal" style="display:none">
+  <div class="modal-card" style="max-width:580px">
+    <div class="modal-hd"><b>🎨 Clip art — icons &amp; emoji</b><button class="mini" id="clipClose">✕ Close</button></div>
+    <div class="modal-body">
+      <div class="row" style="gap:8px;align-items:center">
+        <input type="text" id="clipQuery" placeholder="Search: cat, paw, star, heart, fire, arrow…" style="flex:1">
+        <label class="ck" title="Recolor single-color icons"><input type="checkbox" id="clipUseColor" checked> Recolor</label>
+        <input type="color" id="clipColor" value="#ffffff" title="Color for monochrome icons">
+      </div>
+      <div style="font-size:11px;color:var(--mut);margin:5px 0">Free for commercial use (via Iconify: Noto/Twemoji emoji, Material, Phosphor, Lucide…). Color applies to single-color icons; emoji keep their own colors.</div>
+      <div id="clipGrid"></div>
+      <div id="clipStatus" style="font-size:12px;color:var(--mut);min-height:16px;margin-top:4px"></div>
     </div>
   </div>
 </div>
@@ -1154,6 +1174,58 @@ function addShapeOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o
   EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 $('#btnOverlays').onclick=openOvModal; $('#ovClose').onclick=closeOvModal;
 $('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay; $('#ovAddImage').onclick=addImageOverlay;
+
+/* ---------- clip art (Iconify icons + emoji → image overlay) ---------- */
+const ICONIFY='https://api.iconify.design';
+function openClipPicker(){ $('#clipModal').style.display='flex'; $('#clipStatus').textContent=''; $('#clipQuery').focus(); if(!$('#clipGrid').dataset.q) clipSearch('cat'); }
+function closeClipPicker(){ $('#clipModal').style.display='none'; }
+let clipTimer=null;
+async function clipSearch(q){ const grid=$('#clipGrid'); q=(q||'').trim();
+  if(q.length<2){ grid.innerHTML='<div style="grid-column:1/-1;color:var(--mut);font-size:12px;padding:8px">Type at least 2 letters…</div>'; return; }
+  grid.dataset.q=q; grid.innerHTML='<div style="grid-column:1/-1;color:var(--mut);font-size:12px;padding:8px">Searching…</div>';
+  try{ const r=await fetch(ICONIFY+'/search?query='+encodeURIComponent(q)+'&limit=90').then(r=>r.json());
+    if(grid.dataset.q!==q) return;   // a newer search superseded this one
+    const icons=r.icons||[];
+    if(!icons.length){ grid.innerHTML='<div style="grid-column:1/-1;color:var(--mut);font-size:12px;padding:8px">No results — try a shorter word ("cap" not "baseball cap").</div>'; return; }
+    const useColor=$('#clipUseColor').checked, col=encodeURIComponent($('#clipColor').value);
+    grid.innerHTML='';
+    icons.forEach(name=>{ const [p,ic]=name.split(':'); if(!ic) return;
+      const cell=document.createElement('button'); cell.className='clipcell'; cell.title=name;
+      cell.innerHTML='<img loading="lazy" src="'+ICONIFY+'/'+p+'/'+ic+'.svg?height=48'+(useColor?('&color='+col):'')+'">';
+      cell.onclick=()=>pickClip(name); grid.appendChild(cell);
+    });
+  }catch(e){ grid.innerHTML='<div style="grid-column:1/-1;color:var(--mut);font-size:12px;padding:8px">Search failed — check your internet connection.</div>'; }
+}
+async function iconifyToPng(name, color, size){
+  const [p,ic]=name.split(':');
+  let url=ICONIFY+'/'+p+'/'+ic+'.svg?height='+size; if(color) url+='&color='+encodeURIComponent(color);
+  const svg=await fetch(url).then(r=>r.text());
+  if(!svg || svg.indexOf('<svg')<0) throw new Error('icon fetch failed');
+  const datauri='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(svg)));
+  const img=new Image();
+  await new Promise((res,rej)=>{ img.onload=res; img.onerror=()=>rej(new Error('decode')); img.src=datauri; });
+  const w=img.naturalWidth||size, h=img.naturalHeight||size, sc=size/Math.max(w,h);
+  const cw=Math.max(1,Math.round(w*sc)), ch=Math.max(1,Math.round(h*sc));
+  const cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; cv.getContext('2d').drawImage(img,0,0,cw,ch);
+  return cv.toDataURL('image/png');
+}
+async function pickClip(name){
+  $('#clipStatus').textContent='Adding '+name+'…';
+  try{ const useColor=$('#clipUseColor').checked, color=useColor?$('#clipColor').value:null;
+    const data=await iconifyToPng(name, color, 512);
+    const res=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'clip_'+name.replace(/[^a-z0-9]+/gi,'_')+'.png',data})});
+    if(!res||!res.ok){ $('#clipStatus').textContent='Upload failed.'; return; }
+    histCommit(); EDL.overlays=EDL.overlays||[];
+    const o={id:uid(),type:'image',src:res.src,scale:0.22,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
+    EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead);
+    closeClipPicker(); toast('Clip art added — drag it on the preview to place it');
+  }catch(e){ $('#clipStatus').textContent='Couldn’t add that icon — try another.'; }
+}
+$('#ovAddClip').onclick=openClipPicker; $('#clipClose').onclick=closeClipPicker;
+$('#clipQuery').oninput=e=>{ clearTimeout(clipTimer); clipTimer=setTimeout(()=>clipSearch(e.target.value), 350); };
+$('#clipQuery').onkeydown=e=>{ if(e.key==='Enter'){ clearTimeout(clipTimer); clipSearch(e.target.value); } };
+$('#clipUseColor').onchange=()=>clipSearch($('#clipQuery').value||$('#clipGrid').dataset.q||'');
+$('#clipColor').onchange=()=>{ if($('#clipUseColor').checked) clipSearch($('#clipQuery').value||$('#clipGrid').dataset.q||''); };
 
 /* ---------- bottom timeline tracks ---------- */
 function positionPlayhead(){ const ph=$('#tlPlayhead'); if(!ph) return; const total=totalDur()||1; ph.style.left=(Math.min(playhead,total)/total*100)+'%'; }
