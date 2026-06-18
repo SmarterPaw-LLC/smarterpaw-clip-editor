@@ -155,7 +155,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.21.1</span>
+  <span class="ver" id="appVer">v1.22.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -735,40 +735,51 @@ function hexA(hex,a){ hex=(hex||'#000000').replace('#',''); if(hex.length===3) h
   const r=parseInt(hex.slice(0,2),16)||0,g=parseInt(hex.slice(2,4),16)||0,b=parseInt(hex.slice(4,6),16)||0; return `rgba(${r},${g},${b},${a==null?1:a})`; }
 // Bubble-sticker text → canvas (ported from the social image tool: offscreen white-stroke shadow,
 // thick round white outline, white fill, gradient fill). Rendered at EXPORT resolution so the
-// preview (scaled down) and the render bake (used 1:1) are identical. Single line.
+// preview (scaled down) and the render bake (used 1:1) are identical. Supports multi-line
+// (\n + word-wrap to bubble width), kerning, and line spacing.
 function buildStickerCanvas(o){
   const exportW=(CANVAS_PX[EDL.settings.canvas]||[1080,1920])[0];
   const sizePx=Math.max(10,(o.size||0.07)*exportW);
-  const text=o.text||' ';
   const fam=(FONTS[o.font]||FONTS.cooper);
   const font='normal '+sizePx+'px '+fam;
   const gradTop=o.gradStart||'#8ab81d', gradBot=o.gradEnd||'#3c8e14';
   const sh=o.shadow||{};
   const shadowColor=hexA(sh.color||'#1a4d00',(sh.on&&sh.opacity!=null)?sh.opacity:0.45);
   const spread=1.0;
+  const align=o.align||'center';
+  const kernPx=Math.round((+o.kerning||0)*sizePx);
+  const gapPx=Math.round((o.lineGap!=null?o.lineGap:0.08)*sizePx);
   const outline=Math.max(6,Math.round(sizePx*0.22));
   const shadow=Math.max(2,Math.round(sizePx*0.06));
   const sdx=Math.max(1,Math.round(sizePx*0.04)), sdy=Math.max(2,Math.round(sizePx*0.08));
-  const meas=document.createElement('canvas').getContext('2d'); meas.font=font;
-  const tw=meas.measureText(text).width;
   const strokeBleed=Math.ceil(outline*1.5)+sdx+Math.ceil(shadow)+8;
-  const cw=Math.ceil(tw+strokeBleed*2);
-  const TOP=Math.round(sizePx*0.32), textH=sizePx, by=TOP+textH, cx=cw/2;
+  const cw=Math.max(60,Math.round((o.bubbleWidth!=null?o.bubbleWidth:0.85)*exportW));
+  const maxW=Math.max(20,cw-strokeBleed*2);
+  function ctxSet(c){ c.font=font; c.textAlign=align; c.textBaseline='alphabetic'; if('letterSpacing' in c){ try{c.letterSpacing=kernPx+'px';}catch(e){} } }
+  const m=document.createElement('canvas').getContext('2d'); ctxSet(m);
+  const measure=t=>m.measureText(t).width;
+  const rows=[];                                   // word-wrap each \n line to maxW
+  (o.text||' ').split('\n').forEach(ln=>{ const words=(ln||' ').split(' '); let cur='';
+    words.forEach(w=>{ const test=cur?cur+' '+w:w; if(measure(test)>maxW && cur){ rows.push(cur); cur=w; } else cur=test; });
+    rows.push(cur); });
+  const TOP=Math.round(sizePx*0.32), BOT=Math.round(sizePx*0.32);
+  let y=TOP; const rowPos=[]; rows.forEach((t,i)=>{ y+=sizePx; rowPos.push({text:t,y:y}); if(i<rows.length-1) y+=gapPx; });
+  const textBottom=y, textH=textBottom-TOP;
   const shadowBleed=Math.ceil((sdy+shadow*2)*spread)+8;
-  const totalH=Math.ceil(TOP+textH+Math.round(sizePx*0.32)+shadowBleed);
+  const totalH=Math.ceil(textBottom+BOT+shadowBleed);
+  const X=align==='center'?cw/2 : align==='right'? cw-strokeBleed : strokeBleed;
   function grad(c){ const byc=TOP+textH/2;
-    if(o.gradType==='radial'){ const r=Math.max(tw,textH)/2||1; const g=c.createRadialGradient(cx,byc,0,cx,byc,r); g.addColorStop(0,gradTop); g.addColorStop(1,gradBot); return g; }
-    const ang=((o.gradAngle==null?180:o.gradAngle)-90)*Math.PI/180, len=Math.sqrt(tw*tw+textH*textH)/2||1;
-    const g=c.createLinearGradient(cx-Math.cos(ang)*len, byc-Math.sin(ang)*len, cx+Math.cos(ang)*len, byc+Math.sin(ang)*len);
+    if(o.gradType==='radial'){ const r=Math.max(maxW,textH)/2||1; const g=c.createRadialGradient(cw/2,byc,0,cw/2,byc,r); g.addColorStop(0,gradTop); g.addColorStop(1,gradBot); return g; }
+    const ang=((o.gradAngle==null?180:o.gradAngle)-90)*Math.PI/180, len=Math.sqrt(maxW*maxW+textH*textH)/2||1;
+    const g=c.createLinearGradient(cw/2-Math.cos(ang)*len, byc-Math.sin(ang)*len, cw/2+Math.cos(ang)*len, byc+Math.sin(ang)*len);
     g.addColorStop(0,gradTop); g.addColorStop(1,gradBot); return g; }
-  const cv=document.createElement('canvas'); cv.width=cw; cv.height=totalH; const ctx=cv.getContext('2d');
-  ctx.textAlign='center'; ctx.textBaseline='alphabetic'; ctx.font=font;
-  const off=document.createElement('canvas'); off.width=cw; off.height=totalH; const oc=off.getContext('2d');   // pass 1: shadow
-  oc.font=font; oc.textAlign='center'; oc.textBaseline='alphabetic'; oc.strokeStyle='#fff'; oc.lineWidth=outline*2; oc.lineJoin='round'; oc.strokeText(text,cx,by);
+  const cv=document.createElement('canvas'); cv.width=cw; cv.height=totalH; const ctx=cv.getContext('2d'); ctxSet(ctx);
+  const off=document.createElement('canvas'); off.width=cw; off.height=totalH; const oc=off.getContext('2d'); ctxSet(oc);   // pass 1: shadow
+  oc.strokeStyle='#fff'; oc.lineWidth=outline*2; oc.lineJoin='round'; rowPos.forEach(rp=>oc.strokeText(rp.text,X,rp.y));
   ctx.save(); ctx.shadowColor=shadowColor; ctx.shadowBlur=shadow*2*spread; ctx.shadowOffsetX=sdx*spread; ctx.shadowOffsetY=sdy*spread; ctx.drawImage(off,0,0); ctx.restore();
-  ctx.save(); ctx.strokeStyle='#fff'; ctx.lineWidth=outline*2.5; ctx.lineJoin='round'; ctx.lineCap='round'; ctx.fillStyle='#fff'; ctx.strokeText(text,cx,by); ctx.fillText(text,cx,by); ctx.restore();   // pass 2: white outline
-  ctx.save(); ctx.fillStyle='#fff'; ctx.fillText(text,cx,by); ctx.restore();   // pass 3: solidify
-  ctx.save(); ctx.fillStyle=grad(ctx); ctx.fillText(text,cx,by); ctx.restore();   // pass 4: gradient
+  ctx.save(); ctxSet(ctx); ctx.strokeStyle='#fff'; ctx.lineWidth=outline*2.5; ctx.lineJoin='round'; ctx.lineCap='round'; ctx.fillStyle='#fff'; rowPos.forEach(rp=>{ctx.strokeText(rp.text,X,rp.y); ctx.fillText(rp.text,X,rp.y);}); ctx.restore();   // pass 2: white outline
+  ctx.save(); ctxSet(ctx); ctx.fillStyle='#fff'; rowPos.forEach(rp=>ctx.fillText(rp.text,X,rp.y)); ctx.restore();   // pass 3: solidify
+  ctx.save(); ctxSet(ctx); ctx.fillStyle=grad(ctx); rowPos.forEach(rp=>ctx.fillText(rp.text,X,rp.y)); ctx.restore();   // pass 4: gradient
   return {canvas:cv, cw, ch:totalH, exportW};
 }
 // For render: bake each sticker-text overlay to a PNG (same canvas as preview), upload it,
@@ -803,7 +814,7 @@ function renderOverlays(time){
     if(!visible){ el.style.display='none'; return; }
     el.style.display='';
     if(ekey==='sticker'){
-      const key=[o.text,o.font,o.size,o.gradStart,o.gradEnd,o.gradType,o.gradAngle,EDL.settings.canvas,(o.shadow&&o.shadow.on),(o.shadow&&o.shadow.color),(o.shadow&&o.shadow.opacity)].join('|');
+      const key=[o.text,o.font,o.size,o.gradStart,o.gradEnd,o.gradType,o.gradAngle,o.bubbleWidth,o.kerning,o.lineGap,o.align,EDL.settings.canvas,(o.shadow&&o.shadow.on),(o.shadow&&o.shadow.color),(o.shadow&&o.shadow.opacity)].join('|');
       if(el._stkey!==key){ const r=buildStickerCanvas(o); el.src=r.canvas.toDataURL('image/png'); el._cw=r.cw; el._ew=r.exportW; el._stkey=key; }   // re-bake only when props change
       el.style.width=(el._cw/el._ew*100)+'%'; el.style.height='auto'; }
     else if(o.type==='image'){ const u=o.src?('/'+encodeURI(o.src)):''; if(el.getAttribute('src')!==u) el.setAttribute('src',u); el.style.width=((o.scale||0.3)*W)+'px'; el.style.height='auto'; }
@@ -866,7 +877,7 @@ function buildOvEditor(){
     <label>Dur <input type="number" id="ovDur" step="0.1" style="width:58px" value="${o.dur}"> s</label>
     <button class="mini" id="ovHere">⤓ at playhead</button></div>`;
   if(o.type==='text'){
-    h+=`<div class="sec">Text</div><div><input type="text" id="ovText" style="width:100%" value="${(o.text||'').replace(/"/g,'&quot;')}"></div>
+    h+=`<div class="sec">Text</div><div><textarea id="ovText" rows="2" style="width:100%" placeholder="text — Enter = new line (bubble sticker)">${(o.text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</textarea></div>
       <div><label>Style <select id="ovStyle"><option value="plain">Plain</option><option value="sticker">Bubble sticker</option></select></label>
       <label>Font <select id="ovFont"><option value="cooper">Cooper</option><option value="meowijuana">Meowijuana</option><option value="arial">Arial</option></select></label></div>
       <div id="ovPlainRow"><label>Color <input type="color" id="ovColor" value="${o.color||'#ffffff'}"></label>
@@ -875,6 +886,9 @@ function buildOvEditor(){
         <label>To <input type="color" id="ovStTo" value="${o.gradEnd||'#3c8e14'}"></label>
         <label>Style <select id="ovStType"><option value="linear">Linear</option><option value="radial">Radial</option></select></label></div>
       <div id="ovStAngRow"><label>Direction <input type="range" id="ovStAngle" min="0" max="360" step="5" value="${o.gradAngle!=null?o.gradAngle:180}"></label> <span id="ovStAngV" style="font-size:11px;color:var(--mut)">${o.gradAngle!=null?o.gradAngle:180}°</span></div>
+      <div id="ovStickRow2"><label>Width <input type="range" id="ovStWidth" min="0.2" max="1" step="0.02" value="${o.bubbleWidth!=null?o.bubbleWidth:0.85}"></label>
+        <label>Kerning <input type="range" id="ovStKern" min="-0.05" max="0.4" step="0.01" value="${o.kerning!=null?o.kerning:0}"></label></div>
+      <div id="ovStickRow3"><label>Line spacing <input type="range" id="ovStGap" min="-0.3" max="0.6" step="0.02" value="${o.lineGap!=null?o.lineGap:0.08}"></label></div>
       <div><label>Size <input type="range" id="ovSize" min="0.02" max="0.18" step="0.005" value="${o.size}"></label></div>`;
   } else if(o.type==='shape'){
     h+=`<div class="sec">Shape (rounded rectangle)</div>
@@ -912,13 +926,16 @@ function buildOvEditor(){
   if($('#ovFillType')){ $('#ovFillType').value=(o.fillType==='gradient')?'gradient':'solid'; $('#ovGradType').value=o.gradType||'linear'; ovShapeRows(); }
   function ovTextRows(){ if(!$('#ovStyle')) return; const st=$('#ovStyle').value==='sticker';
     $('#ovPlainRow').style.display=st?'none':''; $('#ovStickRow').style.display=st?'':'none';
+    $('#ovStickRow2').style.display=st?'':'none'; $('#ovStickRow3').style.display=st?'':'none';
     $('#ovStAngRow').style.display=(st && $('#ovStType').value!=='radial')?'':'none'; }
   if($('#ovStyle')){ $('#ovStyle').value=(o.style==='sticker')?'sticker':'plain'; $('#ovStType').value=o.gradType||'linear'; ovTextRows(); }
   const upd=()=>{ o.start=parseFloat($('#ovStart').value)||0; o.dur=parseFloat($('#ovDur').value)||1;
     o.fadeIn=parseFloat($('#ovFi').value)||0; o.fadeOut=parseFloat($('#ovFo').value)||0;
     const s2=o.shadow||(o.shadow={}); s2.on=$('#ovShOn').checked; s2.color=$('#ovShColor').value; s2.blur=parseFloat($('#ovShBlur').value)||0; s2.opacity=parseFloat($('#ovShOp').value); s2.dx=parseFloat($('#ovShX').value)||0; s2.dy=parseFloat($('#ovShY').value)||0;
     if(o.type==='text'){ o.text=$('#ovText').value; o.font=$('#ovFont').value; o.size=parseFloat($('#ovSize').value)||0.06; o.style=$('#ovStyle').value;
-      if(o.style==='sticker'){ o.gradStart=$('#ovStFrom').value; o.gradEnd=$('#ovStTo').value; o.gradType=$('#ovStType').value; o.gradAngle=parseFloat($('#ovStAngle').value); if($('#ovStAngV')) $('#ovStAngV').textContent=(o.gradAngle||0)+'°'; }
+      if(o.style==='sticker'){ o.gradStart=$('#ovStFrom').value; o.gradEnd=$('#ovStTo').value; o.gradType=$('#ovStType').value; o.gradAngle=parseFloat($('#ovStAngle').value);
+        o.bubbleWidth=parseFloat($('#ovStWidth').value); o.kerning=parseFloat($('#ovStKern').value); o.lineGap=parseFloat($('#ovStGap').value);
+        if($('#ovStAngV')) $('#ovStAngV').textContent=(o.gradAngle||0)+'°'; }
       else { o.color=$('#ovColor').value; o.button=$('#ovBtn').checked; o.bg=$('#ovBg').value; }
       ovTextRows(); }
     else if(o.type==='shape'){ o.fillType=$('#ovFillType').value; o.fill=$('#ovFill').value; o.opacity=parseFloat($('#ovOpacity').value);
@@ -927,7 +944,7 @@ function buildOvEditor(){
       if($('#ovGradAngV')) $('#ovGradAngV').textContent=(o.gradAngle||0)+'°'; ovShapeRows(); }
     else o.scale=parseFloat($('#ovScale').value)||0.3;
     renderOverlays(playhead); renderOvList(); };
-  box.querySelectorAll('input,select').forEach(el=>{ el.oninput=upd; el.onchange=upd; });
+  box.querySelectorAll('input,select,textarea').forEach(el=>{ el.oninput=upd; el.onchange=upd; });
   if($('#ovHere')) $('#ovHere').onclick=()=>{ o.start=Math.round(playhead*100)/100; $('#ovStart').value=o.start; renderOvList(); renderOverlays(playhead); };
   if($('#ovReplace')) $('#ovReplace').onclick=()=>pickImage(src=>{ o.src=src; renderOverlays(playhead); renderOvList(); });
 }
