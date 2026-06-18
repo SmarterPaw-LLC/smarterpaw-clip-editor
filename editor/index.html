@@ -74,6 +74,13 @@
   .clip .meta { flex:1; min-width:0; }
   .clip .meta b { display:block; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .clip .meta span { color:var(--mut); font-size:11px; }
+  .clip .qadd { flex:none; width:26px; height:26px; border-radius:6px; border:1px solid var(--line); background:var(--panel2);
+                color:var(--txt); font-size:15px; line-height:1; cursor:pointer; opacity:0; transition:opacity .12s; }
+  .clip:hover .qadd { opacity:1; }
+  .clip .qadd:hover { background:var(--acc,#8ab81d); border-color:var(--acc,#8ab81d); color:#10240a; }
+  .clip.dragging { opacity:.5; }
+  .emptyhint { color:var(--mut); font-size:12px; padding:14px 12px; line-height:1.5; border:1px dashed var(--line); border-radius:8px; margin:8px; }
+  #timeline.clipdrop, #tlTracksWrap.clipdrop { outline:2px dashed var(--acc,#8ab81d); outline-offset:-3px; background:rgba(138,184,29,.07); }
   /* center */
   .center { display:flex; flex-direction:column; align-items:center; gap:10px; padding:12px; overflow:auto; }
   #stageWrap { position:relative; background:#000; border-radius:10px; overflow:hidden; box-shadow:0 6px 24px #0008; flex:none; }
@@ -158,7 +165,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.27.2</span>
+  <span class="ver" id="appVer">v1.27.3</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -255,7 +262,7 @@
   </div>
   </div><!-- /topRow -->
   <div id="tlPanel">
-    <h2>Timeline <span style="color:var(--mut);font-weight:400;text-transform:none;letter-spacing:0">— click to scrub · drag clips between channels · drag bars to move/resize</span>
+    <h2>Timeline <span style="color:var(--mut);font-weight:400;text-transform:none;letter-spacing:0">— drag a source clip here to add · click to scrub · drag clips between channels · drag bars to move/resize</span>
       <button class="mini" id="btnAddCh" title="Add a clip channel above (higher channels cover lower ones)" style="margin-left:auto">＋ Channel</button></h2>
     <div id="tlTracksWrap">
       <div id="tlRuler"></div>
@@ -472,20 +479,40 @@ function buildEndcard(ec){
 }
 
 /* ---------- bin ---------- */
+function addClipToTimeline(id, atIdx){ const c=MAN.byId[id]; if(!c) return toast('Clip not found');
+  histCommit();
+  const seg={id, in:0, dur:Math.min(3, c.dur||3)||2, cap:'', zoom:1, anchor:'center'};
+  if(atIdx==null || atIdx<0 || atIdx>EDL.segments.length){ EDL.segments.push(seg); sel=EDL.segments.length-1; }
+  else { EDL.segments.splice(atIdx,0,seg); sel=atIdx; }
+  renderTimeline(); selectSeg(sel); histCommit(); toast('Added “'+(c.label||id)+'”'); }
 function renderBin(){
   const bin=$('#bin'); bin.innerHTML='';
   let cur='';
   MAN.clips.forEach(c=>{
     if(c.product!==cur){ cur=c.product; const g=document.createElement('div'); g.className='grp'; g.textContent=cur; bin.appendChild(g); }
-    const d=document.createElement('div'); d.className='clip';
+    const d=document.createElement('div'); d.className='clip'; d.draggable=true;
     d.innerHTML=`<img src="${c.thumb}" loading="lazy"><div class="meta"><b>${c.label}</b>
-      <span>${c.id} · ${fmt(c.dur)}s · ${c.w}×${c.h}</span></div>`;
+      <span>${c.id} · ${fmt(c.dur)}s · ${c.w}×${c.h}</span></div>
+      <button class="qadd" title="Add to timeline">＋</button>`;
     d.onclick=()=>{ stop(); sel=-1; renderTimeline(); $('#trimName').textContent=c.label;
       withClip(c.id, v=>{ if(!v) return; showVid(c.id); applyFraming({anchor:'center',zoom:1}, v); try{v.currentTime=0;}catch(e){} showCap(''); });
       $('#btnAddSel').dataset.id=c.id; };
+    d.querySelector('.qadd').onclick=e=>{ e.stopPropagation(); addClipToTimeline(c.id); };
+    d.addEventListener('dragstart', e=>{ e.dataTransfer.setData('text/clip-id', c.id); e.dataTransfer.setData('text/plain', c.id); e.dataTransfer.effectAllowed='copy'; d.classList.add('dragging'); });
+    d.addEventListener('dragend', ()=>d.classList.remove('dragging'));
     bin.appendChild(d);
   });
 }
+/* drop a source clip onto the right Clips pane or the bottom timeline to add it */
+(function(){ function wireClipDrop(el){ if(!el) return;
+    const has=e=>[...(e.dataTransfer.types||[])].includes('text/clip-id');
+    el.addEventListener('dragover', e=>{ if(has(e)){ e.preventDefault(); e.dataTransfer.dropEffect='copy'; el.classList.add('clipdrop'); } });
+    el.addEventListener('dragleave', e=>{ if(!el.contains(e.relatedTarget)) el.classList.remove('clipdrop'); });
+    el.addEventListener('drop', e=>{ if(!has(e)) return; e.preventDefault(); el.classList.remove('clipdrop');
+      const id=e.dataTransfer.getData('text/clip-id'); if(id) addClipToTimeline(id); });
+  }
+  wireClipDrop($('#timeline')); wireClipDrop($('#tlTracksWrap'));
+})();
 
 /* ---------- timeline ---------- */
 function chCount(){ let n=Math.max(1, +EDL.channels||1);   // channels hold both clips and overlays
@@ -508,6 +535,8 @@ function topAt(t){ let best=null; layout().all.forEach(o=>{ if(t>=o.start && t<o
 function totalDur(){ const ec=normEndcard(EDL.settings); return layout().vidTotal + (ec.enabled?ec.dur:0); }
 function renderTimeline(){
   const tl=$('#timeline'); tl.innerHTML='';
+  if(!EDL.segments.length){ const h=document.createElement('div'); h.className='emptyhint';
+    h.innerHTML='No clips yet. <b>Drag a source clip here</b>, or hover a clip and click <b>＋</b>.'; tl.appendChild(h); }
   EDL.segments.forEach((s,i)=>{
     const c=MAN.byId[s.id]; const name=c?c.label:s.id; const cdur=(c&&c.dur)||60;
     const el=document.createElement('div'); el.className='seg'+(i===sel?' sel':'');
