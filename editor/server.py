@@ -774,14 +774,19 @@ def flatten_segments(edl):
     """Collapse multi-channel clips into one sequential list (higher channel covers lower).
     channel 0 = base story track (sequential, with lead `gap`); channels >=1 are positioned by
     absolute `t0`. Returns (flat, vid_total). Each flat entry is either a black filler
-    {"black": True, "dur": d} or a clip sub-segment {id,in,dur,cap,zoom,anchor[,fadeIn,fadeOut]}."""
+    {"black": True, "dur": d} or a clip sub-segment
+    {id,in,dur,speed,cap,zoom,anchor[,panX,panY,fadeIn,fadeOut]} where `dur` is SOURCE seconds."""
+    def _spd(s):
+        return max(0.1, min(10.0, float(s.get("speed", 1) or 1)))
+    def _tl(s):   # timeline footprint = source dur / speed (matches the preview's segLen)
+        return max(0.05, float(s.get("dur", 1) or 1) / _spd(s))
     segs = edl.get("segments", [])
     base, acc = [], 0.0
     for i, s in enumerate(segs):
         if int(s.get("ch", 0) or 0) != 0:
             continue
         g = max(0.0, float(s.get("gap", 0) or 0))
-        d = max(0.05, float(s.get("dur", 1) or 1))
+        d = _tl(s)
         base.append({"i": i, "s": s, "ch": 0, "start": acc + g, "end": acc + g + d})
         acc += g + d
     clips = list(base)
@@ -790,7 +795,7 @@ def flatten_segments(edl):
         if ch == 0:
             continue
         t0 = max(0.0, float(s.get("t0", 0) or 0))
-        d = max(0.05, float(s.get("dur", 1) or 1))
+        d = _tl(s)
         clips.append({"i": i, "s": s, "ch": ch, "start": t0, "end": t0 + d})
     vid_total = acc
     for c in clips:
@@ -814,9 +819,16 @@ def flatten_segments(edl):
             flat.append({"black": True, "dur": round(b - a, 4)})
             continue
         s, off = top["s"], a - top["start"]
-        seg = {"id": s.get("id"), "in": round(float(s.get("in", 0) or 0) + off, 4),
-               "dur": round(b - a, 4), "cap": s.get("cap", ""),
+        sp = _spd(s)
+        # `off` and (b-a) are TIMELINE seconds; convert to SOURCE seconds for the encoder
+        # (which treats seg["dur"] as source seconds and re-stretches via setpts at `speed`).
+        seg = {"id": s.get("id"), "in": round(float(s.get("in", 0) or 0) + off * sp, 4),
+               "dur": round((b - a) * sp, 4), "speed": sp, "cap": s.get("cap", ""),
                "zoom": s.get("zoom", 1.0), "anchor": s.get("anchor", "center")}
+        if s.get("panX") is not None:
+            seg["panX"] = s.get("panX")
+        if s.get("panY") is not None:
+            seg["panY"] = s.get("panY")
         fi = float(s.get("fadeIn", 0) or 0)
         fo = float(s.get("fadeOut", 0) or 0)
         if fi > 0 and abs(a - top["start"]) < 0.02:
