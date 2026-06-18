@@ -155,7 +155,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.21.0</span>
+  <span class="ver" id="appVer">v1.21.1</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -733,6 +733,59 @@ $('#ecLogoY').oninput=()=>{ normEndcard(EDL.settings).logo.y=parseFloat($('#ecLo
 let ovEdit=false, ovSel=null;
 function hexA(hex,a){ hex=(hex||'#000000').replace('#',''); if(hex.length===3) hex=hex.split('').map(c=>c+c).join('');
   const r=parseInt(hex.slice(0,2),16)||0,g=parseInt(hex.slice(2,4),16)||0,b=parseInt(hex.slice(4,6),16)||0; return `rgba(${r},${g},${b},${a==null?1:a})`; }
+// Bubble-sticker text → canvas (ported from the social image tool: offscreen white-stroke shadow,
+// thick round white outline, white fill, gradient fill). Rendered at EXPORT resolution so the
+// preview (scaled down) and the render bake (used 1:1) are identical. Single line.
+function buildStickerCanvas(o){
+  const exportW=(CANVAS_PX[EDL.settings.canvas]||[1080,1920])[0];
+  const sizePx=Math.max(10,(o.size||0.07)*exportW);
+  const text=o.text||' ';
+  const fam=(FONTS[o.font]||FONTS.cooper);
+  const font='normal '+sizePx+'px '+fam;
+  const gradTop=o.gradStart||'#8ab81d', gradBot=o.gradEnd||'#3c8e14';
+  const sh=o.shadow||{};
+  const shadowColor=hexA(sh.color||'#1a4d00',(sh.on&&sh.opacity!=null)?sh.opacity:0.45);
+  const spread=1.0;
+  const outline=Math.max(6,Math.round(sizePx*0.22));
+  const shadow=Math.max(2,Math.round(sizePx*0.06));
+  const sdx=Math.max(1,Math.round(sizePx*0.04)), sdy=Math.max(2,Math.round(sizePx*0.08));
+  const meas=document.createElement('canvas').getContext('2d'); meas.font=font;
+  const tw=meas.measureText(text).width;
+  const strokeBleed=Math.ceil(outline*1.5)+sdx+Math.ceil(shadow)+8;
+  const cw=Math.ceil(tw+strokeBleed*2);
+  const TOP=Math.round(sizePx*0.32), textH=sizePx, by=TOP+textH, cx=cw/2;
+  const shadowBleed=Math.ceil((sdy+shadow*2)*spread)+8;
+  const totalH=Math.ceil(TOP+textH+Math.round(sizePx*0.32)+shadowBleed);
+  function grad(c){ const byc=TOP+textH/2;
+    if(o.gradType==='radial'){ const r=Math.max(tw,textH)/2||1; const g=c.createRadialGradient(cx,byc,0,cx,byc,r); g.addColorStop(0,gradTop); g.addColorStop(1,gradBot); return g; }
+    const ang=((o.gradAngle==null?180:o.gradAngle)-90)*Math.PI/180, len=Math.sqrt(tw*tw+textH*textH)/2||1;
+    const g=c.createLinearGradient(cx-Math.cos(ang)*len, byc-Math.sin(ang)*len, cx+Math.cos(ang)*len, byc+Math.sin(ang)*len);
+    g.addColorStop(0,gradTop); g.addColorStop(1,gradBot); return g; }
+  const cv=document.createElement('canvas'); cv.width=cw; cv.height=totalH; const ctx=cv.getContext('2d');
+  ctx.textAlign='center'; ctx.textBaseline='alphabetic'; ctx.font=font;
+  const off=document.createElement('canvas'); off.width=cw; off.height=totalH; const oc=off.getContext('2d');   // pass 1: shadow
+  oc.font=font; oc.textAlign='center'; oc.textBaseline='alphabetic'; oc.strokeStyle='#fff'; oc.lineWidth=outline*2; oc.lineJoin='round'; oc.strokeText(text,cx,by);
+  ctx.save(); ctx.shadowColor=shadowColor; ctx.shadowBlur=shadow*2*spread; ctx.shadowOffsetX=sdx*spread; ctx.shadowOffsetY=sdy*spread; ctx.drawImage(off,0,0); ctx.restore();
+  ctx.save(); ctx.strokeStyle='#fff'; ctx.lineWidth=outline*2.5; ctx.lineJoin='round'; ctx.lineCap='round'; ctx.fillStyle='#fff'; ctx.strokeText(text,cx,by); ctx.fillText(text,cx,by); ctx.restore();   // pass 2: white outline
+  ctx.save(); ctx.fillStyle='#fff'; ctx.fillText(text,cx,by); ctx.restore();   // pass 3: solidify
+  ctx.save(); ctx.fillStyle=grad(ctx); ctx.fillText(text,cx,by); ctx.restore();   // pass 4: gradient
+  return {canvas:cv, cw, ch:totalH, exportW};
+}
+// For render: bake each sticker-text overlay to a PNG (same canvas as preview), upload it,
+// and swap it to an image overlay so the server composites the identical pixels.
+async function bakeStickersForRender(edl){
+  const out=[];
+  for(const o of (edl.overlays||[])){
+    if(o.type==='text' && o.style==='sticker' && (o.text||'').trim()){
+      try{ const r=buildStickerCanvas(o); const data=r.canvas.toDataURL('image/png');
+        const up=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'sticker_'+o.id+'.png',data})});
+        if(up&&up.ok){ out.push({id:o.id,type:'image',src:up.src,scale:r.cw/r.exportW,x:o.x,y:o.y,start:o.start,dur:o.dur,fadeIn:o.fadeIn,fadeOut:o.fadeOut,ch:o.ch}); continue; }
+      }catch(e){}
+    }
+    out.push(o);
+  }
+  return Object.assign({},edl,{overlays:out});
+}
 const ovEls={};   // reused DOM nodes per overlay id (so images don't reload every frame)
 function renderOverlays(time){
   const layer=$('#overlayLayer'); if(!layer||!EDL) return;
@@ -742,13 +795,18 @@ function renderOverlays(time){
   (EDL.overlays||[]).forEach((o,idx)=>{
     const active = time>=o.start && time < o.start+(+o.dur||0);
     const visible = active || (ovEdit && o.id===ovSel);
+    const ekey=(o.type==='text'&&o.style==='sticker')?'sticker':o.type;   // sticker text renders as a baked canvas image
     let el=ovEls[o.id];
-    if(el && el.dataset.t!==o.type){ el.remove(); el=null; }
-    if(!el){ el = o.type==='image'?document.createElement('img'):document.createElement('div'); el.dataset.t=o.type; el.style.position='absolute'; ovEls[o.id]=el; layer.appendChild(el); }
+    if(el && el.dataset.t!==ekey){ el.remove(); el=null; }
+    if(!el){ el = (ekey==='image'||ekey==='sticker')?document.createElement('img'):document.createElement('div'); el.dataset.t=ekey; el.style.position='absolute'; ovEls[o.id]=el; layer.appendChild(el); }
     el.style.zIndex=(+o.ch||0)*1000+idx;   // higher channel on top; array order breaks ties within a channel
     if(!visible){ el.style.display='none'; return; }
     el.style.display='';
-    if(o.type==='image'){ const u=o.src?('/'+encodeURI(o.src)):''; if(el.getAttribute('src')!==u) el.setAttribute('src',u); el.style.width=((o.scale||0.3)*W)+'px'; el.style.height='auto'; }
+    if(ekey==='sticker'){
+      const key=[o.text,o.font,o.size,o.gradStart,o.gradEnd,o.gradType,o.gradAngle,EDL.settings.canvas,(o.shadow&&o.shadow.on),(o.shadow&&o.shadow.color),(o.shadow&&o.shadow.opacity)].join('|');
+      if(el._stkey!==key){ const r=buildStickerCanvas(o); el.src=r.canvas.toDataURL('image/png'); el._cw=r.cw; el._ew=r.exportW; el._stkey=key; }   // re-bake only when props change
+      el.style.width=(el._cw/el._ew*100)+'%'; el.style.height='auto'; }
+    else if(o.type==='image'){ const u=o.src?('/'+encodeURI(o.src)):''; if(el.getAttribute('src')!==u) el.setAttribute('src',u); el.style.width=((o.scale||0.3)*W)+'px'; el.style.height='auto'; }
     else if(o.type==='shape'){ el.style.boxSizing='border-box'; el.style.width=((o.w||0.5)*100)+'%'; el.style.height=((o.h||0.2)*100)+'%';
       const sop=(o.opacity!=null?o.opacity:0.5);
       if(o.fillType==='gradient'){ const c1=hexA(o.gradStart||o.fill||'#000000',sop), c2=hexA(o.gradEnd||'#ffffff',sop);
@@ -757,18 +815,12 @@ function renderOverlays(time){
       el.style.borderRadius=((o.radius||0.04)*W)+'px';
       el.style.border=((o.strokeW||0)>0)?(((o.strokeW)*W)+'px solid '+(o.stroke||'#ffffff')):'none'; }
     else { el.textContent=o.text||''; el.style.fontFamily=FONTS[o.font]||FONTS.cooper; el.style.fontWeight='800'; el.style.lineHeight='1';
-      el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.whiteSpace='nowrap';
-      if(o.style==='sticker'){ const fs=(o.size||0.07)*W, ang=o.gradAngle!=null?o.gradAngle:180, c1=o.gradStart||'#8ab81d', c2=o.gradEnd||'#3c8e14';
-        el.style.background=(o.gradType==='radial')?('radial-gradient(circle, '+c1+', '+c2+')'):('linear-gradient('+ang+'deg, '+c1+', '+c2+')');
-        el.style.webkitBackgroundClip='text'; el.style.backgroundClip='text'; el.style.color='transparent';
-        el.style.webkitTextStroke=Math.max(3,fs*0.16)+'px #fff'; el.style.paintOrder='stroke fill'; el.style.padding='0'; el.style.borderRadius='0'; el.style.textShadow='none'; }
-      else { el.style.background=o.button?(o.bg||'#f07830'):'none'; el.style.webkitBackgroundClip=''; el.style.backgroundClip=''; el.style.color=o.color||'#fff'; el.style.webkitTextStroke=''; el.style.paintOrder='';
-        if(o.button){ const p=(o.size||0.06)*W; el.style.padding=(p*0.38)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.3)+'px'; el.style.textShadow='none'; }
-        else { el.style.padding='0'; el.style.borderRadius='0'; el.style.textShadow='0 2px 6px rgba(0,0,0,.6)'; } } }
+      el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.whiteSpace='nowrap'; el.style.color=o.color||'#fff';
+      if(o.button){ el.style.background=o.bg||'#f07830'; const p=(o.size||0.06)*W; el.style.padding=(p*0.38)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.3)+'px'; el.style.textShadow='none'; }
+      else { el.style.background='none'; el.style.padding='0'; el.style.borderRadius='0'; el.style.textShadow='0 2px 6px rgba(0,0,0,.6)'; } }
     el.style.left=((o.x||0.5)*100)+'%'; el.style.top=((o.y||0.5)*100)+'%'; el.style.transform='translate(-50%,-50%)';
-    const sh=o.shadow||{}; const stickerSh=(o.type==='text'&&o.style==='sticker'&&!sh.on);
-    el.style.filter = sh.on ? `drop-shadow(${(sh.dx!=null?sh.dx:0.004)*W}px ${(sh.dy!=null?sh.dy:0.006)*W}px ${(sh.blur!=null?sh.blur:0.01)*W}px ${hexA(sh.color||'#000000', sh.opacity!=null?sh.opacity:0.5)})`
-      : stickerSh ? `drop-shadow(${0.003*W}px ${0.006*W}px ${0.008*W}px rgba(16,51,0,.45))` : 'none';
+    const sh=o.shadow||{};   // sticker bakes its own shadow into the canvas, so no extra CSS filter for it
+    el.style.filter = (ekey!=='sticker' && sh.on) ? `drop-shadow(${(sh.dx!=null?sh.dx:0.004)*W}px ${(sh.dy!=null?sh.dy:0.006)*W}px ${(sh.blur!=null?sh.blur:0.01)*W}px ${hexA(sh.color||'#000000', sh.opacity!=null?sh.opacity:0.5)})` : 'none';
     let op=1; if(active){ const fi=+o.fadeIn||0, fo=+o.fadeOut||0, dd=+o.dur||0;
       if(fi>0 && time<o.start+fi) op=Math.max(0,(time-o.start)/fi);
       if(fo>0 && time>o.start+dd-fo) op=Math.min(op,Math.max(0,(o.start+dd-time)/fo)); }
@@ -1075,8 +1127,9 @@ $('#exGo').onclick=async()=>{
   if($('#exStamp').checked){ const d=new Date(), p=n=>String(n).padStart(2,'0');
     name+='_'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'-'+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds()); }
   name+='_'+canvas;
-  const body=Object.assign({},EDL,{_outDir:dir,_outName:name});
   const go=$('#exGo'); go.disabled=true; go.textContent='⏳ Rendering…'; $('#exStatus').textContent='Rendering '+canvas+'… (~10–30s)';
+  const baked=await bakeStickersForRender(EDL);   // bake sticker text to the same canvas PNG the preview uses
+  const body=Object.assign({},baked,{_outDir:dir,_outName:name});
   try{ const r=await api('/api/render',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(r.ok){ const link=r.output?(' · <a class="dl" href="'+r.output+'" target="_blank">open</a>'):'';
       $('#exStatus').innerHTML='✅ Saved <b>'+r.name+'</b> ('+r.total+'s)<br><span style="color:var(--mut);word-break:break-all">'+r.path+'</span>'+link;
