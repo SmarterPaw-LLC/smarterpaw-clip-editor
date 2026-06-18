@@ -561,6 +561,18 @@ def _anim_exprs(o, s, dur, W, tv="t"):
     return dx, dy, am, bool(amul), rot
 
 
+def _sparkle_field(a):
+    """Deterministic sparkle scatter — must match sparkleField() in the UI."""
+    n = max(1, int(a.get("count", 6)))
+    out = []
+    for i in range(n):
+        ang = i * 2.39996
+        r = 0.35 + 0.6 * (((i + 1) * 0.618034) % 1.0)
+        out.append({"cx": math.cos(ang) * r, "cy": math.sin(ang) * r, "ph": i * 1.7,
+                    "sc": 0.7 + 0.6 * (((i + 1) * 0.318) % 1.0)})
+    return out
+
+
 def apply_overlays(silent, overlays, W, H, tmp):
     """Composite free-floating text/image/shape overlays over the full timeline (global time),
     preserving list order as z-order (later = on top)."""
@@ -640,6 +652,19 @@ def apply_overlays(silent, overlays, W, H, tmp):
             fc.append(f"[{ii}:v]" + ",".join(filt) + f"[oi{k}]")
             fc.append(f"[{last}][oi{k}]overlay=x='W*{ox}-w/2+({odx})':y='H*{oy}-h/2+({ody})':{en}[v{k}]")
             last = f"v{k}"; ii += 1
+        # sparkle: composite twinkling copies of a chosen image around the overlay center
+        spk = next((a for a in (o.get("anims") or []) if a.get("type") == "sparkle" and a.get("src")), None)
+        if spk:
+            psp = os.path.join(PROJ, *spk["src"].split("/"))
+            if os.path.exists(psp):
+                spread = float(spk.get("spread", 0.12)) * W; ssize = float(spk.get("size", 0.06)) * W; sspeed = float(spk.get("speed", 1.2))
+                for i, f in enumerate(_sparkle_field(spk)):
+                    sw = max(2, int(ssize * f["sc"])); offx = f["cx"] * spread; offy = f["cy"] * spread
+                    twk = "pow(max(0,sin(2*PI*%g*(T-%g)+%g)),3)" % (sspeed, s, f["ph"])
+                    inputs += ["-loop", "1", "-t", str(e), "-i", psp]
+                    fc.append(f"[{ii}:v]scale={sw}:-1,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({twk})'[sp{k}_{i}]")
+                    fc.append(f"[{last}][sp{k}_{i}]overlay=x='W*{ox}-w/2+({offx})':y='H*{oy}-h/2+({offy})':{en}[vs{k}_{i}]")
+                    last = f"vs{k}_{i}"; ii += 1
     if not fc:
         return silent, None
     out = os.path.join(tmp, "overlaid.mp4")
