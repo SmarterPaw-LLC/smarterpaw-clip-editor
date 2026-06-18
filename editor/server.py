@@ -573,6 +573,22 @@ def _sparkle_field(a):
     return out
 
 
+def _emoji_png(emoji, out, px=256):
+    """Rasterize an emoji to a transparent PNG via Segoe UI Emoji (color)."""
+    from PIL import Image, ImageDraw, ImageFont
+    font = ImageFont.truetype("C:/Windows/Fonts/seguiemj.ttf", px)
+    img = Image.new("RGBA", (px * 2, px * 2), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    try:
+        d.text((px, px), emoji, font=font, embedded_color=True, anchor="mm")
+    except Exception:
+        d.text((px, px), emoji, font=font, anchor="mm")
+    bb = img.getbbox()
+    if bb:
+        img = img.crop(bb)
+    img.save(out)
+
+
 def apply_overlays(silent, overlays, W, H, tmp):
     """Composite free-floating text/image/shape overlays over the full timeline (global time),
     preserving list order as z-order (later = on top)."""
@@ -645,18 +661,38 @@ def apply_overlays(silent, overlays, W, H, tmp):
             if scale_w:
                 filt.append(f"scale={scale_w}:-1")
             filt.append("format=rgba")
-            if has_op:                                                  # animate alpha per-frame (geq T = timeline t)
-                filt.append(f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({amT})'")
+            shim = next((a for a in (o.get("anims") or []) if a.get("type") == "shimmer"), None)
+            if has_op or shim:                                          # per-frame alpha (opacity) and/or shimmer sheen via geq (T = timeline t)
+                if shim:
+                    amt = float(shim.get("amount", 0.7)); bwf = float(shim.get("width", 0.22)); spd = float(shim.get("speed", 1.0))
+                    ca, sa = math.cos(math.radians(30)), math.sin(math.radians(30))
+                    proj = "(X*%g+Y*%g)" % (ca, sa); L = "(W*%g+H*%g)" % (abs(ca), abs(sa)); band = "(%g*%s)" % (bwf, L)
+                    sw = "(mod((T-%g)*%g,1)*(%s+2*%s)-%s)" % (s, spd, L, band, band)
+                    B = "%g*exp(-pow((%s-%s)/(%s/2+1),2))" % (amt, proj, sw, band)
+                    rex, gex, bex = ("min(255,%s(X,Y)+(%s)*(255-%s(X,Y)))" % (c, B, c) for c in ("r", "g", "b"))
+                else:
+                    rex, gex, bex = "r(X,Y)", "g(X,Y)", "b(X,Y)"
+                aex = "alpha(X,Y)*(%s)" % amT if has_op else "alpha(X,Y)"
+                filt.append(f"geq=r='{rex}':g='{gex}':b='{bex}':a='{aex}'")
             if orot:                                                    # rotate (wiggle/spin) around center, transparent fill
                 filt.append(f"rotate='{orot}':c=none:ow='hypot(iw,ih)':oh='hypot(iw,ih)'")
             fc.append(f"[{ii}:v]" + ",".join(filt) + f"[oi{k}]")
             fc.append(f"[{last}][oi{k}]overlay=x='W*{ox}-w/2+({odx})':y='H*{oy}-h/2+({ody})':{en}[v{k}]")
             last = f"v{k}"; ii += 1
-        # sparkle: composite twinkling copies of a chosen image around the overlay center
-        spk = next((a for a in (o.get("anims") or []) if a.get("type") == "sparkle" and a.get("src")), None)
+        # sparkle: composite twinkling copies of an emoji or image around the overlay center
+        spk = next((a for a in (o.get("anims") or []) if a.get("type") == "sparkle" and ((a.get("emoji") or "").strip() or a.get("src"))), None)
         if spk:
-            psp = os.path.join(PROJ, *spk["src"].split("/"))
-            if os.path.exists(psp):
+            if (spk.get("emoji") or "").strip():
+                psp = os.path.join(tmp, f"emoji_{k}.png")
+                try:
+                    _emoji_png(spk["emoji"], psp)
+                except Exception:
+                    psp = None
+            else:
+                psp = os.path.join(PROJ, *spk["src"].split("/"))
+                if not os.path.exists(psp):
+                    psp = None
+            if psp:
                 spread = float(spk.get("spread", 0.12)) * W; ssize = float(spk.get("size", 0.06)) * W; sspeed = float(spk.get("speed", 1.2))
                 for i, f in enumerate(_sparkle_field(spk)):
                     sw = max(2, int(ssize * f["sc"])); offx = f["cx"] * spread; offy = f["cy"] * spread

@@ -155,7 +155,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.25.0</span>
+  <span class="ver" id="appVer">v1.26.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -746,7 +746,8 @@ const ANIM_DEFS={
   blink:   {label:'Blink',         def:{speed:2},          ctrls:[['speed','Speed','range',0.5,8,0.5]]},
   wiggle:  {label:'Wiggle (rotate)',png:true,def:{amp:8,speed:2},ctrls:[['amp','Degrees','range',1,30,1],['speed','Speed','range',0.2,6,0.2]]},
   spin:    {label:'Spin',          png:true,def:{speed:0.5,dir:'cw'},ctrls:[['speed','Rev/sec','range',0.05,2,0.05],['dir','Direction','sel',['cw','ccw']]]},
-  sparkle: {label:'Sparkle (image)',def:{src:'',count:6,size:0.06,spread:0.12,speed:1.2},ctrls:[['src','Sparkle PNG','img'],['count','Count','range',1,16,1],['size','Size','range',0.02,0.16,0.005],['spread','Spread','range',0.02,0.35,0.01],['speed','Twinkle','range',0.3,4,0.1]]},
+  sparkle: {label:'Sparkle',def:{emoji:'✨',src:'',count:6,size:0.06,spread:0.12,speed:1.2},ctrls:[['emoji','Emoji','text'],['src','or PNG','img'],['count','Count','range',1,16,1],['size','Size','range',0.02,0.16,0.005],['spread','Spread','range',0.02,0.35,0.01],['speed','Twinkle','range',0.3,4,0.1]]},
+  shimmer: {label:'Shimmer / glint',png:true,def:{amount:0.7,width:0.22,speed:1.0},ctrls:[['amount','Brightness','range',0.1,1,0.05],['width','Band','range',0.08,0.5,0.02],['speed','Speed','range',0.2,3,0.1]]},
 };
 // Deterministic sparkle scatter (golden-angle) + per-sparkle size/phase. Shared by preview + render.
 function sparkleField(a){ const n=Math.max(1,Math.round(a.count||6)), out=[];
@@ -837,22 +838,40 @@ async function bakeStickersForRender(edl){
   return Object.assign({},edl,{overlays:out});
 }
 const ovEls={};   // reused DOM nodes per overlay id (so images don't reload every frame)
-const ovSpark={}; // sparkle <img> nodes per overlay id
+const ovSpark={}; // sparkle nodes (div) per overlay id
 function renderSparkles(o, time, layer){
-  const sp=(o.anims||[]).find(a=>a.type==='sparkle' && a.src);
+  const sp=(o.anims||[]).find(a=>a.type==='sparkle' && ((a.emoji&&a.emoji.trim())||a.src));
   let arr=ovSpark[o.id]||[];
   if(!sp){ if(arr.length){ arr.forEach(el=>el.remove()); delete ovSpark[o.id]; } return; }
   const W=$('#stageWrap').clientWidth||360, Hs=$('#stageWrap').clientHeight||640;
   const field=sparkleField(sp), n=field.length;
-  while(arr.length<n){ const im=document.createElement('img'); im.style.position='absolute'; im.style.pointerEvents='none'; layer.appendChild(im); arr.push(im); }
+  while(arr.length<n){ const d=document.createElement('div'); d.style.position='absolute'; d.style.pointerEvents='none'; d.style.lineHeight='1'; d.style.textAlign='center'; d.style.backgroundRepeat='no-repeat'; d.style.backgroundPosition='center'; d.style.backgroundSize='contain'; layer.appendChild(d); arr.push(d); }
   while(arr.length>n){ arr.pop().remove(); }
   ovSpark[o.id]=arr;
-  const url='/'+encodeURI(sp.src), lt=time-o.start, active=time>=o.start && time<o.start+(+o.dur||0);
+  const useEmoji=!!(sp.emoji&&sp.emoji.trim()), url=sp.src?('/'+encodeURI(sp.src)):'';
+  const lt=time-o.start, active=time>=o.start && time<o.start+(+o.dur||0);
   const cxp=(o.x||0.5)*W, cyp=(o.y||0.5)*Hs, spread=(sp.spread||0.12)*W, ssize=(sp.size||0.06)*W, speed=sp.speed||1.2, z=(+o.ch||0)*1000+9999;
-  field.forEach((f,i)=>{ const el=arr[i]; if(el.getAttribute('src')!==url) el.setAttribute('src',url);
-    const w=ssize*f.sc; el.style.width=w+'px'; el.style.height='auto'; el.style.zIndex=z;
-    el.style.left=(cxp+f.cx*spread-w/2)+'px'; el.style.top=(cyp+f.cy*spread-w/2)+'px';
+  field.forEach((f,i)=>{ const el=arr[i]; const w=ssize*f.sc;
+    if(useEmoji){ if(el.textContent!==sp.emoji) el.textContent=sp.emoji; el.style.backgroundImage='none'; el.style.fontSize=w+'px'; el.style.width='auto'; el.style.height='auto'; }
+    else { el.textContent=''; const bg='url("'+url+'")'; if(el.style.backgroundImage!==bg) el.style.backgroundImage=bg; el.style.width=w+'px'; el.style.height=w+'px'; el.style.fontSize=''; }
+    el.style.zIndex=z; el.style.left=(cxp+f.cx*spread-w/2)+'px'; el.style.top=(cyp+f.cy*spread-w/2)+'px';
     el.style.opacity=active?sparkleOp(lt,f.ph,speed):0; });
+}
+const ovShine={}; // shimmer sheen div per overlay id
+function renderShine(o, time, layer){
+  const sh=(o.anims||[]).find(a=>a.type==='shimmer'); let el=ovShine[o.id]; const ovel=ovEls[o.id];
+  const active=time>=o.start && time<o.start+(+o.dur||0);
+  if(!sh || !ovel || !active){ if(el){ el.style.display='none'; } if(!sh && el){ el.remove(); delete ovShine[o.id]; } return; }
+  if(!el){ el=document.createElement('div'); el.style.position='absolute'; el.style.pointerEvents='none'; el.style.mixBlendMode='screen'; layer.appendChild(el); ovShine[o.id]=el; }
+  el.style.display='';
+  const lr=layer.getBoundingClientRect(), r=ovel.getBoundingClientRect();   // overlap the overlay's on-screen box
+  el.style.left=(r.left-lr.left)+'px'; el.style.top=(r.top-lr.top)+'px'; el.style.width=r.width+'px'; el.style.height=r.height+'px';
+  el.style.zIndex=(+o.ch||0)*1000+9998;
+  const amount=sh.amount!=null?sh.amount:0.7, bw=(sh.width!=null?sh.width:0.22)*100, speed=sh.speed||1, lt=time-o.start;
+  const pos=(((lt*speed)%1)*(100+2*bw))-bw;   // band center sweeps across (-bw .. 100+bw)
+  el.style.background='linear-gradient(115deg, transparent '+(pos-bw)+'%, rgba(255,255,255,'+amount+') '+pos+'%, transparent '+(pos+bw)+'%)';
+  if(ovel.tagName==='IMG'){ const u=ovel.getAttribute('src')||''; el.style.webkitMaskImage='url("'+u+'")'; el.style.maskImage='url("'+u+'")'; el.style.webkitMaskSize='100% 100%'; el.style.maskSize='100% 100%'; el.style.borderRadius=''; }
+  else { el.style.webkitMaskImage='none'; el.style.maskImage='none'; el.style.borderRadius=ovel.style.borderRadius||''; }
 }
 function renderOverlays(time){
   const layer=$('#overlayLayer'); if(!layer||!EDL) return;
@@ -860,6 +879,7 @@ function renderOverlays(time){
   const ids=new Set((EDL.overlays||[]).map(o=>o.id));
   for(const id in ovEls){ if(!ids.has(id)){ ovEls[id].remove(); delete ovEls[id]; } }
   for(const id in ovSpark){ if(!ids.has(id)){ ovSpark[id].forEach(el=>el.remove()); delete ovSpark[id]; } }
+  for(const id in ovShine){ if(!ids.has(id)){ ovShine[id].remove(); delete ovShine[id]; } }
   (EDL.overlays||[]).forEach((o,idx)=>{
     migrateAnims(o);
     const active = time>=o.start && time < o.start+(+o.dur||0);
@@ -896,6 +916,7 @@ function renderOverlays(time){
     if(ovEdit){ el.style.pointerEvents='auto'; el.style.cursor='move'; el.style.outline=(o.id===ovSel)?'2px dashed #5b8cff':'none'; el.style.outlineOffset='3px'; dragify(el,o); }
     else { el.style.pointerEvents='none'; el.style.outline='none'; }
     renderSparkles(o, time, layer);
+    renderShine(o, time, layer);
   });
   histSchedule();
 }
@@ -1004,6 +1025,7 @@ function buildOvEditor(){
     renderOverlays(playhead); renderOvList(); };
   box.querySelectorAll('input,select,textarea').forEach(el=>{ el.oninput=upd; el.onchange=upd; });
   function animCtrl(ai,a,c){ const key=c[0],label=c[1],kind=c[2],v=a[key];
+    if(kind==='text'){ return `<label>${label} <input type="text" class="anc" data-ai="${ai}" data-k="${key}" value="${(v||'').replace(/"/g,'&quot;')}" style="width:46px;text-align:center"></label>`; }
     if(kind==='img'){ const fn=(v||'').split('/').pop()||'none'; return `<label>${label} <button class="mini anpick" data-ai="${ai}" data-k="${key}">${v?'Replace':'Choose'}…</button> <span style="font-size:10px;color:var(--mut)">${fn}</span></label>`; }
     if(kind==='sel') return `<label>${label} <select data-ai="${ai}" data-k="${key}" class="anc">${c[3].map(op=>`<option ${op===v?'selected':''}>${op}</option>`).join('')}</select></label>`;
     const t=kind==='num'?'number':'range'; return `<label>${label} <input type="${t}" class="anc" data-ai="${ai}" data-k="${key}" min="${c[3]}" max="${c[4]}" step="${c[5]}" value="${v}" ${kind==='num'?'style="width:50px"':''}></label>`; }
