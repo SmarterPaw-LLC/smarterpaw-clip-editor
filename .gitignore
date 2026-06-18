@@ -31,6 +31,10 @@ editor/.fal_key
 # user's saved project files (auto-seeded from edl.json on first run)
 projects/
 
+# --- Google Drive for Desktop sync artifacts ---
+.tmp.driveupload/
+.tmp.drivedownload/
+
 # --- OS ---
 Thumbs.db
 .DS_Store

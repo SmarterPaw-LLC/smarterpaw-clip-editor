@@ -526,7 +526,7 @@ def _anim_exprs(o, s, dur, W, tv="t"):
         if float(o.get("fadeIn", 0) or 0) > 0: anims.append({"type": "fadeIn", "d": float(o.get("fadeIn"))})
         if float(o.get("fadeOut", 0) or 0) > 0: anims.append({"type": "fadeOut", "d": float(o.get("fadeOut"))})
     lt = "(%s-%g)" % (tv, s)
-    dxs, dys, amul = [], [], []
+    dxs, dys, amul, rots = [], [], [], []
     for a in anims:
         ty = a.get("type")
         if ty == "fadeIn":
@@ -548,10 +548,17 @@ def _anim_exprs(o, s, dur, W, tv="t"):
         elif ty == "bounceIn":
             d = max(0.01, float(a.get("d", 0.6))); amp = float(a.get("amp", 0.12)) * W
             dys.append("if(lt(%s,%g),-%g*exp(-3*%s/%g)*cos(2*PI*1.6*%s/%g)*(1-%s/%g),0)" % (lt, d, amp, lt, d, lt, d, lt, d))
+        elif ty == "blink":
+            sp = float(a.get("speed", 2)); amul.append("gte(sin(2*PI*%g*%s),0)" % (sp, lt))
+        elif ty == "wiggle":
+            amp = float(a.get("amp", 8)) * math.pi / 180.0; sp = float(a.get("speed", 2)); rots.append("%g*sin(2*PI*%g*%s)" % (amp, sp, lt))
+        elif ty == "spin":
+            sp = float(a.get("speed", 0.5)); sign = -1 if a.get("dir") == "ccw" else 1; rots.append("%g*2*PI*%g*%s" % (sign, sp, lt))
     dx = "+".join("(%s)" % x for x in dxs) if dxs else "0"
     dy = "+".join("(%s)" % x for x in dys) if dys else "0"
     am = "max(0,min(1,%s))" % ("*".join("(%s)" % x for x in amul)) if amul else "1"
-    return dx, dy, am, bool(amul)
+    rot = "+".join("(%s)" % x for x in rots) if rots else None
+    return dx, dy, am, bool(amul), rot
 
 
 def apply_overlays(silent, overlays, W, H, tmp):
@@ -579,7 +586,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
             ff = esc_path(_font_path(o.get("font", "cooper")))
             size = max(8, int(W * float(o.get("size", 0.06))))
             col = (o.get("color", "#ffffff") or "#ffffff").replace("#", "0x")
-            adx, ady, aam, _ = _anim_exprs(o, s, float(o.get("dur", 3)), W, "t")
+            adx, ady, aam, _, _ = _anim_exprs(o, s, float(o.get("dur", 3)), W, "t")
             alpha = f":alpha='{aam}'"
             sh = o.get("shadow") or {}
             shopt = ""
@@ -619,8 +626,8 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 else:
                     scale_w = max(1, int(W * float(o.get("scale", 0.3))))
             dur_o = float(o.get("dur", 3))
-            odx, ody, _, _ = _anim_exprs(o, s, dur_o, W, "t")          # position (overlay time = t)
-            _, _, amT, has_op = _anim_exprs(o, s, dur_o, W, "T")        # opacity (geq pixel time = T)
+            odx, ody, _, _, orot = _anim_exprs(o, s, dur_o, W, "t")     # position + rotation (overlay time = t)
+            _, _, amT, has_op, _ = _anim_exprs(o, s, dur_o, W, "T")     # opacity (geq pixel time = T)
             inputs += ["-loop", "1", "-t", str(e), "-i", p]
             filt = []
             if scale_w:
@@ -628,6 +635,8 @@ def apply_overlays(silent, overlays, W, H, tmp):
             filt.append("format=rgba")
             if has_op:                                                  # animate alpha per-frame (geq T = timeline t)
                 filt.append(f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({amT})'")
+            if orot:                                                    # rotate (wiggle/spin) around center, transparent fill
+                filt.append(f"rotate='{orot}':c=none:ow='hypot(iw,ih)':oh='hypot(iw,ih)'")
             fc.append(f"[{ii}:v]" + ",".join(filt) + f"[oi{k}]")
             fc.append(f"[{last}][oi{k}]overlay=x='W*{ox}-w/2+({odx})':y='H*{oy}-h/2+({ody})':{en}[v{k}]")
             last = f"v{k}"; ii += 1
