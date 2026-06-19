@@ -201,7 +201,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.40.0</span>
+  <span class="ver" id="appVer">v1.41.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -990,7 +990,11 @@ const ANIM_DEFS={
   spin:    {label:'Spin',          png:true,def:{speed:0.5,dir:'cw'},ctrls:[['speed','Rev/sec','range',0.05,2,0.05],['dir','Direction','sel',['cw','ccw']]]},
   sparkle: {label:'Sparkle',def:{emoji:'✨',src:'',count:6,size:0.06,spread:0.12,speed:1.2},ctrls:[['emoji','Emoji','text'],['src','or PNG','img'],['count','Count','range',1,16,1],['size','Size','range',0.02,0.16,0.005],['spread','Spread','range',0.02,0.35,0.01],['speed','Twinkle','range',0.3,4,0.1]]},
   shimmer: {label:'Shimmer / glint',png:true,def:{amount:0.7,width:0.22,speed:1.0},ctrls:[['amount','Brightness','range',0.1,1,0.05],['width','Band','range',0.08,0.5,0.02],['speed','Speed','range',0.2,3,0.1]]},
+  reshuffle:{label:'Reshuffle (random)',def:{freq:2,amt:0.15,posX:true,posY:true,rot:false,opacity:false,seed:1},
+    ctrls:[['freq','Per sec','range',0.2,8,0.2],['amt','Amount','range',0.02,0.6,0.02],['posX','Move X','bool'],['posY','Move Y','bool'],['rot','Rotate','bool'],['opacity','Opacity','bool'],['seed','Seed','seed']]},
 };
+// Deterministic [-1,1] hash for the reshuffle effect — identical math in JS (preview) and ffmpeg (render).
+function _rsHash(step, seed, salt){ const x=Math.sin(step*12.9898 + (seed||1)*78.233 + salt*45.13)*43758.5453; return (x-Math.floor(x))*2-1; }
 // Deterministic sparkle scatter (golden-angle) + per-sparkle size/phase. Shared by preview + render.
 function sparkleField(a){ const n=Math.max(1,Math.round(a.count||6)), out=[];
   for(let i=0;i<n;i++){ const ang=i*2.39996, r=0.35+0.6*(((i+1)*0.618034)%1);
@@ -1016,6 +1020,9 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1; const T=Math.m
     case 'bounceIn': { const d=Math.max(0.01,a.d||0.6), amp=(a.amp!=null?a.amp:0.12)*W; if(T<d){ const k=T/d; dy+=-amp*Math.exp(-3*k)*Math.cos(2*Math.PI*1.6*k)*(1-k); } break; }
     case 'dropIn': { const d=Math.max(0.01,a.d||0.6), dist=(a.dist!=null?a.dist:0.5)*W; if(T<d){ const k=T/d; dy-=dist*(1-_easeOutBack(k)); } break; }
     case 'popIn': { const d=Math.max(0.01,a.d||0.45); if(T<d){ const k=T/d; sc*=Math.max(0,_easeOutBack(k)); op*=Math.min(1,k/0.3); } break; }
+    case 'reshuffle': { const freq=Math.max(0.2,a.freq||2), amt=(a.amt!=null?a.amt:0.15), st=Math.floor(T*freq), sd=a.seed||1;
+      if(a.posX) dx+=_rsHash(st,sd,1.1)*amt*W; if(a.posY) dy+=_rsHash(st,sd,2.3)*amt*W;
+      if(a.rot) rot+=_rsHash(st,sd,3.7)*amt*180; if(a.opacity) op*=Math.max(0,1-(_rsHash(st,sd,6.1)*0.5+0.5)*amt*1.4); break; }
   }});
   return {dx,dy,op:Math.max(0,Math.min(1,op)),rot,sc}; }
 function migrateAnims(o){ if(o.anims) return; o.anims=[];   // legacy fadeIn/fadeOut → animation entries
@@ -1327,7 +1334,7 @@ function renderOverlays(time){
   });
   histSchedule();
 }
-function dragify(el,o){ el.onpointerdown=ev=>{ ev.preventDefault(); histCommit(); ovSel=o.id; renderOvList(); buildOvEditor();
+function dragify(el,o){ el.onpointerdown=ev=>{ ev.preventDefault(); if(document.activeElement&&document.activeElement.blur)document.activeElement.blur(); histCommit(); ovSel=o.id; renderOvList(); buildOvEditor();
   const wrap=$('#stageWrap').getBoundingClientRect();
   const move=e=>{ o.x=Math.max(-1,Math.min(2,(e.clientX-wrap.left)/wrap.width)); o.y=Math.max(-1,Math.min(2,(e.clientY-wrap.top)/wrap.height)); renderOverlays(playhead); };   // allow dragging well off the render area
   const up=()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); };
@@ -1349,7 +1356,7 @@ function renderOvList(){
     row.innerHTML=`<div style="display:flex;flex-direction:column;gap:1px"><button class="mini ovup" title="bring forward">▲</button><button class="mini ovdn" title="send back">▼</button></div>
       <span class="ovsel" style="flex:1;cursor:pointer;display:flex;align-items:center;gap:6px;min-width:0">${thumb}<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${icon} ${name}</span><span style="color:var(--mut);flex:none">@${fmt(o.start)}–${fmt(o.start+(+o.dur||0))}s</span></span>
       <button class="mini ovdel" title="delete">✕</button>`;
-    row.querySelector('.ovsel').onclick=()=>{ ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
+    row.querySelector('.ovsel').onclick=()=>{ if(document.activeElement&&document.activeElement.blur)document.activeElement.blur(); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
     row.querySelector('.ovup').onclick=()=>move(o,+1);
     row.querySelector('.ovdn').onclick=()=>move(o,-1);
     row.querySelector('.ovdel').onclick=()=>{ histCommit(); EDL.overlays=EDL.overlays.filter(x=>x.id!==o.id); if(ovSel===o.id) ovSel=null; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
@@ -1435,7 +1442,7 @@ function buildOvEditor(){
       <label>Y <input type="range" id="ovShY" min="-0.03" max="0.03" step="0.002" value="${sh.dy}"></label></div>`;
   h+=`<div class="sec">Animation</div><div id="ovAnimList"></div>
     <div style="margin-top:4px"><select id="ovAnimAdd"></select></div>`;
-  h+=`<div style="color:var(--mut);font-size:11px;margin-top:6px">Drag the element on the preview to position it · drag its bar on the timeline to move/restack.</div>`;
+  h+=`<div style="color:var(--mut);font-size:11px;margin-top:6px">Drag on the preview to position · <b>arrow keys nudge</b> (Shift = bigger; can go off-frame) · drag its timeline bar to move/restack.</div>`;
   box.innerHTML=h;
   if($('#ovFont')) $('#ovFont').value=o.font;
   function ovShapeRows(){ if(!$('#ovFillType')) return; const g=$('#ovFillType').value==='gradient';
@@ -1482,6 +1489,8 @@ function buildOvEditor(){
   function animCtrl(ai,a,c){ const key=c[0],label=c[1],kind=c[2],v=a[key];
     if(kind==='text'){ return `<label>${label} <input type="text" class="anc" data-ai="${ai}" data-k="${key}" value="${(v||'').replace(/"/g,'&quot;')}" style="width:46px;text-align:center"></label>`; }
     if(kind==='img'){ const fn=(v||'').split('/').pop()||'none'; return `<label>${label} <button class="mini anpick" data-ai="${ai}" data-k="${key}">${v?'Replace':'Choose'}…</button> <span style="font-size:10px;color:var(--mut)">${fn}</span></label>`; }
+    if(kind==='bool') return `<label class="ck"><input type="checkbox" class="ancb" data-ai="${ai}" data-k="${key}" ${v?'checked':''}> ${label}</label>`;
+    if(kind==='seed') return `<button class="mini anseed" data-ai="${ai}" title="randomize">🎲 ${label}</button>`;
     if(kind==='sel') return `<label>${label} <select data-ai="${ai}" data-k="${key}" class="anc">${c[3].map(op=>`<option ${op===v?'selected':''}>${op}</option>`).join('')}</select></label>`;
     const t=kind==='num'?'number':'range'; return `<label>${label} <input type="${t}" class="anc" data-ai="${ai}" data-k="${key}" min="${c[3]}" max="${c[4]}" step="${c[5]}" value="${v}" ${kind==='num'?'style="width:50px"':''}></label>`; }
   function renderAnimList(){ const L=$('#ovAnimList'); if(!L) return; const anims=o.anims||[];
@@ -1492,6 +1501,8 @@ function buildOvEditor(){
     const png=(o.type==='image'||o.type==='shape'||o.type==='sprinkle'||o.type==='arrow'||(o.type==='text'&&o.style==='sticker'));   // rotation effects need a pixel layer
     $('#ovAnimAdd').innerHTML='<option value="">＋ Add animation…</option>'+Object.keys(ANIM_DEFS).filter(t=>!have.has(t)&&(!ANIM_DEFS[t].png||png)).map(t=>`<option value="${t}">${ANIM_DEFS[t].label}</option>`).join('');
     L.querySelectorAll('.anc').forEach(el=>{ el.oninput=el.onchange=()=>{ let v=el.value; if(el.type==='number'||el.type==='range') v=parseFloat(v); o.anims[+el.dataset.ai][el.dataset.k]=v; renderOverlays(playhead); }; });
+    L.querySelectorAll('.ancb').forEach(el=>{ el.onchange=()=>{ o.anims[+el.dataset.ai][el.dataset.k]=el.checked; renderOverlays(playhead); }; });
+    L.querySelectorAll('.anseed').forEach(b=>{ b.onclick=()=>{ histCommit(); o.anims[+b.dataset.ai].seed=Math.floor(Math.random()*1e6); renderOverlays(playhead); }; });
     L.querySelectorAll('.anpick').forEach(b=>{ b.onclick=()=>{ const ai=+b.dataset.ai, k=b.dataset.k; pickImage(src=>{ histCommit(); o.anims[ai][k]=src; renderAnimList(); renderOverlays(playhead); }); }; });
     L.querySelectorAll('.anrm').forEach(b=>{ b.onclick=()=>{ histCommit(); o.anims.splice(+b.dataset.ai,1); renderAnimList(); renderOverlays(playhead); }; });
   }
@@ -2136,11 +2147,12 @@ document.addEventListener('keydown', e=>{ if(!(e.ctrlKey||e.metaKey)) return; co
   else if(k==='y'||(k==='z'&&e.shiftKey)){ e.preventDefault(); doRedo(); } });
 // Arrow keys nudge the selected overlay (Shift = bigger step); can move it off the render area.
 document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) return;
-  const tag=(document.activeElement&&document.activeElement.tagName||'').toLowerCase();
-  if(tag==='input'||tag==='textarea'||tag==='select') return;
-  if(!(ovEdit && ovSel)) return; const o=(EDL.overlays||[]).find(x=>x.id===ovSel); if(!o) return;
+  if(!(e.key==='ArrowLeft'||e.key==='ArrowRight'||e.key==='ArrowUp'||e.key==='ArrowDown')) return;
+  if(!ovSel) return; const o=(EDL.overlays||[]).find(x=>x.id===ovSel); if(!o) return;   // an overlay is selected → arrows nudge it
+  const ae=document.activeElement, tag=(ae&&ae.tagName||'').toLowerCase(), ty=(ae&&ae.type||'').toLowerCase();
+  if(tag==='textarea' || tag==='select' || (tag==='input' && (ty==='text'||ty==='number'||ty==='search'||ty===''))) return;   // let real typing fields keep arrows
   const step=e.shiftKey?0.04:0.005; let dx=0,dy=0;
-  if(e.key==='ArrowLeft')dx=-step; else if(e.key==='ArrowRight')dx=step; else if(e.key==='ArrowUp')dy=-step; else if(e.key==='ArrowDown')dy=step; else return;
+  if(e.key==='ArrowLeft')dx=-step; else if(e.key==='ArrowRight')dx=step; else if(e.key==='ArrowUp')dy=-step; else dy=step;
   e.preventDefault(); histSchedule();
   o.x=Math.max(-1,Math.min(2,(o.x!=null?o.x:0.5)+dx)); o.y=Math.max(-1,Math.min(2,(o.y!=null?o.y:0.5)+dy));
   renderOverlays(playhead); });

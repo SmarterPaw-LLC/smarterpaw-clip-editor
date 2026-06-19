@@ -607,6 +607,16 @@ def _anim_exprs(o, s, dur, W, tv="t"):
         elif ty == "popIn":
             d = max(0.01, float(a.get("d", 0.45)))   # scale isn't animatable on an ffmpeg overlay → render as a quick fade-in
             amul.append("min(1,max(0,(%s)/%g))" % (lt, d * 0.5))
+        elif ty == "reshuffle":   # seeded per-step randomization; same hash math as _rsHash() in the UI
+            freq = max(0.2, float(a.get("freq", 2))); amt = float(a.get("amt", 0.15)); rseed = float(a.get("seed", 1))
+            def _H(salt):
+                inner = "(floor(%s*%g)*12.9898+%g*78.233+%g*45.13)" % (lt, freq, rseed, salt)
+                sx = "sin(%s)*43758.5453" % inner
+                return "((%s)-floor(%s))*2-1" % (sx, sx)
+            if a.get("posX"): dxs.append("%g*(%s)" % (amt * W, _H(1.1)))
+            if a.get("posY"): dys.append("%g*(%s)" % (amt * W, _H(2.3)))
+            if a.get("rot"): rots.append("%g*(%s)" % (amt * math.pi, _H(3.7)))
+            if a.get("opacity"): amul.append("max(0,1-((%s)*0.5+0.5)*%g)" % (_H(6.1), amt * 1.4))
         elif ty == "blink":
             sp = float(a.get("speed", 2)); amul.append("gte(sin(2*PI*%g*%s),0)" % (sp, lt))
         elif ty == "wiggle":
