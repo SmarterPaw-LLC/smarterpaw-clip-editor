@@ -201,7 +201,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.37.0</span>
+  <span class="ver" id="appVer">v1.38.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -408,6 +408,8 @@
         <input type="text" id="clipQuery" placeholder="Search: cat, paw, star, heart, fire, arrow…" style="flex:1">
         <label class="ck" title="Recolor single-color icons"><input type="checkbox" id="clipUseColor" checked> Recolor</label>
         <input type="color" id="clipColor" value="#ffffff" title="Color for monochrome icons">
+        <label title="Add a looping motion to the sticker">motion
+          <select id="clipMotion"><option value="">none</option><option value="spin">spin</option><option value="float">float</option><option value="bounce">bounce</option><option value="pulse">pulse</option><option value="wiggle">wobble</option></select></label>
       </div>
       <div style="font-size:11px;color:var(--mut);margin:5px 0">Free for commercial use (via Iconify: Noto/Twemoji emoji, Material, Phosphor, Lucide…). Color applies to single-color icons; emoji keep their own colors.</div>
       <div id="clipGrid"></div>
@@ -966,6 +968,7 @@ const ANIM_DEFS={
   pulse:   {label:'Opacity pulse', def:{amp:0.5,speed:1.5},ctrls:[['amp','Amount','range',0,0.9,0.05],['speed','Speed','range',0.2,5,0.1]]},
   jitter:  {label:'Jitter',        def:{amp:0.012,speed:11},ctrls:[['amp','Amount','range',0,0.05,0.002],['speed','Speed','range',2,20,1]]},
   float:   {label:'Float',         def:{amp:0.02,speed:0.6},ctrls:[['amp','Amount','range',0,0.06,0.004],['speed','Speed','range',0.1,2,0.1]]},
+  bounce:  {label:'Bounce (loop)', def:{amp:0.05,speed:1},  ctrls:[['amp','Height','range',0.01,0.2,0.01],['speed','Speed','range',0.2,3,0.1]]},
   slideIn: {label:'Slide in',      def:{d:0.5,dir:'left',dist:0.2},ctrls:[['d','Seconds','num',0.1,3,0.1],['dir','From','sel',['left','right','up','down']],['dist','Distance','range',0.05,0.6,0.05]]},
   bounceIn:{label:'Bounce in',     def:{d:0.6,amp:0.12},   ctrls:[['d','Seconds','num',0.2,2,0.1],['amp','Height','range',0.02,0.3,0.02]]},
   dropIn:  {label:'Drop in',       def:{d:0.6,dist:0.5},   ctrls:[['d','Seconds','num',0.2,2,0.1],['dist','Height','range',0.1,1,0.05]]},
@@ -995,6 +998,7 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1; const T=Math.m
       dx+=amp*(Math.sin(2*Math.PI*sp*T)+0.7*Math.sin(2*Math.PI*sp*1.7*T+1.1))/1.7;
       dy+=amp*(Math.cos(2*Math.PI*sp*1.3*T)+0.7*Math.sin(2*Math.PI*sp*2.1*T+0.5))/1.7; break; }
     case 'float': { const amp=(a.amp!=null?a.amp:0.02)*W, sp=a.speed||0.6; dy+=amp*Math.sin(2*Math.PI*sp*T); break; }
+    case 'bounce': { const amp=(a.amp!=null?a.amp:0.05)*W, sp=a.speed||1; dy-=amp*Math.abs(Math.sin(Math.PI*sp*T)); break; }
     case 'slideIn': { const d=Math.max(0.01,a.d||0.5), dist=(a.dist!=null?a.dist:0.2)*W; if(T<d){ const e=Math.pow(1-T/d,2), dir=a.dir||'left';
       if(dir==='left')dx-=e*dist; else if(dir==='right')dx+=e*dist; else if(dir==='up')dy-=e*dist; else dy+=e*dist; } break; }
     case 'bounceIn': { const d=Math.max(0.01,a.d||0.6), amp=(a.amp!=null?a.amp:0.12)*W; if(T<d){ const k=T/d; dy+=-amp*Math.exp(-3*k)*Math.cos(2*Math.PI*1.6*k)*(1-k); } break; }
@@ -1429,8 +1433,10 @@ async function pickClip(name){
     if(!res||!res.ok){ $('#clipStatus').textContent='Upload failed.'; return; }
     histCommit(); EDL.overlays=EDL.overlays||[];
     const o={id:uid(),type:'image',src:res.src,scale:0.22,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
+    const mo=$('#clipMotion')&&$('#clipMotion').value;   // looping motion → ready animated sticker
+    if(mo && ANIM_DEFS[mo]) o.anims=[Object.assign({type:mo}, JSON.parse(JSON.stringify(ANIM_DEFS[mo].def)))];
     EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead);
-    closeClipPicker(); toast('Clip art added — drag it on the preview to place it');
+    closeClipPicker(); toast('Clip art added'+(mo?(' ('+mo+')'):'')+' — drag it on the preview to place it');
   }catch(e){ $('#clipStatus').textContent='Couldn’t add that icon — try another.'; }
 }
 /* ---------- shared Image Library (same Supabase project as the social-image tool) ---------- */

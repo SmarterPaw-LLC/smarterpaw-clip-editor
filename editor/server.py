@@ -591,6 +591,8 @@ def _anim_exprs(o, s, dur, W, tv="t"):
             dys.append("%g*(cos(2*PI*%g*%s)+0.7*sin(2*PI*%g*%s+0.5))/1.7" % (amp, sp * 1.3, lt, sp * 2.1, lt))
         elif ty == "float":
             amp = float(a.get("amp", 0.02)) * W; sp = float(a.get("speed", 0.6)); dys.append("%g*sin(2*PI*%g*%s)" % (amp, sp, lt))
+        elif ty == "bounce":
+            amp = float(a.get("amp", 0.05)) * W; sp = float(a.get("speed", 1)); dys.append("-%g*abs(sin(PI*%g*%s))" % (amp, sp, lt))
         elif ty == "slideIn":
             d = max(0.01, float(a.get("d", 0.5))); dist = float(a.get("dist", 0.2)) * W; dr = a.get("dir", "left")
             term = "if(lt(%s,%g),pow(1-%s/%g,2)*%g,0)" % (lt, d, lt, d, dist)
