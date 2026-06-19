@@ -117,7 +117,7 @@
                      padding:.1em .3em; border-radius:5px; -webkit-text-stroke:2px rgba(0,0,0,.9); paint-order:stroke fill; }
   #endcard { position:absolute; inset:0; background:#111; display:none; flex-direction:column;
              align-items:center; justify-content:center; gap:2%; }
-  #overlayLayer { position:absolute; inset:0; pointer-events:none; }
+  #overlayLayer { position:absolute; inset:0; pointer-events:none; z-index:1; }   /* own stacking context so overlay z-indexes don't escape above modals */
   #endcard img#ecLogo { width:80%; height:auto; display:none; margin-bottom:5%; }
   #endcard .l1 { color:#fff; font-weight:800; } #endcard .l2 { color:var(--acc); font-weight:800; }
   #endcard .l3 { color:#111; background:var(--acc); font-weight:800; padding:.25em .7em; border-radius:7px; margin-top:4%; }
@@ -162,8 +162,8 @@
   .status { padding:8px 12px; font-size:12px; color:var(--mut); white-space:pre-wrap; max-height:120px; overflow:auto; }
   .pill { font-size:11px; color:var(--mut); border:1px solid var(--line); border-radius:20px; padding:2px 8px; }
   .toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:#000c; color:#fff;
-           padding:10px 16px; border-radius:8px; display:none; z-index:20; border:1px solid var(--line); }
-  .modal { position:fixed; inset:0; background:transparent; pointer-events:none; z-index:30; display:flex; align-items:stretch; justify-content:flex-end; }
+           padding:10px 16px; border-radius:8px; display:none; z-index:2000; border:1px solid var(--line); }
+  .modal { position:fixed; inset:0; background:transparent; pointer-events:none; z-index:1000; display:flex; align-items:stretch; justify-content:flex-end; }
   .modal-card { pointer-events:auto; background:var(--panel); border-left:1px solid var(--line); border-radius:0; width:430px; max-width:96vw; height:100vh; max-height:100vh; overflow:auto; box-shadow:-12px 0 34px #0009; }
   .modal-hd { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--panel); }
   .modal-body { padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
@@ -172,7 +172,7 @@
   .modal-body label { font-size:12px; color:var(--mut); display:inline-flex; align-items:center; gap:6px; margin-right:12px; }
   .modal-body label.ck { color:var(--txt); }
   .modal-body input[type=range] { vertical-align:middle; }
-  .cmodal { position:fixed; inset:0; background:#000a; z-index:40; display:flex; align-items:center; justify-content:center; }
+  .cmodal { position:fixed; inset:0; background:#000a; z-index:1100; display:flex; align-items:center; justify-content:center; }
   .cmodal .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; width:540px; max-width:94vw; }
   .cmodal .hd { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); font-weight:700; }
   .cmodal .bd { padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
@@ -201,7 +201,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.42.0</span>
+  <span class="ver" id="appVer">v1.42.1</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
