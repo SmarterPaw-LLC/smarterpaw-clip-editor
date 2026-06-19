@@ -201,7 +201,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.41.0</span>
+  <span class="ver" id="appVer">v1.42.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -1152,7 +1152,15 @@ function getPieceImg(src){ if(!src) return null; let im=_pieceImgs[src]; if(im) 
 function _ensurePieceLoaded(src){ return new Promise(res=>{ const im=getPieceImg(src);
   if(!im || (im.complete && im.naturalWidth)) return res();
   im.addEventListener('load',()=>res(),{once:true}); im.addEventListener('error',()=>res(),{once:true}); setTimeout(res,3000); }); }
-function _mulberry(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+// Deterministic scatter layout (uses the same _rsHash as reshuffle so JS == any future port).
+// Returns [{fx,fy (0..1 box fraction), sc (size mult), rot (rad), ph (anim phase secs)}].
+function sprinkleLayout(o){
+  const n=Math.max(1,Math.min(300,Math.round(o.count||18))), sd=o.seed||1;
+  const jit=(o.jitter!=null?o.jitter:0.4), rotJit=(o.rotJitter!=null?o.rotJitter:20)*Math.PI/180, out=[];
+  for(let i=0;i<n;i++){ out.push({ fx:_rsHash(i,sd,11.1)*0.5+0.5, fy:_rsHash(i,sd,22.2)*0.5+0.5,
+    sc:Math.max(0.15,1+_rsHash(i,sd,33.3)*jit), rot:_rsHash(i,sd,44.4)*rotJit, ph:(_rsHash(i,sd,55.5)*0.5+0.5)*2.5 }); }
+  return out;
+}
 function buildSprinkleCanvas(o){
   const px=CANVAS_PX[EDL.settings.canvas]||[1080,1920], W=px[0], H=px[1];
   const innerW=Math.max(2,(o.w||0.7)*W), innerH=Math.max(2,(o.h||0.7)*H);
@@ -1162,14 +1170,10 @@ function buildSprinkleCanvas(o){
   const im=getPieceImg(o.src);
   if(!im || !im.complete || !im.naturalWidth) return {canvas:cv, cw, ch, exportW:W, ready:false};
   const ar=im.naturalHeight/im.naturalWidth || 1;
-  const n=Math.max(1,Math.min(300,Math.round(o.count||18)));
-  const jit=(o.jitter!=null?o.jitter:0.4), rotJit=(o.rotJitter!=null?o.rotJitter:20)*Math.PI/180;
-  const rnd=_mulberry((o.seed||1)>>>0);
   c.globalAlpha=(o.opacity!=null?o.opacity:1);
-  for(let i=0;i<n;i++){
-    const sc=Math.max(0.15,1+(rnd()*2-1)*jit), pw=Math.max(2,sizePx*sc), ph=pw*ar;
-    const cx=pad+rnd()*innerW, cy=pad+rnd()*innerH, rot=(rnd()*2-1)*rotJit;
-    c.save(); c.translate(cx,cy); if(rot) c.rotate(rot); c.drawImage(im,-pw/2,-ph/2,pw,ph); c.restore();
+  for(const p of sprinkleLayout(o)){
+    const pw=Math.max(2,sizePx*p.sc), ph=pw*ar, cx=pad+p.fx*innerW, cy=pad+p.fy*innerH;
+    c.save(); c.translate(cx,cy); if(p.rot) c.rotate(p.rot); c.drawImage(im,-pw/2,-ph/2,pw,ph); c.restore();
   }
   return {canvas:cv, cw, ch, exportW:W, ready:true};
 }
@@ -1220,8 +1224,15 @@ async function bakeStickersForRender(edl){
         if(up&&up.ok){ out.push({id:o.id,type:'image',src:up.src,scale:r.cw/r.exportW,x:o.x,y:o.y,start:o.start,dur:o.dur,ch:o.ch,rot:o.rot,anims:o.anims}); continue; }
       }catch(e){}
     }
-    else if(o.type==='sprinkle' && o.src){   // bake the scatter to a PNG so render == preview
-      try{ await _ensurePieceLoaded(o.src); const r=buildSprinkleCanvas(o);
+    else if(o.type==='sprinkle' && o.src){
+      if(o.perPiece && (o.anims||[]).length){   // per-piece: expand into N animated image overlays (each phase-offset)
+        const lay=sprinkleLayout(o).slice(0,60);   // cap pieces so render stays fast
+        lay.forEach((p,i)=>{ out.push({ id:o.id+'_p'+i, type:'image', src:o.src, scale:(o.size||0.08)*p.sc,
+          x:(o.x!=null?o.x:0.5)-(o.w||0.7)/2 + p.fx*(o.w||0.7), y:(o.y!=null?o.y:0.5)-(o.h||0.7)/2 + p.fy*(o.h||0.7),
+          start:o.start, dur:o.dur, ch:o.ch, rot:(+o.rot||0)+p.rot*180/Math.PI, aphase:p.ph, anims:o.anims }); });
+        continue;
+      }
+      try{ await _ensurePieceLoaded(o.src); const r=buildSprinkleCanvas(o);   // static: one baked image
         if(r.ready){ const data=r.canvas.toDataURL('image/png');
           const up=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'sprinkle_'+o.id+'.png',data})});
           if(up&&up.ok){ out.push({id:o.id,type:'image',src:up.src,scale:r.cw/r.exportW,x:o.x,y:o.y,start:o.start,dur:o.dur,ch:o.ch,rot:o.rot,anims:o.anims}); continue; } }
@@ -1238,6 +1249,28 @@ async function bakeStickersForRender(edl){
   return Object.assign({},edl,{overlays:out});
 }
 const ovEls={};   // reused DOM nodes per overlay id (so images don't reload every frame)
+const ovPieces={}; // per-piece sprinkle <img> nodes per overlay id
+function removeSprinklePieces(id){ if(ovPieces[id]){ ovPieces[id].forEach(el=>el.remove()); delete ovPieces[id]; } }
+// Render each scattered piece as its own animated element (phase-offset so they don't move in unison).
+function renderSprinklePieces(o, time, layer, baseZ){
+  const W=$('#stageWrap').clientWidth||360, im=getPieceImg(o.src);
+  const ok = o.perPiece && (o.anims||[]).length && o.src && im && im.complete && im.naturalWidth;
+  const lay = ok ? sprinkleLayout(o) : [];
+  let arr=ovPieces[o.id]||[];
+  while(arr.length<lay.length){ const d=document.createElement('img'); d.style.position='absolute'; d.style.pointerEvents='none'; d.style.transformOrigin='50% 50%'; layer.appendChild(d); arr.push(d); }
+  while(arr.length>lay.length){ arr.pop().remove(); }
+  ovPieces[o.id]=arr; if(!lay.length) return;
+  const ar=im.naturalHeight/im.naturalWidth||1, sizePx=(o.size||0.08)*W;
+  const bx=(o.x!=null?o.x:0.5)-(o.w||0.7)/2, by=(o.y!=null?o.y:0.5)-(o.h||0.7)/2;
+  const dur=+o.dur||0, lt=time-o.start, active=time>=o.start && time<o.start+dur, src='/'+encodeURI(o.src);
+  lay.forEach((p,i)=>{ const el=arr[i]; if(el.getAttribute('src')!==src) el.setAttribute('src',src);
+    const A=animState(o, lt+p.ph, dur, W), pw=sizePx*p.sc;
+    el.style.width=pw+'px'; el.style.height=(pw*ar)+'px'; el.style.zIndex=baseZ;
+    el.style.left=((bx+p.fx*(o.w||0.7))*100)+'%'; el.style.top=((by+p.fy*(o.h||0.7))*100)+'%';
+    el.style.transform='translate(-50%,-50%) translate('+A.dx.toFixed(1)+'px,'+A.dy.toFixed(1)+'px) rotate('+((A.rot||0)+p.rot*180/Math.PI).toFixed(1)+'deg) scale('+(A.sc!=null?A.sc:1).toFixed(3)+')';
+    el.style.opacity=active?A.op:0;
+  });
+}
 const ovSpark={}; // sparkle nodes (div) per overlay id
 function renderSparkles(o, time, layer){
   const sp=(o.anims||[]).find(a=>a.type==='sparkle' && ((a.emoji&&a.emoji.trim())||a.src));
@@ -1279,6 +1312,7 @@ function renderOverlays(time){
   const ids=new Set((EDL.overlays||[]).map(o=>o.id));
   for(const id in ovEls){ if(!ids.has(id)){ ovEls[id].remove(); delete ovEls[id]; } }
   for(const id in ovSpark){ if(!ids.has(id)){ ovSpark[id].forEach(el=>el.remove()); delete ovSpark[id]; } }
+  for(const id in ovPieces){ if(!ids.has(id)){ removeSprinklePieces(id); } }
   for(const id in ovShine){ if(!ids.has(id)){ ovShine[id].remove(); delete ovShine[id]; } }
   (EDL.overlays||[]).forEach((o,idx)=>{
     migrateAnims(o);
@@ -1306,6 +1340,9 @@ function renderOverlays(time){
       if(el._shkey!==key){ const r=buildShapeCanvas(o); el.src=r.canvas.toDataURL('image/png'); el._scw=r.cw; el._sch=r.ch; el._shkey=key; }
       el.style.width=(el._scw/px[0]*100)+'%'; el.style.height=(el._sch/px[1]*100)+'%'; }
     else if(o.type==='sprinkle'){   // baked scatter of a piece image
+      if(o.perPiece && (o.anims||[]).length){   // animate each piece individually
+        el.style.display='none'; renderSprinklePieces(o, time, layer, (+o.ch||0)*1000+idx); return; }
+      removeSprinklePieces(o.id);
       const px=CANVAS_PX[EDL.settings.canvas]||[1080,1920];
       const key=[o.src,o.count,o.size,o.jitter,o.rotJitter,o.seed,o.opacity,o.w,o.h,EDL.settings.canvas].join('|');
       if(el._spkey!==key){ const r=buildSprinkleCanvas(o); el.src=r.canvas.toDataURL('image/png'); el._scw=r.cw; el._sch=r.ch; if(r.ready) el._spkey=key; }
@@ -1410,7 +1447,9 @@ function buildOvEditor(){
         <label>Opacity <input type="range" id="ovSpOp" min="0.1" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label></div>
       <div><label>Spread W <input type="range" id="ovSpW" min="0.1" max="1" step="0.02" value="${o.w||0.7}"></label>
         <label>H <input type="range" id="ovSpH" min="0.1" max="1" step="0.02" value="${o.h||0.7}"></label></div>
-      <div><button class="mini" id="ovSpSeed">🎲 Reshuffle</button></div>`;
+      <div><button class="mini" id="ovSpSeed">🎲 Reshuffle</button>
+        <label class="ck" title="Apply animations to each piece separately (with phase offsets) instead of to the whole scatter"><input type="checkbox" id="ovSpPer" ${o.perPiece?'checked':''}> animate each piece</label></div>
+      <div style="font-size:11px;color:var(--mut)">Add animations below — with “animate each piece” on, every sprinkled piece animates on its own. Keep the count modest for fast renders.</div>`;
   } else if(o.type==='arrow'){
     h+=`<div class="sec">Marker</div>
       <div><label>Type <select id="ovArSub">${ARROW_TYPES.map(s=>`<option value="${s[0]}" ${(o.subtype||'arrow')===s[0]?'selected':''}>${s[1]}</option>`).join('')}</select></label>
@@ -1469,7 +1508,7 @@ function buildOvEditor(){
       if($('#ovGradAngV')) $('#ovGradAngV').textContent=(o.gradAngle||0)+'°'; ovShapeRows(); }
     else if(o.type==='sprinkle'){ o.count=parseFloat($('#ovSpCount').value)||18; o.size=parseFloat($('#ovSpSize').value)||0.08;
       o.jitter=parseFloat($('#ovSpJit').value); o.rotJitter=parseFloat($('#ovSpRot').value); o.opacity=parseFloat($('#ovSpOp').value);
-      o.w=parseFloat($('#ovSpW').value)||0.7; o.h=parseFloat($('#ovSpH').value)||0.7; }
+      o.w=parseFloat($('#ovSpW').value)||0.7; o.h=parseFloat($('#ovSpH').value)||0.7; if($('#ovSpPer')) o.perPiece=$('#ovSpPer').checked; }
     else if(o.type==='arrow'){ o.subtype=$('#ovArSub').value; o.fillType=$('#ovArFill').value; o.color=$('#ovArColor').value;
       o.gradStart=$('#ovArFrom').value; o.gradEnd=$('#ovArTo').value; o.thickness=parseFloat($('#ovArThick').value); o.opacity=parseFloat($('#ovArOp').value);
       o.arch=parseFloat($('#ovArArch').value); o.flipH=$('#ovArFlip').checked; o.w=parseFloat($('#ovArW').value)||0.5; o.h=parseFloat($('#ovArH').value)||0.25;

@@ -575,7 +575,8 @@ def _anim_exprs(o, s, dur, W, tv="t"):
         anims = []
         if float(o.get("fadeIn", 0) or 0) > 0: anims.append({"type": "fadeIn", "d": float(o.get("fadeIn"))})
         if float(o.get("fadeOut", 0) or 0) > 0: anims.append({"type": "fadeOut", "d": float(o.get("fadeOut"))})
-    lt = "(%s-%g)" % (tv, s)
+    aphase = float(o.get("aphase", 0) or 0)   # per-piece sprinkle animation phase offset
+    lt = "((%s-%g)+%g)" % (tv, s, aphase) if aphase else "(%s-%g)" % (tv, s)
     dxs, dys, amul, rots = [], [], [], []
     for a in anims:
         ty = a.get("type")
