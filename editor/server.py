@@ -738,6 +738,9 @@ def apply_overlays(silent, overlays, W, H, tmp):
             rot_terms = ([orot] if orot else []) + ([f"{math.radians(srot):.6f}"] if abs(srot) > 1e-6 else [])
             if rot_terms:
                 rexpr = "+".join(f"({r})" for r in rot_terms)
+                # transparent margin first so the rotate doesn't smear edge pixels of overlays
+                # whose content touches the PNG boundary (caused ghost streaks on wobble/spin)
+                filt.append("pad=ceil(iw*1.08):ceil(ih*1.08):(ow-iw)/2:(oh-ih)/2:color=black@0")
                 filt.append(f"rotate='{rexpr}':c=none:ow='hypot(iw,ih)':oh='hypot(iw,ih)'")
             fc.append(f"[{ii}:v]" + ",".join(filt) + f"[oi{k}]")
             fc.append(f"[{last}][oi{k}]overlay=x='W*{ox}-w/2+({odx})':y='H*{oy}-h/2+({ody})':{en}[v{k}]")
