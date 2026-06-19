@@ -967,10 +967,11 @@ def render(edl, out_dir=None, out_name=None):
             return {"ok": False, "log": f"Can't create folder:\n{target_dir}\n{ex}"}
         out = os.path.join(target_dir, base_name)
         music = os.path.join(MUSIC_DIR, s.get("music", "1076_smile.mp3"))
+        mvol = float(s.get("musicVol", 0.5) if s.get("musicVol") is not None else 0.5)
         fade = round(total - 1.0, 2)
-        if os.path.exists(music):
+        if os.path.exists(music) and mvol > 0.001:
             af = (f"[1:a]atrim=0:{total},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.3,"
-                  f"afade=t=out:st={fade}:d=1,loudnorm=I=-16:TP=-1.5:LRA=11[a]")
+                  f"afade=t=out:st={fade}:d=1,loudnorm=I=-16:TP=-1.5:LRA=11,volume={mvol:.3f}[a]")
             r = run([FFMPEG, "-y", "-loglevel", "error", "-i", vid_src, "-i", music,
                      "-filter_complex", af, "-map", "0:v", "-map", "[a]",
                      "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest", out])

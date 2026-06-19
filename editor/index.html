@@ -53,6 +53,12 @@
   .blk.clip { background:#34415a; box-shadow:inset 0 0 0 1px #5b8cff44; cursor:pointer; }
   .blk.endcard { background:#4a3f1a; box-shadow:inset 0 0 0 1px var(--acc); cursor:pointer; }
   .blk.ov-text { background:#2c6e49; } .blk.ov-shape { background:#5d539e; } .blk.ov-image { background:#7a5230; }
+  .trk.audiolane { height:30px; background:#1a2620; }
+  .blk.audio { background:#1f5b46; box-shadow:inset 0 0 0 1px #3fae7e55; cursor:default; display:flex; align-items:center; gap:8px; padding:2px 8px; }
+  .blk.audio.empty { background:#26201a; color:var(--mut); box-shadow:inset 0 0 0 1px var(--line); }
+  .blk.audio .anm { flex:none; max-width:42%; overflow:hidden; text-overflow:ellipsis; }
+  .blk.audio .volsl { flex:1; max-width:220px; accent-color:var(--acc,#8ab81d); cursor:pointer; height:14px; }
+  .blk.audio .vpct { flex:none; font-size:10px; color:#cde9d8; }
   .blk.sel { box-shadow:0 0 0 2px var(--acc2); z-index:2; }
   .blk .hL,.blk .hR { position:absolute; top:0; bottom:0; width:7px; cursor:ew-resize; background:rgba(255,255,255,.18); } .blk .hL{left:0} .blk .hR{right:0}
   .blk .modedot { position:absolute; top:1px; right:9px; font-size:10px; line-height:1; cursor:pointer; background:#0007; border-radius:3px; padding:1px 3px; z-index:3; }
@@ -174,7 +180,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.31.0</span>
+  <span class="ver" id="appVer">v1.32.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -277,6 +283,7 @@
         <select id="setCanvas"><option value="9x16">9:16 Reels/Stories</option>
           <option value="4x5">4:5 Meta feed</option><option value="16x9">16:9 YouTube</option></select></div>
       <div class="row"><label>Music</label><select id="setMusic"></select></div>
+      <div class="row"><label>Level</label><input type="range" id="setMusicVol" min="0" max="1" step="0.05" style="flex:1"> <span id="setMusicVolV" style="font-size:11px;color:var(--mut);min-width:32px">50%</span></div>
       <div class="row"><label>End card</label><button class="mini" id="btnEndcard">🎬 Edit end card…</button></div>
     </div>
     <div class="status" id="status">Loading…</div>
@@ -743,7 +750,7 @@ function playTimeline(){
   if(!EDL.segments.length) return; stop(); tlPlaying=true; pbToken++;
   $('#btnPlayTl').textContent='❚❚ Stop'; $('#endcard').style.display='none';
   if(MAN.music.includes(EDL.settings.music)){ music.src='/sources/music/'+encodeURIComponent(EDL.settings.music);
-    music.currentTime=0; music.volume=0.5; music.play().catch(()=>{}); }
+    music.currentTime=0; music.volume=musicVol(); music.play().catch(()=>{}); }
   const ec=normEndcard(EDL.settings);
   const vidTotal=layout().vidTotal, endDur=(ec.enabled?ec.dur:0), total=vidTotal+endDur;
   if(playhead>=total-0.05) playhead=0;                // restart only if parked at the very end (past the end card)
@@ -849,7 +856,16 @@ function chooseCanvas(c){ EDL.settings.canvas=c; if($('#setCanvas')) $('#setCanv
   sizeStage(); updateTotal(); if(sel>=0&&EDL.segments[sel]) applyFraming(EDL.segments[sel]); renderOverlays(playhead); renderTracks(); }
 $('#setCanvas').onchange=e=>chooseCanvas(e.target.value);
 document.querySelectorAll('.arbtn').forEach(b=>b.onclick=()=>chooseCanvas(b.dataset.ar));
-$('#setMusic').onchange=e=>{ EDL.settings.music=e.target.value; };
+$('#setMusic').onchange=e=>{ EDL.settings.music=e.target.value; renderTracks(); };
+function musicVol(){ return EDL.settings.musicVol!=null ? EDL.settings.musicVol : 0.5; }
+function setMusicVol(v){ EDL.settings.musicVol=Math.max(0,Math.min(1,v)); try{music.volume=musicVol();}catch(_){}
+  const p=Math.round(musicVol()*100)+'%';   // update in place (don't rebuild the slider mid-drag)
+  if($('#setMusicVol') && $('#setMusicVol').value!=String(musicVol())) $('#setMusicVol').value=musicVol();
+  if($('#setMusicVolV')) $('#setMusicVolV').textContent=p;
+  const lv=document.querySelector('#tlTracks .audiolane .volsl'); if(lv && lv.value!=String(musicVol())) lv.value=musicVol();
+  const lp=document.querySelector('#tlTracks .audiolane .vpct'); if(lp) lp.textContent=p;
+  histSchedule(); }
+$('#setMusicVol').oninput=e=>setMusicVol(parseFloat(e.target.value));
 
 /* ---------- end-card modal ---------- */
 function ecBgModeUI(){ const m=$('#ecBgMode').value; $('#ecGradRow').style.display=(m==='gradient')?'':'none'; $('#ecColorRow').style.display=(m==='color')?'':'none'; }
@@ -1418,6 +1434,23 @@ function renderTracks(){
     }
     tr.appendChild(row);
   }
+  // music audio lane (spans the whole timeline; inline level control)
+  const arow=document.createElement('div'); arow.className='trk audiolane';
+  const mname=EDL.settings.music||'';
+  if(mname && MAN.music && MAN.music.includes(mname)){
+    const bar=document.createElement('div'); bar.className='blk audio'; bar.style.left='0%'; bar.style.width='100%';
+    const nm=document.createElement('span'); nm.className='anm'; nm.textContent='🎵 '+mname.replace(/\.(mp3|m4a|wav)$/i,''); bar.appendChild(nm);
+    const vol=document.createElement('input'); vol.type='range'; vol.min=0; vol.max=1; vol.step=0.05; vol.value=musicVol(); vol.className='volsl'; vol.title='Music level';
+    vol.onpointerdown=e=>e.stopPropagation(); vol.onclick=e=>e.stopPropagation();
+    vol.oninput=()=>setMusicVol(parseFloat(vol.value));
+    bar.appendChild(vol);
+    const vp=document.createElement('span'); vp.className='vpct'; vp.textContent=Math.round(musicVol()*100)+'%'; bar.appendChild(vp);
+    arow.appendChild(bar);
+  } else {
+    const none=document.createElement('div'); none.className='blk audio empty'; none.style.left='0%'; none.style.width='100%'; none.textContent='🎵 no music — pick a track in Settings'; arow.appendChild(none);
+  }
+  const al=document.createElement('div'); al.className='lab'; al.textContent='🎵 Audio'; arow.appendChild(al);
+  tr.appendChild(arow);
   positionPlayhead(); histSchedule();
 }
 // Build one overlay bar element on its channel lane (drag to move/retime/change channel).
@@ -1672,7 +1705,9 @@ function applyEDL(edl){
   normEndcard(s);   // migrate/normalize end-card settings
   const ms=$('#setMusic'); ms.innerHTML=MAN.music.map(m=>`<option ${m===s.music?'selected':''}>${m}</option>`).join('');
   if(!MAN.music.includes(s.music)) s.music=MAN.music[0]||'';
+  if(s.musicVol==null) s.musicVol=0.5;
   $('#setMusic').value=s.music; $('#setCanvas').value=s.canvas;
+  if($('#setMusicVol')){ $('#setMusicVol').value=s.musicVol; $('#setMusicVolV').textContent=Math.round(s.musicVol*100)+'%'; }
   document.querySelectorAll('.arbtn').forEach(b=>b.classList.toggle('on', b.dataset.ar===s.canvas));
   const _px=CANVAS_PX[s.canvas]||[1080,1920]; if($('#arDim')) $('#arDim').textContent=_px[0]+'×'+_px[1];
   sel = EDL.segments.length?0:-1;
