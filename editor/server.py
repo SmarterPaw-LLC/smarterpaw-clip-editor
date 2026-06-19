@@ -657,7 +657,11 @@ def apply_overlays(silent, overlays, W, H, tmp):
     overlays = sorted(overlays, key=lambda o: int(o.get("ch", 0) or 0))   # higher channel composited later = on top (stable within a channel)
     inputs = ["-i", silent]
     fc = []
-    last = "0:v"
+    # Normalize the base to clean CFR/timestamps first. The concatenated video can carry
+    # duplicate/irregular timestamps from tpad freeze-fill, which makes the overlay+geq
+    # compositing pass pathologically slow (minutes). fps=30 + reset PTS fixes that.
+    fc.append("[0:v]fps=30,setpts=PTS-STARTPTS[base0]")
+    last = "base0"
     ii = 1  # next ffmpeg input index for image/shape files
     for k, o in enumerate(overlays):
         t = o.get("type")
@@ -981,7 +985,11 @@ def render(edl, out_dir=None, out_name=None, progress=None):
             f.write("\n".join(lines))
         silent = os.path.join(tmp, "silent.mp4")
         prog("Joining clips…", 70)
-        r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", listf, "-c", "copy", silent])
+        # Re-encode the concat (not -c copy): stream-copying tpad freeze-fill segments yields a file
+        # that plays fine but is filter-HOSTILE — the overlay/geq pass crawls (90s+ vs 3s). A clean
+        # CFR re-encode here makes the overlay compositing fast again.
+        r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", listf,
+                 "-vf", "fps=30,format=yuv420p"] + ENC + [silent])
         if r.returncode != 0:
             return {"ok": False, "log": f"concat failed:\n{r.stderr[-1500:]}"}
         # free-floating overlays (text/images) over the whole timeline
