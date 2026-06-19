@@ -32,6 +32,9 @@ ID_RE = re.compile(r"\[([A-Za-z0-9_-]{11})\]")
 
 _probe_cache = {}
 _manifest_lock = threading.Lock()
+_render_jobs = {}            # job_id -> {stage, pct, done, result}
+_render_lock = threading.Lock()
+_render_seq = [0]
 
 
 def run(cmd):
@@ -857,7 +860,11 @@ def flatten_segments(edl):
     return flat, vid_total
 
 
-def render(edl, out_dir=None, out_name=None):
+def render(edl, out_dir=None, out_name=None, progress=None):
+    def prog(stage, pct):
+        if progress is not None:
+            progress["stage"] = stage; progress["pct"] = int(pct)
+    prog("Preparing…", 2)
     s = edl.get("settings", {})
     canvas = s.get("canvas", "9x16")
     W, H = CANVAS.get(canvas, CANVAS["9x16"])
@@ -886,7 +893,9 @@ def render(edl, out_dir=None, out_name=None):
         if not flat:
             return {"ok": False, "log": "Nothing to render."}
         last_real = max((k for k, e in enumerate(flat) if not e.get("black")), default=-1)
+        n_flat = len(flat)
         for idx, seg in enumerate(flat):
+            prog(f"Rendering clip {idx+1} of {n_flat}…", 5 + int(60 * idx / max(1, n_flat)))
             if seg.get("black"):            # uncovered span (gap, or black under upper clips) → black filler
                 d = max(0.05, float(seg.get("dur", 0.1)))
                 gp = os.path.join(tmp, f"blk_{idx:02d}.mp4")
@@ -969,10 +978,13 @@ def render(edl, out_dir=None, out_name=None):
         with open(listf, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
         silent = os.path.join(tmp, "silent.mp4")
+        prog("Joining clips…", 70)
         r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", listf, "-c", "copy", silent])
         if r.returncode != 0:
             return {"ok": False, "log": f"concat failed:\n{r.stderr[-1500:]}"}
         # free-floating overlays (text/images) over the whole timeline
+        n_ov = len([o for o in (edl.get("overlays") or []) if isinstance(o, dict)])
+        prog((f"Compositing {n_ov} overlay(s) — this is the slow step…" if n_ov else "Finishing…"), 78)
         vid_src, ov_err = apply_overlays(silent, edl.get("overlays", []), W, H, tmp)
         if vid_src is None:
             return {"ok": False, "log": f"overlays failed:\n{ov_err}"}
@@ -988,6 +1000,7 @@ def render(edl, out_dir=None, out_name=None):
         music = os.path.join(MUSIC_DIR, s.get("music", "1076_smile.mp3"))
         mvol = float(s.get("musicVol", 0.5) if s.get("musicVol") is not None else 0.5)
         fade = round(total - 1.0, 2)
+        prog("Adding music + finalizing…", 92)
         if os.path.exists(music) and mvol > 0.001:
             af = (f"[1:a]atrim=0:{total},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.3,"
                   f"afade=t=out:st={fade}:d=1,loudnorm=I=-16:TP=-1.5:LRA=11,volume={mvol:.3f}[a]")
@@ -1046,6 +1059,16 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path in ("/", "/index.html"):
             return self._serve_file(os.path.join(EDITOR, "index.html"))
+        if path == "/api/render-progress":
+            qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            jid = (qs.get("job") or [""])[0]
+            job = _render_jobs.get(jid)
+            if not job:
+                return self._json({"error": "no such job"}, 404)
+            out = {"stage": job.get("stage"), "pct": job.get("pct", 0), "done": job.get("done", False)}
+            if job.get("done"):
+                out["result"] = job.get("result")
+            return self._json(out)
         if path == "/api/srcsig":
             # cheap fingerprint of the source library so the UI can auto-refresh when clips change
             n = 0; mx = 0.0
@@ -1151,10 +1174,22 @@ class Handler(BaseHTTPRequestHandler):
             out_dir = data.pop("_outDir", None) or None
             out_name = data.pop("_outName", None) or None
             save_edl(data)
-            try:
-                return self._json(render(data, out_dir, out_name))
-            except Exception as e:
-                return self._json({"ok": False, "log": repr(e)}, 500)
+            with _render_lock:
+                _render_seq[0] += 1; jid = str(_render_seq[0])
+                job = {"stage": "Starting…", "pct": 0, "done": False}
+                _render_jobs[jid] = job
+                for old in [k for k in _render_jobs if k != jid and _render_jobs[k].get("done")]:
+                    _render_jobs.pop(old, None)   # keep the table small
+
+            def _work(d=data, od=out_dir, on=out_name, j=job):
+                try:
+                    j["result"] = render(d, od, on, progress=j)
+                except Exception as e:
+                    j["result"] = {"ok": False, "log": repr(e)}
+                finally:
+                    j["pct"] = 100; j["done"] = True
+            threading.Thread(target=_work, daemon=True).start()
+            return self._json({"ok": True, "job": jid})
         if path == "/api/ai-build":
             clip_ids = data.get("clips") or []
             if not clip_ids:

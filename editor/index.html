@@ -201,7 +201,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.36.0</span>
+  <span class="ver" id="appVer">v1.37.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -1734,15 +1734,32 @@ $('#exGo').onclick=async()=>{
   if($('#exStamp').checked){ const d=new Date(), p=n=>String(n).padStart(2,'0');
     name+='_'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'-'+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds()); }
   name+='_'+canvas;
-  const go=$('#exGo'); go.disabled=true; go.textContent='⏳ Rendering…'; $('#exStatus').textContent='Rendering '+canvas+'… (~10–30s)';
+  const go=$('#exGo'); go.disabled=true; go.textContent='⏳ Rendering…';
+  const t0=Date.now(); const el=fmt2=>{ const s=Math.round((Date.now()-t0)/1000); return s+'s'; };
+  const showProg=(stage,pct)=>{ $('#exStatus').innerHTML='<div style="margin-bottom:6px">'+(stage||'Rendering…')+' <span style="color:var(--mut)">· '+el()+' elapsed</span></div>'+
+    '<div style="height:8px;background:#0006;border-radius:5px;overflow:hidden"><div style="height:100%;width:'+Math.max(3,Math.min(100,pct||0))+'%;background:var(--acc,#8ab81d);transition:width .3s"></div></div>'; };
+  showProg('Preparing…',2);
   const baked=await bakeStickersForRender(EDL);   // bake sticker text to the same canvas PNG the preview uses
   const body=Object.assign({},baked,{_outDir:dir,_outName:name});
-  try{ const r=await api('/api/render',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(r.ok){ const link=r.output?(' · <a class="dl" href="'+r.output+'" target="_blank">open</a>'):'';
-      $('#exStatus').innerHTML='✅ Saved <b>'+r.name+'</b> ('+r.total+'s)<br><span style="color:var(--mut);word-break:break-all">'+r.path+'</span>'+link;
+  const finish=r=>{ if(r&&r.ok){ const link=r.output?(' · <a class="dl" href="'+r.output+'" target="_blank">open</a>'):'';
+      $('#exStatus').innerHTML='✅ Saved <b>'+r.name+'</b> ('+r.total+'s, '+el()+')<br><span style="color:var(--mut);word-break:break-all">'+r.path+'</span>'+link;
       $('#status').innerHTML='✅ '+r.name+link; toast('Render complete'); }
-    else { $('#exStatus').textContent='❌ '+(r.log||'render failed'); toast('Render failed'); }
-  }catch(e){ $('#exStatus').textContent='❌ '+e; } finally{ go.disabled=false; go.textContent='▶ Render'; }
+    else { $('#exStatus').textContent='❌ '+((r&&r.log)||'render failed'); toast('Render failed'); }
+    go.disabled=false; go.textContent='▶ Render'; };
+  try{
+    const start=await api('/api/render',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!start||!start.job){ finish(start||{ok:false,log:'could not start render'}); return; }
+    const job=start.job; let stop=false;
+    const poll=async()=>{ if(stop) return;
+      try{ const p=await api('/api/render-progress?job='+job);
+        if(p && p.done){ stop=true; finish(p.result); return; }
+        if(p && p.error){ stop=true; finish({ok:false,log:p.error}); return; }
+        showProg(p&&p.stage, p&&p.pct);
+      }catch(e){ showProg('Working…',null); }
+      setTimeout(poll, 600);
+    };
+    poll();
+  }catch(e){ finish({ok:false,log:''+e}); }
 };
 $('#btnReload').onclick=()=>boot(true);
 
