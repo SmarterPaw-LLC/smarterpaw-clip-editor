@@ -180,7 +180,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.32.1</span>
+  <span class="ver" id="appVer">v1.33.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -1012,8 +1012,8 @@ function buildStickerCanvas(o){
   ctx.save(); ctxSet(ctx); ctx.fillStyle=grad(ctx); rowPos.forEach(rp=>ctx.fillText(rp.text,X,rp.y)); ctx.restore();   // pass 4: gradient
   return {canvas:cv, cw, ch:totalH, exportW};
 }
-// Plain-text overlay → canvas (matches the preview look) so a ROTATED text overlay renders rotated
-// (drawtext can't rotate; we bake to PNG and let the server's rotate filter handle it).
+// Plain-text overlay → canvas matching the PREVIEW exactly (so render == preview: same soft shadow,
+// no hard outline, button background). Baked to PNG for render; also lets rotation/pop-in apply.
 function buildTextOverlayCanvas(o){
   const exportW=(CANVAS_PX[EDL.settings.canvas]||[1080,1920])[0];
   const size=Math.max(8,(o.size||0.06)*exportW), fam=(FONTS[o.font]||FONTS.cooper), font='800 '+size+'px '+fam;
@@ -1021,16 +1021,26 @@ function buildTextOverlayCanvas(o){
   const m=document.createElement('canvas').getContext('2d'); m.font=font;
   const tw=Math.max(1,m.measureText(text).width);
   const rr=(c,x,y,w,hh,r)=>{ r=Math.min(r,w/2,hh/2); c.beginPath(); c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+hh,r); c.arcTo(x+w,y+hh,x,y+hh,r); c.arcTo(x,y+hh,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath(); };
+  const sh=o.shadow||{}, useSh=!!sh.on;
+  const shCol=hexA(sh.color||'#000000', sh.opacity!=null?sh.opacity:0.5);
+  const shBlur=(sh.blur!=null?sh.blur:0.01)*exportW, shDx=(sh.dx!=null?sh.dx:0.004)*exportW, shDy=(sh.dy!=null?sh.dy:0.006)*exportW;
   let cw,ch,cv,c;
-  if(o.button){ const padX=size*0.55, padY=size*0.38, rad=size*0.3;
-    cw=Math.ceil(tw+padX*2); ch=Math.ceil(size*1.25+padY*2); cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; c=cv.getContext('2d'); c.font=font;
-    c.fillStyle=o.bg||'#f07830'; rr(c,0,0,cw,ch,rad); c.fill();
+  if(o.button){   // preview: bg rect + padding + radius, NO text shadow (plus optional drop-shadow)
+    const padX=size*0.55, padY=size*0.38, rad=size*0.3;
+    const pad=Math.ceil(useSh ? (shBlur+Math.max(Math.abs(shDx),Math.abs(shDy))) : 0)+4;
+    cw=Math.ceil(tw+padX*2+pad*2); ch=Math.ceil(size*1.25+padY*2+pad*2);
+    cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; c=cv.getContext('2d'); c.font=font;
+    const bw=cw-pad*2, bh=ch-pad*2;
+    if(useSh){ c.save(); c.shadowColor=shCol; c.shadowBlur=shBlur; c.shadowOffsetX=shDx; c.shadowOffsetY=shDy; c.fillStyle=o.bg||'#f07830'; rr(c,pad,pad,bw,bh,rad); c.fill(); c.restore(); }
+    c.fillStyle=o.bg||'#f07830'; rr(c,pad,pad,bw,bh,rad); c.fill();
     c.fillStyle=o.color||'#ffffff'; c.textAlign='center'; c.textBaseline='middle'; c.fillText(text,cw/2,ch/2+size*0.03);
-  } else { const pad=Math.ceil(size*0.7);
-    cw=Math.ceil(tw+pad*2); ch=Math.ceil(size*1.5+pad*2); cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; c=cv.getContext('2d'); c.font=font;
-    c.textAlign='center'; c.textBaseline='middle';
-    c.shadowColor='rgba(0,0,0,0.6)'; c.shadowBlur=size*0.12; c.shadowOffsetX=0; c.shadowOffsetY=size*0.08;
-    c.fillStyle=o.color||'#ffffff'; c.fillText(text,cw/2,ch/2);
+  } else {   // preview: soft drop shadow (CSS textShadow ~0 2px 6px on the scaled-down stage) + optional drop-shadow
+    const softBlur=exportW*0.012, softDy=exportW*0.0045;
+    const pad=Math.ceil(Math.max(softBlur+softDy, useSh?(shBlur+Math.abs(shDx)+Math.abs(shDy)):0))+6;
+    cw=Math.ceil(tw+pad*2); ch=Math.ceil(size*1.5+pad*2);
+    cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; c=cv.getContext('2d'); c.font=font; c.textAlign='center'; c.textBaseline='middle';
+    if(useSh){ c.save(); c.shadowColor=shCol; c.shadowBlur=shBlur; c.shadowOffsetX=shDx; c.shadowOffsetY=shDy; c.fillStyle=o.color||'#ffffff'; c.fillText(text,cw/2,ch/2); c.restore(); }
+    c.save(); c.shadowColor='rgba(0,0,0,0.55)'; c.shadowBlur=softBlur; c.shadowOffsetX=0; c.shadowOffsetY=softDy; c.fillStyle=o.color||'#ffffff'; c.fillText(text,cw/2,ch/2); c.restore();
   }
   return {canvas:cv, cw, exportW};
 }
@@ -1045,7 +1055,7 @@ async function bakeStickersForRender(edl){
         if(up&&up.ok){ out.push({id:o.id,type:'image',src:up.src,scale:r.cw/r.exportW,x:o.x,y:o.y,start:o.start,dur:o.dur,ch:o.ch,rot:o.rot,anims:o.anims}); continue; }
       }catch(e){}
     }
-    else if(o.type==='text' && o.style!=='sticker' && (+o.rot||0)!==0 && (o.text||'').trim()){
+    else if(o.type==='text' && o.style!=='sticker' && (o.text||'').trim()){   // always bake plain text so render == preview
       try{ const r=buildTextOverlayCanvas(o); const data=r.canvas.toDataURL('image/png');
         const up=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'text_'+o.id+'.png',data})});
         if(up&&up.ok){ out.push({id:o.id,type:'image',src:up.src,scale:r.cw/r.exportW,x:o.x,y:o.y,start:o.start,dur:o.dur,ch:o.ch,rot:o.rot,anims:o.anims}); continue; }

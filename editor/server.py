@@ -728,6 +728,12 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     rex, gex, bex = "r(X,Y)", "g(X,Y)", "b(X,Y)"
                 aex = "alpha(X,Y)*(%s)" % amT if has_op else "alpha(X,Y)"
                 filt.append(f"geq=r='{rex}':g='{gex}':b='{bex}':a='{aex}'")
+            pop = next((a for a in (o.get("anims") or []) if a.get("type") == "popIn"), None)
+            if pop:                                                      # real scale-pop via time-varying scale (eval=frame, t = global)
+                d = max(0.01, float(pop.get("d", 0.45)))
+                kk = "((t-%g)/%g)" % (s, d); eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (kk, kk)
+                pops = "if(between(t,%g,%g),max(0.05,%s),1)" % (s, s + d, eb)
+                filt.append(f"scale=w='iw*({pops})':h='ih*({pops})':eval=frame")
             srot = float(o.get("rot", 0) or 0)                          # static rotation (degrees) + any anim rotation
             rot_terms = ([orot] if orot else []) + ([f"{math.radians(srot):.6f}"] if abs(srot) > 1e-6 else [])
             if rot_terms:
