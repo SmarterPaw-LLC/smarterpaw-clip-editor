@@ -622,6 +622,13 @@ def _anim_exprs(o, s, dur, W, tv="t"):
             sp = float(a.get("speed", 2)); amul.append("gte(sin(2*PI*%g*%s),0)" % (sp, lt))
         elif ty == "wiggle":
             amp = float(a.get("amp", 8)) * math.pi / 180.0; sp = float(a.get("speed", 2)); rots.append("%g*sin(2*PI*%g*%s)" % (amp, sp, lt))
+        elif ty == "gifwobble":   # low-framerate stepped wobble (GIF sticker look); time quantized via floor
+            fps = max(2.0, float(a.get("fps", 8))); amp = float(a.get("amp", 0.6)); sp = float(a.get("speed", 2))
+            tq = "(floor(%s*%g)/%g)" % (lt, fps, fps)
+            rots.append("%g*sin(2*PI*%g*%s)" % (math.radians(amp * 10), sp, tq))
+            j = amp * 0.01 * W
+            dxs.append("%g*sin(2*PI*%g*%s+1.7)" % (j, sp * 1.3, tq))
+            dys.append("%g*cos(2*PI*%g*%s+0.6)" % (j, sp * 0.9, tq))
         elif ty == "spin":
             sp = float(a.get("speed", 0.5)); sign = -1 if a.get("dir") == "ccw" else 1; rots.append("%g*2*PI*%g*%s" % (sign, sp, lt))
     dx = "+".join("(%s)" % x for x in dxs) if dxs else "0"

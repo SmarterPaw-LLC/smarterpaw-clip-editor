@@ -201,7 +201,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.44.1</span>
+  <span class="ver" id="appVer">v1.45.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -1011,6 +1011,7 @@ const ANIM_DEFS={
   popIn:   {label:'Pop in',        def:{d:0.45},           ctrls:[['d','Seconds','num',0.15,1.5,0.05]]},
   blink:   {label:'Blink',         def:{speed:2},          ctrls:[['speed','Speed','range',0.5,8,0.5]]},
   wiggle:  {label:'Wiggle (rotate)',png:true,def:{amp:8,speed:2},ctrls:[['amp','Degrees','range',1,30,1],['speed','Speed','range',0.2,6,0.2]]},
+  gifwobble:{label:'GIF sticker wobble',png:true,def:{fps:8,amp:0.6,speed:2},ctrls:[['fps','Frame rate','range',3,15,1],['amp','Amount','range',0.1,1.5,0.05],['speed','Wobble speed','range',0.5,4,0.1]]},
   spin:    {label:'Spin',          png:true,def:{speed:0.5,dir:'cw'},ctrls:[['speed','Rev/sec','range',0.05,2,0.05],['dir','Direction','sel',['cw','ccw']]]},
   sparkle: {label:'Sparkle',def:{emoji:'✨',src:'',count:6,size:0.06,spread:0.12,speed:1.2},ctrls:[['emoji','Emoji','text'],['src','or PNG','img'],['count','Count','range',1,16,1],['size','Size','range',0.02,0.16,0.005],['spread','Spread','range',0.02,0.35,0.01],['speed','Twinkle','range',0.3,4,0.1]]},
   shimmer: {label:'Shimmer / glint',png:true,def:{amount:0.7,width:0.22,speed:1.0},ctrls:[['amount','Brightness','range',0.1,1,0.05],['width','Band','range',0.08,0.5,0.02],['speed','Speed','range',0.2,3,0.1]]},
@@ -1030,6 +1031,10 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1; const T=Math.m
   (o.anims||[]).forEach(a=>{ switch(a.type){
     case 'blink': { const sp=a.speed||2; op*=(Math.sin(2*Math.PI*sp*T)>=0)?1:0; break; }
     case 'wiggle': { const amp=a.amp!=null?a.amp:8, sp=a.speed||2; rot+=amp*Math.sin(2*Math.PI*sp*T); break; }
+    case 'gifwobble': {   // sticker-style wobble sampled at a low framerate (stepped = GIF look)
+      const fps=Math.max(2,a.fps||8), amp=(a.amp!=null?a.amp:0.6), sp=a.speed||2, tq=Math.floor(T*fps)/fps;
+      rot += amp*10*Math.sin(2*Math.PI*sp*tq); const j=amp*0.01*W;
+      dx += j*Math.sin(2*Math.PI*sp*1.3*tq+1.7); dy += j*Math.cos(2*Math.PI*sp*0.9*tq+0.6); break; }
     case 'spin': { const sp=a.speed||0.5, sign=(a.dir==='ccw')?-1:1; rot+=sign*360*sp*T; break; }
     case 'fadeIn': { const d=Math.max(0.01,a.d||0.5); op*=Math.max(0,Math.min(1,T/d)); break; }
     case 'fadeOut': { const d=Math.max(0.01,a.d||0.5); op*=Math.max(0,Math.min(1,(dur-T)/d)); break; }
