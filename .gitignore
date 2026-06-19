@@ -51,3 +51,6 @@ edl.json
 
 # AI-build handoffs (clip selections + briefs; working data, not source)
 ai-builds/
+
+# web launcher build output (large zips)
+webdist/release/
