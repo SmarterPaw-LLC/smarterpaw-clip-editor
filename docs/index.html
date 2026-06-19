@@ -4,21 +4,35 @@
 <style>
  body{font-family:system-ui,Segoe UI,Arial;background:#15171c;color:#eee;margin:0;
    display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center}
- .card{max-width:520px;padding:32px}
+ .card{max-width:600px;padding:32px}
  h1{color:#8ab81d;margin:0 0 6px} .ver{color:#888;font-size:13px}
- a.btn{display:inline-block;margin:22px 0 10px;background:#f0a830;color:#111;font-weight:700;
-   text-decoration:none;padding:14px 26px;border-radius:10px;font-size:17px}
- ol{text-align:left;color:#cfd3da;line-height:1.7;margin-top:18px}
- code{background:#0006;padding:1px 6px;border-radius:5px}
+ h2{font-size:15px;color:#f0a830;margin:26px 0 8px}
+ .cmd{display:flex;gap:8px;align-items:stretch;margin:10px 0}
+ .cmd code{flex:1;background:#0008;border:1px solid #333;border-radius:8px;padding:12px 14px;
+   text-align:left;font-size:12.5px;color:#cfe6a0;overflow:auto;white-space:nowrap}
+ button.copy{background:#f0a830;color:#111;font-weight:700;border:0;border-radius:8px;padding:0 16px;cursor:pointer}
+ ol{text-align:left;color:#cfd3da;line-height:1.7;margin-top:10px}
+ a.alt{color:#9ab;font-size:13px} code.k{background:#0006;padding:1px 6px;border-radius:5px}
+ .hr{border-top:1px solid #2a2d33;margin:26px 0}
 </style></head><body><div class="card">
  <h1>SmarterClip Editor</h1>
- <div class="ver">latest version 1.46.0</div>
- <a class="btn" href="SmarterClip.bat" download>⬇ Download launcher</a>
+ <div class="ver">latest version 1.46.0 · runs locally on your PC — your clips never leave your machine</div>
+
+ <h2>Install &amp; run (recommended)</h2>
  <ol>
-  <li>Click <b>Download launcher</b> (saves <code>SmarterClip.bat</code>).</li>
-  <li>Double-click it. First run installs what's needed and downloads the app.</li>
-  <li>It opens the editor in your browser. Keep the black window open while editing.</li>
-  <li>Every time you run it, it auto-updates to the newest version.</li>
+  <li>Press <b>Windows key</b>, type <b>PowerShell</b>, press <b>Enter</b>.</li>
+  <li>Paste this and press <b>Enter</b>:</li>
  </ol>
- <p class="ver">Runs locally on your PC — your clips never leave your machine.</p>
+ <div class="cmd">
+  <code id="cmd">iex (irm https://smarterpaw-llc.github.io/smarterpaw-clip-editor/launcher.ps1)</code>
+  <button class="copy" onclick="navigator.clipboard.writeText(document.getElementById('cmd').textContent);this.textContent='Copied'">Copy</button>
+ </div>
+ <div class="ver">First run installs Python/ffmpeg if needed and downloads the app, then opens the editor.
+  Each run auto-updates to the newest version. Keep the PowerShell window open while editing.</div>
+
+ <div class="hr"></div>
+ <h2>Prefer a double-click file?</h2>
+ <div class="ver">Download <a class="alt" href="SmarterClip.bat" download>SmarterClip.bat</a> and run it.
+  Windows may warn (it's an unrecognized file): on the download click <code class="k">Keep</code>,
+  and if you see "Windows protected your PC" click <code class="k">More info → Run anyway</code>.</div>
 </div></body></html>

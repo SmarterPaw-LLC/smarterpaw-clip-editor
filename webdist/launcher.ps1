@@ -5,7 +5,7 @@
 
 $ErrorActionPreference = 'Stop'
 $BASE = $env:SCBASE
-if (-not $BASE) { Write-Host 'No update URL (SCBASE) set. Use SmarterClip.bat to launch.' -ForegroundColor Red; Read-Host 'Press Enter to exit'; exit 1 }
+if (-not $BASE) { $BASE = '__BASE__' }   # baked default so the one-line PowerShell installer works without the .bat
 $BASE = $BASE.TrimEnd('/')
 
 $Install = Join-Path $env:LOCALAPPDATA 'SmarterClip'
