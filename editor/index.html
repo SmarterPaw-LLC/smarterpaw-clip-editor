@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Meowi Clip Editor</title>
+<title>SmarterClip Editor</title>
 <style>
   @font-face{ font-family:'Cooper Std Black'; src:url('/editor/fonts/CooperBlack-Std.otf') format('opentype'); font-display:swap; }
   @font-face{ font-family:'Meowijuana'; src:url('/editor/fonts/meowijuana.ttf') format('truetype'); font-display:swap; }
@@ -52,7 +52,7 @@
   .blk { position:absolute; top:3px; bottom:3px; border-radius:4px; font-size:10px; color:#fff; overflow:hidden; white-space:nowrap; cursor:grab; box-sizing:border-box; padding:2px 6px; min-width:8px; }
   .blk.clip { background:#34415a; box-shadow:inset 0 0 0 1px #5b8cff44; cursor:pointer; }
   .blk.endcard { background:#4a3f1a; box-shadow:inset 0 0 0 1px var(--acc); cursor:pointer; }
-  .blk.ov-text { background:#2c6e49; } .blk.ov-shape { background:#5d539e; } .blk.ov-image { background:#7a5230; } .blk.ov-sprinkle { background:#8a5a2b; }
+  .blk.ov-text { background:#2c6e49; } .blk.ov-shape { background:#5d539e; } .blk.ov-image { background:#7a5230; } .blk.ov-sprinkle { background:#8a5a2b; } .blk.ov-arrow { background:#9e4b3a; }
   .trk.audiolane { height:30px; background:#1a2620; }
   .blk.audio { background:#1f5b46; box-shadow:inset 0 0 0 1px #3fae7e55; cursor:default; display:flex; align-items:center; gap:8px; padding:2px 8px; }
   .blk.audio.empty { background:#26201a; color:var(--mut); box-shadow:inset 0 0 0 1px var(--line); }
@@ -200,8 +200,8 @@
 </head>
 <body>
 <header>
-  <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.39.1</span>
+  <h1>🐾 SmarterClip Editor</h1>
+  <span class="ver" id="appVer">v1.40.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -390,7 +390,7 @@
             <button class="mini" id="ovImgClip">🎨 Clip art…</button>
             <button class="mini" id="ovImgLib">📚 Library…</button>
           </div></span>
-        <button class="mini" id="ovAddSprinkle">✨ Sprinkle</button>
+        <button class="mini" id="ovAddSprinkle">✨ Sprinkle</button> <button class="mini" id="ovAddArrow">➴ Arrow</button>
         <input type="file" id="ovFile" accept="image/*" style="display:none"></div>
       <div style="font-size:11px;color:var(--mut)">Tip: scrub the timeline to where an element should appear, then drag it on the preview to position it.</div>
       <hr>
@@ -596,10 +596,10 @@ function buildEndcard(ec){
 /* ---------- bin ---------- */
 function addClipToTimeline(id, atIdx){ const c=MAN.byId[id]; if(!c) return toast('Clip not found');
   histCommit();
-  const seg={id, in:0, dur:Math.min(3, c.dur||3)||2, cap:'', zoom:1, anchor:'center'};
-  if(atIdx===undefined) atIdx=(sel>=0 && sel<EDL.segments.length)?sel+1:null;   // default: insert right after the selected clip
-  if(atIdx==null || atIdx<0 || atIdx>EDL.segments.length){ EDL.segments.push(seg); sel=EDL.segments.length-1; }
-  else { EDL.segments.splice(atIdx,0,seg); sel=atIdx; }
+  const dur=Math.min(3, c.dur||3)||2;
+  const seg={id, in:0, dur, cap:'', zoom:1, anchor:'center'};
+  if(!(EDL.segments||[]).length){ EDL.segments=[seg]; sel=0; }   // first clip → base track (ch0)
+  else { const p=placeAtPlayhead(dur, 1); seg.ch=p.ch; seg.t0=p.t0; EDL.segments.push(seg); sel=EDL.segments.length-1; }   // else at playhead on topmost free upper channel
   renderTimeline(); selectSeg(sel); histCommit(); toast('Added “'+(c.label||id)+'”'); }
 function renderBin(){
   const bin=$('#bin'); bin.innerHTML='';
@@ -635,6 +635,17 @@ function chCount(){ let n=Math.max(1, +EDL.channels||1);   // channels hold both
   (EDL.segments||[]).forEach(s=>{ n=Math.max(n,(+s.ch||0)+1); });
   (EDL.overlays||[]).forEach(o=>{ n=Math.max(n,(+o.ch||0)+1); }); return n; }
 function chEmpty(ch){ return !(EDL.segments||[]).some(s=>(+s.ch||0)===ch) && !(EDL.overlays||[]).some(o=>(+o.ch||0)===ch); }
+// True if channel `ch` has no clip/overlay overlapping the time window [a,b].
+function chFreeAt(ch, a, b){
+  const segHit=(typeof layout==='function') && layout().all.some(o=>o.ch===ch && o.start<b && o.end>a);
+  const ovHit=(EDL.overlays||[]).some(o=>(+o.ch||0)===ch && (+o.start||0)<b && (+o.start||0)+(+o.dur||0)>a);
+  return !segHit && !ovHit;
+}
+// Pick a spot at the PLAYHEAD on the topmost channel that's free for `dur` seconds (else a new top channel).
+function placeAtPlayhead(dur, minCh){ minCh=minCh||0; const t=Math.max(0,Math.round((playhead||0)*100)/100);
+  for(let ch=chCount()-1; ch>=minCh; ch--){ if(chFreeAt(ch, t, t+Math.max(0.2,dur))) return {ch, t0:t}; }
+  const nc=chCount(); EDL.channels=nc+1; return {ch:nc, t0:t};
+}
 // Per-clip playback speed. dur stays SOURCE seconds; timeline footprint = dur/speed.
 function segSpeed(s){ return Math.max(0.1, Math.min(10, +s.speed||1)); }
 function segLen(s){ return Math.max(0.05, (Math.max(0.05,+s.dur||1))/segSpeed(s)); }   // timeline span
@@ -1155,6 +1166,30 @@ function buildSprinkleCanvas(o){
   }
   return {canvas:cv, cw, ch, exportW:W, ready:true};
 }
+// ---- Arrow / circle / underline marker (hand-drawn feel via seeded wobble) ----
+const ARROW_TYPES=[['arrow','Arrow'],['circle','Circle'],['underline','Underline']];
+function _strokePts(c,pts){ if(!pts.length)return; c.beginPath(); c.moveTo(pts[0].x,pts[0].y); for(let i=1;i<pts.length;i++)c.lineTo(pts[i].x,pts[i].y); c.stroke(); }
+function _markStroke(x1,y1,x2,y2,arch,wob,rnd,n){ n=n||14; const pts=[],dx=x2-x1,dy=y2-y1,len=Math.hypot(dx,dy)||1,nx=-dy/len,ny=dx/len;
+  for(let i=0;i<=n;i++){ const t=i/n; const bow=Math.sin(t*Math.PI)*arch, w=(rnd()*2-1)*wob; pts.push({x:x1+dx*t+nx*(bow+w), y:y1+dy*t+ny*(bow+w)}); } return pts; }
+function buildArrowCanvas(o){
+  const px=CANVAS_PX[EDL.settings.canvas]||[1080,1920], W=px[0], H=px[1];
+  const innerW=Math.max(8,(o.w||0.5)*W), innerH=Math.max(8,(o.h||0.2)*H);
+  const lw=Math.max(2,(o.thickness!=null?o.thickness:0.012)*W), pad=Math.ceil(lw*2.5+12);
+  const cw=Math.ceil(innerW+pad*2), ch=Math.ceil(innerH+pad*2);
+  const cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; const c=cv.getContext('2d');
+  let stroke=o.color||'#f07830';
+  if(o.fillType==='gradient'){ const g=c.createLinearGradient(pad,pad,pad+innerW,pad+innerH); g.addColorStop(0,o.gradStart||'#f5e020'); g.addColorStop(1,o.gradEnd||'#e87820'); stroke=g; }
+  c.strokeStyle=stroke; c.fillStyle=stroke; c.globalAlpha=(o.opacity!=null?o.opacity:1); c.lineCap='round'; c.lineJoin='round'; c.lineWidth=lw;
+  const rnd=_mulberry((o.seed||1)>>>0), wob=lw*0.45, sub=o.subtype||'arrow';
+  if(sub==='underline'){ const y=pad+innerH*0.62; _strokePts(c,_markStroke(pad,y,pad+innerW,y,innerH*0.14,wob,rnd,16)); }
+  else if(sub==='circle'){ const cx=pad+innerW/2, cy=pad+innerH/2, rx=innerW/2, ry=innerH/2, a0=-0.35*Math.PI, a1=1.78*Math.PI, n=44, pts=[];
+    for(let i=0;i<=n;i++){ const a=a0+(a1-a0)*i/n, w=(rnd()*2-1)*wob*0.6; pts.push({x:cx+Math.cos(a)*(rx+w), y:cy+Math.sin(a)*(ry+w)}); } _strokePts(c,pts); }
+  else { let x1=pad, x2=pad+innerW; if(o.flipH){ const t=x1;x1=x2;x2=t; } const y=pad+innerH/2, arch=(o.arch!=null?o.arch:0)*innerH;
+    const body=_markStroke(x1,y,x2,y,arch,wob,rnd,16); _strokePts(c,body);
+    const tip=body[body.length-1], prev=body[Math.max(0,body.length-4)], ang=Math.atan2(tip.y-prev.y,tip.x-prev.x), hl=Math.max(lw*3, innerW*0.13);
+    [0.5,-0.5].forEach(s=>{ const wa=ang+Math.PI-s; _strokePts(c,[tip,{x:tip.x+Math.cos(wa)*hl,y:tip.y+Math.sin(wa)*hl}]); }); }
+  return {canvas:cv, cw, ch, exportW:W};
+}
 // For render: bake each sticker-text overlay to a PNG (same canvas as preview), upload it,
 // and swap it to an image overlay so the server composites the identical pixels.
 async function bakeStickersForRender(edl){
@@ -1183,6 +1218,12 @@ async function bakeStickersForRender(edl){
         if(r.ready){ const data=r.canvas.toDataURL('image/png');
           const up=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'sprinkle_'+o.id+'.png',data})});
           if(up&&up.ok){ out.push({id:o.id,type:'image',src:up.src,scale:r.cw/r.exportW,x:o.x,y:o.y,start:o.start,dur:o.dur,ch:o.ch,rot:o.rot,anims:o.anims}); continue; } }
+      }catch(e){}
+    }
+    else if(o.type==='arrow'){   // bake marker so render == preview
+      try{ const r=buildArrowCanvas(o); const data=r.canvas.toDataURL('image/png');
+        const up=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'arrow_'+o.id+'.png',data})});
+        if(up&&up.ok){ out.push({id:o.id,type:'image',src:up.src,scale:r.cw/r.exportW,x:o.x,y:o.y,start:o.start,dur:o.dur,ch:o.ch,rot:o.rot,anims:o.anims}); continue; }
       }catch(e){}
     }
     out.push(o);
@@ -1237,7 +1278,7 @@ function renderOverlays(time){
     const active = time>=o.start && time < o.start+(+o.dur||0);
     const visible = active || (ovEdit && o.id===ovSel);
     const ekey=(o.type==='text'&&o.style==='sticker')?'sticker':o.type;   // sticker text renders as a baked canvas image
-    const wantImg=(ekey==='image'||ekey==='sticker'||ekey==='shape'||ekey==='sprinkle');     // shapes/stickers/images/sprinkle are <img>; text is <div>
+    const wantImg=(ekey==='image'||ekey==='sticker'||ekey==='shape'||ekey==='sprinkle'||ekey==='arrow');     // baked-canvas overlays are <img>; text is <div>
     let el=ovEls[o.id];
     if(el && (el.dataset.t!==ekey || (wantImg?el.tagName!=='IMG':el.tagName!=='DIV'))){ el.remove(); el=null; }
     if(!el){ el = wantImg?document.createElement('img'):document.createElement('div'); el.dataset.t=ekey; el.style.position='absolute'; ovEls[o.id]=el; layer.appendChild(el); }
@@ -1262,6 +1303,11 @@ function renderOverlays(time){
       const key=[o.src,o.count,o.size,o.jitter,o.rotJitter,o.seed,o.opacity,o.w,o.h,EDL.settings.canvas].join('|');
       if(el._spkey!==key){ const r=buildSprinkleCanvas(o); el.src=r.canvas.toDataURL('image/png'); el._scw=r.cw; el._sch=r.ch; if(r.ready) el._spkey=key; }
       el.style.width=(el._scw/px[0]*100)+'%'; el.style.height=(el._sch/px[1]*100)+'%'; }
+    else if(o.type==='arrow'){   // baked marker (arrow/circle/underline)
+      const px=CANVAS_PX[EDL.settings.canvas]||[1080,1920];
+      const key=[o.subtype,o.color,o.fillType,o.gradStart,o.gradEnd,o.thickness,o.arch,o.flipH,o.seed,o.opacity,o.w,o.h,EDL.settings.canvas].join('|');
+      if(el._arkey!==key){ const r=buildArrowCanvas(o); el.src=r.canvas.toDataURL('image/png'); el._scw=r.cw; el._sch=r.ch; el._arkey=key; }
+      el.style.width=(el._scw/px[0]*100)+'%'; el.style.height=(el._sch/px[1]*100)+'%'; }
     else { el.textContent=o.text||''; el.style.fontFamily=FONTS[o.font]||FONTS.cooper; el.style.fontWeight='800'; el.style.lineHeight='1';
       el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.whiteSpace='nowrap'; el.style.color=o.color||'#fff';
       if(o.button){ el.style.background=o.bg||'#f07830'; const p=(o.size||0.06)*W; el.style.padding=(p*0.38)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.3)+'px'; el.style.textShadow='none'; }
@@ -1283,7 +1329,7 @@ function renderOverlays(time){
 }
 function dragify(el,o){ el.onpointerdown=ev=>{ ev.preventDefault(); histCommit(); ovSel=o.id; renderOvList(); buildOvEditor();
   const wrap=$('#stageWrap').getBoundingClientRect();
-  const move=e=>{ o.x=Math.max(0,Math.min(1,(e.clientX-wrap.left)/wrap.width)); o.y=Math.max(0,Math.min(1,(e.clientY-wrap.top)/wrap.height)); renderOverlays(playhead); };
+  const move=e=>{ o.x=Math.max(-1,Math.min(2,(e.clientX-wrap.left)/wrap.width)); o.y=Math.max(-1,Math.min(2,(e.clientY-wrap.top)/wrap.height)); renderOverlays(playhead); };   // allow dragging well off the render area
   const up=()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); };
   window.addEventListener('pointermove',move); window.addEventListener('pointerup',up); }; }
 function uid(){ return 'ov'+Date.now()+Math.floor(Math.random()*1000); }
@@ -1298,8 +1344,8 @@ function renderOvList(){
     histCommit(); [EDL.overlays[i],EDL.overlays[j]]=[EDL.overlays[j],EDL.overlays[i]]; renderOvList(); buildOvEditor(); renderOverlays(playhead); renderTracks(); };
   ovs.slice().reverse().forEach(o=>{ const row=document.createElement('div'); row.className='ecline'; if(o.id===ovSel) row.style.borderColor='var(--acc2)';
     const thumb=(o.type==='image'&&o.src)?`<img src="/${encodeURI(o.src)}" style="height:24px;width:auto;max-width:46px;border-radius:3px;background:#0008;flex:none">`:'';
-    const icon=o.type==='image'?'🖼':(o.type==='shape'?'▭':(o.type==='sprinkle'?'✨':'🅣'));
-    const name=o.type==='image'?((o.src||'').split('/').pop()):(o.type==='shape'?'shape':(o.type==='sprinkle'?('sprinkle · '+((o.src||'').split('/').pop()||'no image')):((o.text||'').slice(0,18)||'text')));
+    const icon=o.type==='image'?'🖼':(o.type==='shape'?'▭':(o.type==='sprinkle'?'✨':(o.type==='arrow'?'➴':'🅣')));
+    const name=o.type==='image'?((o.src||'').split('/').pop()):(o.type==='shape'?'shape':(o.type==='sprinkle'?('sprinkle · '+((o.src||'').split('/').pop()||'no image')):(o.type==='arrow'?((o.subtype||'arrow')):((o.text||'').slice(0,18)||'text'))));
     row.innerHTML=`<div style="display:flex;flex-direction:column;gap:1px"><button class="mini ovup" title="bring forward">▲</button><button class="mini ovdn" title="send back">▼</button></div>
       <span class="ovsel" style="flex:1;cursor:pointer;display:flex;align-items:center;gap:6px;min-width:0">${thumb}<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${icon} ${name}</span><span style="color:var(--mut);flex:none">@${fmt(o.start)}–${fmt(o.start+(+o.dur||0))}s</span></span>
       <button class="mini ovdel" title="delete">✕</button>`;
@@ -1358,6 +1404,20 @@ function buildOvEditor(){
       <div><label>Spread W <input type="range" id="ovSpW" min="0.1" max="1" step="0.02" value="${o.w||0.7}"></label>
         <label>H <input type="range" id="ovSpH" min="0.1" max="1" step="0.02" value="${o.h||0.7}"></label></div>
       <div><button class="mini" id="ovSpSeed">🎲 Reshuffle</button></div>`;
+  } else if(o.type==='arrow'){
+    h+=`<div class="sec">Marker</div>
+      <div><label>Type <select id="ovArSub">${ARROW_TYPES.map(s=>`<option value="${s[0]}" ${(o.subtype||'arrow')===s[0]?'selected':''}>${s[1]}</option>`).join('')}</select></label>
+        <label>Fill <select id="ovArFill"><option value="solid">Solid</option><option value="gradient">Gradient</option></select></label></div>
+      <div id="ovArSolid"><label>Color <input type="color" id="ovArColor" value="${o.color||'#f07830'}"></label></div>
+      <div id="ovArGrad"><label>From <input type="color" id="ovArFrom" value="${o.gradStart||'#f5e020'}"></label>
+        <label>To <input type="color" id="ovArTo" value="${o.gradEnd||'#e87820'}"></label></div>
+      <div><label>Thickness <input type="range" id="ovArThick" min="0.004" max="0.05" step="0.002" value="${o.thickness!=null?o.thickness:0.012}"></label>
+        <label>Opacity <input type="range" id="ovArOp" min="0.1" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label></div>
+      <div id="ovArArchRow"><label>Curve <input type="range" id="ovArArch" min="-0.4" max="0.4" step="0.02" value="${o.arch!=null?o.arch:0}"></label>
+        <label class="ck"><input type="checkbox" id="ovArFlip" ${o.flipH?'checked':''}> flip</label></div>
+      <div><label>Length <input type="range" id="ovArW" min="0.1" max="1" step="0.02" value="${o.w||0.5}"></label>
+        <label>Height <input type="range" id="ovArH" min="0.05" max="1" step="0.02" value="${o.h||0.25}"></label></div>
+      <div><button class="mini" id="ovArSeed">🎲 Re-draw</button></div>`;
   } else {
     h+=`<div class="sec">Image</div><div><label>Size <input type="range" id="ovScale" min="0.05" max="1" step="0.01" value="${o.scale}"></label>
       <button class="mini" id="ovReplace">Replace…</button></div>`;
@@ -1403,6 +1463,11 @@ function buildOvEditor(){
     else if(o.type==='sprinkle'){ o.count=parseFloat($('#ovSpCount').value)||18; o.size=parseFloat($('#ovSpSize').value)||0.08;
       o.jitter=parseFloat($('#ovSpJit').value); o.rotJitter=parseFloat($('#ovSpRot').value); o.opacity=parseFloat($('#ovSpOp').value);
       o.w=parseFloat($('#ovSpW').value)||0.7; o.h=parseFloat($('#ovSpH').value)||0.7; }
+    else if(o.type==='arrow'){ o.subtype=$('#ovArSub').value; o.fillType=$('#ovArFill').value; o.color=$('#ovArColor').value;
+      o.gradStart=$('#ovArFrom').value; o.gradEnd=$('#ovArTo').value; o.thickness=parseFloat($('#ovArThick').value); o.opacity=parseFloat($('#ovArOp').value);
+      o.arch=parseFloat($('#ovArArch').value); o.flipH=$('#ovArFlip').checked; o.w=parseFloat($('#ovArW').value)||0.5; o.h=parseFloat($('#ovArH').value)||0.25;
+      if($('#ovArGrad')){ const g=o.fillType==='gradient'; $('#ovArGrad').style.display=g?'':'none'; $('#ovArSolid').style.display=g?'none':''; }
+      if($('#ovArArchRow')) $('#ovArArchRow').style.display=(o.subtype==='arrow')?'':'none'; }
     else o.scale=parseFloat($('#ovScale').value)||0.3;
     renderOverlays(playhead); renderOvList(); };
   box.querySelectorAll('input,select,textarea').forEach(el=>{ el.oninput=upd; el.onchange=upd; });
@@ -1412,6 +1477,8 @@ function buildOvEditor(){
   if($('#ovSpClip')) $('#ovSpClip').onclick=()=>openClipPicker(spSet);
   if($('#ovSpUp')) $('#ovSpUp').onclick=()=>pickImage(spSet);
   if($('#ovSpSeed')) $('#ovSpSeed').onclick=()=>{ histCommit(); o.seed=Math.floor(Math.random()*1e6); renderOverlays(playhead); };
+  if($('#ovArFill')){ $('#ovArFill').value=(o.fillType==='gradient')?'gradient':'solid'; const g=o.fillType==='gradient'; $('#ovArGrad').style.display=g?'':'none'; $('#ovArSolid').style.display=g?'none':''; if($('#ovArArchRow')) $('#ovArArchRow').style.display=((o.subtype||'arrow')==='arrow')?'':'none'; }
+  if($('#ovArSeed')) $('#ovArSeed').onclick=()=>{ histCommit(); o.seed=Math.floor(Math.random()*1e6); renderOverlays(playhead); };
   function animCtrl(ai,a,c){ const key=c[0],label=c[1],kind=c[2],v=a[key];
     if(kind==='text'){ return `<label>${label} <input type="text" class="anc" data-ai="${ai}" data-k="${key}" value="${(v||'').replace(/"/g,'&quot;')}" style="width:46px;text-align:center"></label>`; }
     if(kind==='img'){ const fn=(v||'').split('/').pop()||'none'; return `<label>${label} <button class="mini anpick" data-ai="${ai}" data-k="${key}">${v?'Replace':'Choose'}…</button> <span style="font-size:10px;color:var(--mut)">${fn}</span></label>`; }
@@ -1422,7 +1489,7 @@ function buildOvEditor(){
       return `<div class="ecline" style="flex-direction:column;align-items:stretch;gap:4px"><div style="display:flex;align-items:center;gap:6px"><b style="flex:1;font-size:12px">${def.label}</b><button class="mini anrm" data-ai="${ai}" title="remove">✕</button></div><div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--mut)">${def.ctrls.map(c=>animCtrl(ai,a,c)).join('')}</div></div>`;
     }).join('') : '<div style="color:var(--mut);font-size:11px">No animations yet.</div>';
     const have=new Set(anims.map(a=>a.type));
-    const png=(o.type==='image'||o.type==='shape'||o.type==='sprinkle'||(o.type==='text'&&o.style==='sticker'));   // rotation effects need a pixel layer
+    const png=(o.type==='image'||o.type==='shape'||o.type==='sprinkle'||o.type==='arrow'||(o.type==='text'&&o.style==='sticker'));   // rotation effects need a pixel layer
     $('#ovAnimAdd').innerHTML='<option value="">＋ Add animation…</option>'+Object.keys(ANIM_DEFS).filter(t=>!have.has(t)&&(!ANIM_DEFS[t].png||png)).map(t=>`<option value="${t}">${ANIM_DEFS[t].label}</option>`).join('');
     L.querySelectorAll('.anc').forEach(el=>{ el.oninput=el.onchange=()=>{ let v=el.value; if(el.type==='number'||el.type==='range') v=parseFloat(v); o.anims[+el.dataset.ai][el.dataset.k]=v; renderOverlays(playhead); }; });
     L.querySelectorAll('.anpick').forEach(b=>{ b.onclick=()=>{ const ai=+b.dataset.ai, k=b.dataset.k; pickImage(src=>{ histCommit(); o.anims[ai][k]=src; renderAnimList(); renderOverlays(playhead); }); }; });
@@ -1433,22 +1500,25 @@ function buildOvEditor(){
   if($('#ovHere')) $('#ovHere').onclick=()=>{ o.start=Math.round(playhead*100)/100; $('#ovStart').value=o.start; renderOvList(); renderOverlays(playhead); };
   if($('#ovReplace')) $('#ovReplace').onclick=()=>pickImage(src=>{ o.src=src; renderOverlays(playhead); renderOvList(); });
 }
+function ovPlace(o){ const p=placeAtPlayhead(+o.dur||3, 0); o.start=p.t0; o.ch=p.ch; return o; }   // new overlays start at the playhead on the topmost free channel
 function pickImage(cb){ const f=$('#ovFile'); f.onchange=()=>{ const file=f.files[0]; if(!file) return; const r=new FileReader();
   r.onload=async()=>{ try{ const res=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:file.name,data:r.result})}); if(res.ok) cb(res.src); else toast('Upload failed'); }catch(e){ toast('Upload failed'); } f.value=''; };
   r.readAsDataURL(file); }; f.click(); }
 function addTextOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'text',text:'New text',font:'cooper',color:'#ffffff',size:0.07,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3,button:false,bg:'#f07830'};
-  EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
+  ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 function addImageOverlay(){ pickImage(src=>{ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'image',src,scale:0.3,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
-  EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }); }
+  ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }); }
 function addSprinkleOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[];
   const o={id:uid(),type:'sprinkle',src:'',w:0.7,h:0.7,count:18,size:0.08,jitter:0.4,rotJitter:20,seed:Math.floor(Math.random()*1e6),opacity:1,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
-  EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead);
+  ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead);
   openLibrary(src=>{ o.src=src; renderOvList(); buildOvEditor(); renderOverlays(playhead); });   // immediately pick the piece image
 }
+function addArrowOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'arrow',subtype:'arrow',color:'#f07830',fillType:'solid',thickness:0.012,arch:0,flipH:false,seed:Math.floor(Math.random()*1e6),w:0.5,h:0.25,opacity:1,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
+  ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 function addShapeOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'shape',shape:'roundrect',w:0.6,h:0.18,fill:'#000000',opacity:0.45,radius:0.04,stroke:'#ffffff',strokeW:0,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
-  EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
+  ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 $('#btnOverlays').onclick=openOvModal; $('#ovClose').onclick=closeOvModal;
-$('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay; $('#ovAddSprinkle').onclick=addSprinkleOverlay;
+$('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay; $('#ovAddSprinkle').onclick=addSprinkleOverlay; $('#ovAddArrow').onclick=addArrowOverlay;
 // + Image dropdown: Upload / Clip art / Library
 function closeImgMenu(){ $('#ovImgMenu').classList.remove('open'); }
 $('#ovAddImage').onclick=e=>{ e.stopPropagation(); $('#ovImgMenu').classList.toggle('open'); };
@@ -1503,7 +1573,7 @@ async function pickClip(name){
     const o={id:uid(),type:'image',src:res.src,scale:0.22,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
     const mo=$('#clipMotion')&&$('#clipMotion').value;   // looping motion → ready animated sticker
     if(mo && ANIM_DEFS[mo]) o.anims=[Object.assign({type:mo}, JSON.parse(JSON.stringify(ANIM_DEFS[mo].def)))];
-    EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead);
+    ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead);
     closeClipPicker(); toast('Clip art added'+(mo?(' ('+mo+')'):'')+' — drag it on the preview to place it');
   }catch(e){ $('#clipStatus').textContent='Couldn’t add that icon — try another.'; }
 }
@@ -1574,7 +1644,7 @@ async function pickLibraryImage(it){
     if(_pickInto){ const cb=_pickInto; _pickInto=null; closeLibrary(); cb(res.src); return; }   // "pick into" mode (e.g. sprinkle piece)
     histCommit(); EDL.overlays=EDL.overlays||[];
     const o={id:uid(),type:'image',src:res.src,scale:0.3,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
-    EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead);
+    ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead);
     closeLibrary(); toast('Library image added — drag it on the preview to place it');
   }catch(e){ $('#libStatus').textContent='Couldn’t add that image: '+e.message; }
 }
@@ -1637,7 +1707,7 @@ function renderTracks(){
 // Build one overlay bar element on its channel lane (drag to move/retime/change channel).
 function buildOverlayBar(o,total){ const b=document.createElement('div'); b.className='blk ov-'+o.type+(o.id===ovSel?' sel':'');
   b.style.left=((+o.start||0)/total*100)+'%'; b.style.width=((+o.dur||0)/total*100)+'%';
-  b.appendChild(document.createTextNode(o.type==='image'?'🖼 image':(o.type==='shape'?'▭ shape':(o.type==='sprinkle'?'✨ sprinkle':('🅣 '+(o.text||'text'))))));
+  b.appendChild(document.createTextNode(o.type==='image'?'🖼 image':(o.type==='shape'?'▭ shape':(o.type==='sprinkle'?'✨ sprinkle':(o.type==='arrow'?('➴ '+(o.subtype||'arrow')):('🅣 '+(o.text||'text')))))));
   const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR'; b.appendChild(hL); b.appendChild(hR);
   ovBarInteract(b,hL,hR,o,total); return b; }
 // Build one clip block element for a layout entry `o` (handles base vs upper-channel behavior).
@@ -2064,6 +2134,16 @@ document.addEventListener('keydown', e=>{ if(!(e.ctrlKey||e.metaKey)) return; co
   if(tag==='input'||tag==='textarea'||tag==='select') return;   // let form fields keep their own text undo
   if(k==='z'&&!e.shiftKey){ e.preventDefault(); doUndo(); }
   else if(k==='y'||(k==='z'&&e.shiftKey)){ e.preventDefault(); doRedo(); } });
+// Arrow keys nudge the selected overlay (Shift = bigger step); can move it off the render area.
+document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) return;
+  const tag=(document.activeElement&&document.activeElement.tagName||'').toLowerCase();
+  if(tag==='input'||tag==='textarea'||tag==='select') return;
+  if(!(ovEdit && ovSel)) return; const o=(EDL.overlays||[]).find(x=>x.id===ovSel); if(!o) return;
+  const step=e.shiftKey?0.04:0.005; let dx=0,dy=0;
+  if(e.key==='ArrowLeft')dx=-step; else if(e.key==='ArrowRight')dx=step; else if(e.key==='ArrowUp')dy=-step; else if(e.key==='ArrowDown')dy=step; else return;
+  e.preventDefault(); histSchedule();
+  o.x=Math.max(-1,Math.min(2,(o.x!=null?o.x:0.5)+dx)); o.y=Math.max(-1,Math.min(2,(o.y!=null?o.y:0.5)+dy));
+  renderOverlays(playhead); });
 
 /* ---------- boot ---------- */
 async function boot(reload){

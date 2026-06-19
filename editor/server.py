@@ -1302,7 +1302,7 @@ def main():
         save_edl(default_edl())
     seed_projects()
     srv = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
-    print("Meowi editor running at http://127.0.0.1:8765/")
+    print("SmarterClip editor running at http://127.0.0.1:8765/")
     srv.serve_forever()
 
 
