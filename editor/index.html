@@ -60,7 +60,7 @@
   .blk.audio .volsl { flex:1; max-width:220px; accent-color:var(--acc,#8ab81d); cursor:pointer; height:14px; }
   .blk.audio .vpct { flex:none; font-size:10px; color:#cde9d8; }
   .blk.sel { box-shadow:0 0 0 2px var(--acc2); z-index:2; }
-  .blk .hL,.blk .hR { position:absolute; top:0; bottom:0; width:7px; cursor:ew-resize; background:rgba(255,255,255,.18); } .blk .hL{left:0} .blk .hR{right:0}
+  .blk .hL,.blk .hR { position:absolute; top:0; bottom:0; width:7px; cursor:ew-resize; background:rgba(255,255,255,.18); z-index:6; } .blk .hL{left:0} .blk .hR{right:0}
   .blk .modedot { position:absolute; top:1px; right:9px; font-size:10px; line-height:1; cursor:pointer; background:#0007; border-radius:3px; padding:1px 3px; z-index:3; }
   .blk .modedot.free { background:var(--acc2); }
   #tlPlayhead { position:absolute; top:0; bottom:0; width:2px; background:#ff5a5a; pointer-events:none; z-index:6; }
@@ -153,7 +153,7 @@
      background:repeating-linear-gradient(45deg, #ffffff14, #ffffff14 5px, #ffffff30 5px, #ffffff30 10px);
      border-left:1px dashed #ffffffaa; display:flex; align-items:center; justify-content:center; overflow:hidden; }
   .blk .freeze span { font-size:9px; color:#dfe9ff; white-space:nowrap; text-shadow:0 1px 2px #000; }
-  .clipicons { position:absolute; top:2px; right:2px; z-index:5; display:flex; gap:3px; padding:1px 3px; background:rgba(10,12,16,.55); border-radius:6px; }
+  .clipicons { position:absolute; top:2px; right:9px; z-index:5; display:flex; gap:3px; padding:1px 3px; background:rgba(10,12,16,.55); border-radius:6px; }
   .clipicons .cic { font-size:13px; line-height:18px; width:20px; height:18px; text-align:center; cursor:pointer; opacity:.85; border-radius:4px; }
   .clipicons .cic:hover { opacity:1; background:#fff3; }
   .settings { padding:10px 12px; border-top:1px solid var(--line); }
@@ -201,7 +201,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.44.0</span>
+  <span class="ver" id="appVer">v1.44.1</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -655,6 +655,10 @@ function clipBounds(){ let acc=0; const b=[];
   (EDL.segments||[]).forEach((s,i)=>{ if((+s.ch||0)!==0) return; const g=Math.max(0,+s.gap||0), d=segLen(s);
     b.push({gapStart:acc, start:acc+g, end:acc+g+d, gap:g, dur:d, seg:s, idx:i}); acc+=g+d; });
   return {bounds:b, vidTotal:acc}; }
+// Index of the clip immediately before/after clip i ON THE SAME BASE TRACK (ch0), in timeline order —
+// NOT the raw array neighbor (which may be an upper-channel clip interleaved in the array).
+function ch0NeighborIdx(i, side){ const b=clipBounds().bounds; const pos=b.findIndex(o=>o.idx===i);
+  if(pos<0) return -1; const nb=side==='r'?b[pos+1]:b[pos-1]; return nb?nb.idx:-1; }
 // Full multi-channel layout: base spans (ch0, sequential) + absolutely-positioned upper clips (ch≥1, by t0).
 function layout(){ const base=clipBounds(); const all=base.bounds.map(o=>Object.assign({ch:0},o)); let vt=base.vidTotal;
   (EDL.segments||[]).forEach((s,i)=>{ const ch=+s.ch||0; if(ch===0) return; const t0=Math.max(0,+s.t0||0), d=segLen(s);
@@ -755,7 +759,8 @@ function splitAtPlayhead(i){
   EDL.segments.splice(i+1,0,second);
   sel=i; renderTimeline(); loadSegIntoTrim(); renderOverlays(playhead); toast('Clip split at playhead');
 }
-function selectSeg(i){ stop(); sel=i; renderTimeline(); loadSegIntoTrim(); }
+function selectSeg(i){ stop(); sel=i; renderTimeline(); loadSegIntoTrim();
+  const card=document.querySelector('#timeline .seg.sel'); if(card) card.scrollIntoView({block:'nearest', behavior:'smooth'}); }
 function loadSegIntoTrim(){
   if(sel<0||!EDL.segments[sel]) return; const s=EDL.segments[sel]; const c=MAN.byId[s.id];
   $('#trimName').textContent=c?c.label:s.id;
@@ -1834,7 +1839,7 @@ function clipResize(handle,i,side){
     const wrap=$('#tlTracksWrap'); const W=wrap.clientWidth||wrap.getBoundingClientRect().width||1; const x0=ev.clientX; const total0=totalDur()||1;
     const segs=EDL.segments; const free=(segs[i]&&segs[i].editMode==='free');   // per-clip edge-drag mode
     const d0=+segs[i].dur||0; const g0=+segs[i].gap||0;
-    const nbrIdx=side==='r'?i+1:i-1; const nbr=segs[nbrIdx]; const nd0=nbr?(+nbr.dur||0):0; const ng0=nbr?(+nbr.gap||0):0;
+    const nbrIdx=ch0NeighborIdx(i,side); const nbr=nbrIdx>=0?segs[nbrIdx]:null; const nd0=nbr?(+nbr.dur||0):0; const ng0=nbr?(+nbr.gap||0):0;
     const rnd=x=>Math.round(x*100)/100;
     const mv=e=>{ const dt=(e.clientX-x0)/W*total0;
       if(free){
