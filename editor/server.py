@@ -1084,6 +1084,42 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/edl":
             save_edl(data)
             return self._json({"ok": True})
+        if path == "/api/clip/recat":
+            cid = (data.get("id") or "").strip()
+            cat = re.sub(r"[^A-Za-z0-9_-]", "", (data.get("category") or "").lower())
+            if not cid or not cat:
+                return self._json({"ok": False, "log": "id and category required"}, 400)
+            src = id_to_file().get(cid)
+            if not src or not os.path.exists(src):
+                return self._json({"ok": False, "log": "clip not found"}, 404)
+            dest_dir = os.path.join(SRC_ROOT, cat)
+            if os.path.abspath(os.path.dirname(src)) == os.path.abspath(dest_dir):
+                return self._json({"ok": True, "category": cat})   # already there
+            os.makedirs(dest_dir, exist_ok=True)
+            dest = os.path.join(dest_dir, os.path.basename(src))
+            if os.path.exists(dest):
+                return self._json({"ok": False, "log": f"a clip with that name already exists in '{cat}'"}, 409)
+            try:
+                shutil.move(src, dest)
+            except Exception as e:
+                return self._json({"ok": False, "log": repr(e)}, 500)
+            _probe_cache.pop(src, None)
+            return self._json({"ok": True, "category": cat})
+        if path == "/api/clip/delete":
+            cid = (data.get("id") or "").strip()
+            src = id_to_file().get(cid)
+            if not src or not os.path.exists(src):
+                return self._json({"ok": False, "log": "clip not found"}, 404)
+            try:
+                os.remove(src)
+            except Exception as e:
+                return self._json({"ok": False, "log": repr(e)}, 500)
+            th = os.path.join(THUMBS, cid + ".jpg")
+            if os.path.exists(th):
+                try: os.remove(th)
+                except OSError: pass
+            _probe_cache.pop(src, None)
+            return self._json({"ok": True})
         if path == "/api/project":
             name = (data.get("name") or "").strip()
             edl = data.get("edl") or {}

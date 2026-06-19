@@ -87,6 +87,12 @@
   .clip .qadd:hover { background:var(--acc,#8ab81d); border-color:var(--acc,#8ab81d); color:#10240a; }
   .clip.dragging { opacity:.5; }
   .emptyhint { color:var(--mut); font-size:12px; padding:14px 12px; line-height:1.5; border:1px dashed var(--line); border-radius:8px; margin:8px; }
+  .mgrrow { display:flex; align-items:center; gap:8px; padding:5px 4px; border-bottom:1px solid var(--line); }
+  .mgrrow img { width:44px; height:44px; object-fit:cover; border-radius:5px; background:#000; flex:none; }
+  .mgrrow .meta { flex:1; min-width:0; }
+  .mgrrow .meta b { display:block; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mgrrow .meta span { color:var(--mut); font-size:11px; }
+  .mgrrow .mgrcat { flex:none; max-width:140px; }
   .ovdrop { position:relative; display:inline-block; }
   .ovmenu { display:none; position:absolute; top:100%; left:0; z-index:20; margin-top:3px; background:var(--panel2,#222); border:1px solid var(--line); border-radius:8px; padding:4px; min-width:150px; box-shadow:0 6px 20px #0008; }
   .ovmenu.open { display:flex; flex-direction:column; gap:3px; }
@@ -184,7 +190,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.34.0</span>
+  <span class="ver" id="appVer">v1.35.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -219,7 +225,7 @@
   <div class="topRow">
   <!-- SOURCE BIN -->
   <div class="col" id="binCol">
-    <h2>Source clips <button class="mini" id="btnAddClip" title="Add video files (drag clips here or onto the preview)" style="margin-left:auto">＋ Add clips</button></h2>
+    <h2>Source clips <button class="mini" id="btnMngClips" title="Manage clips — change categories or delete" style="margin-left:auto">⚙ Manage</button> <button class="mini" id="btnAddClip" title="Add video files (drag clips here or onto the preview)">＋ Add clips</button></h2>
     <input type="file" id="fileAddClip" accept="video/*,.mp4,.mov,.webm,.m4v" multiple style="display:none">
     <div id="bin"></div>
   </div>
@@ -304,6 +310,18 @@
   </div>
 </div>
 <div class="toast" id="toast"></div>
+
+<div id="clipMgrModal" class="modal" style="display:none">
+  <div class="modal-card" style="max-width:640px">
+    <div class="modal-hd"><b>⚙ Manage clips</b><button class="mini" id="mgrClose">✕ Close</button></div>
+    <div class="modal-body">
+      <div class="row" style="gap:8px;align-items:center"><input type="text" id="mgrFilter" placeholder="Filter by name / category…" style="flex:1"><span id="mgrCount" style="font-size:11px;color:var(--mut)"></span></div>
+      <div style="font-size:11px;color:var(--mut);margin:5px 0">Change a clip's category (moves the file) or delete it. Moving keeps the clip usable in saved projects; deleting is permanent.</div>
+      <div id="mgrList" style="max-height:52vh;overflow:auto"></div>
+      <div id="mgrStatus" style="font-size:12px;color:var(--mut);min-height:16px;margin-top:4px"></div>
+    </div>
+  </div>
+</div>
 
 <div id="addClipModal" class="modal" style="display:none">
   <div class="modal-card" style="max-width:440px">
@@ -1178,7 +1196,10 @@ function renderOverlays(time){
       const key=[o.text,o.font,o.size,o.gradStart,o.gradEnd,o.gradType,o.gradAngle,o.bleed,o.kerning,o.lineGap,o.align,EDL.settings.canvas,(o.shadow&&o.shadow.on),(o.shadow&&o.shadow.color),(o.shadow&&o.shadow.opacity)].join('|');
       if(el._stkey!==key){ const r=buildStickerCanvas(o); el.src=r.canvas.toDataURL('image/png'); el._cw=r.cw; el._ew=r.exportW; el._stkey=key; }   // re-bake only when props change
       el.style.width=(el._cw/el._ew*100)+'%'; el.style.height='auto'; }
-    else if(o.type==='image'){ const u=o.src?('/'+encodeURI(o.src)):''; if(el.getAttribute('src')!==u) el.setAttribute('src',u); el.style.width=((o.scale||0.3)*W)+'px'; el.style.height='auto'; }
+    else if(o.type==='image'){ const u=o.src?('/'+encodeURI(o.src)):'';
+      if(el.getAttribute('src')!==u){ el.setAttribute('src',u); el.onload=()=>{ try{renderOverlays(playhead);}catch(e){} }; }   // re-render once dims are known
+      const w=(o.scale||0.3)*W, ar=(el.naturalWidth&&el.naturalHeight)?(el.naturalHeight/el.naturalWidth):1;
+      el.style.width=w+'px'; el.style.height=(w*ar)+'px'; }   // explicit height so the rotation pivot is the true center, not the top
     else if(o.type==='shape'){   // baked canvas image (rect/round/circle/polygon/star…)
       const px=CANVAS_PX[EDL.settings.canvas]||[1080,1920];
       const key=[o.shape,o.fill,o.fillType,o.gradStart,o.gradEnd,o.gradType,o.gradAngle,o.opacity,o.w,o.h,o.radius,o.strokeW,o.stroke,EDL.settings.canvas].join('|');
@@ -1191,6 +1212,7 @@ function renderOverlays(time){
     const A=animState(o, time-o.start, +o.dur||0, W);   // overlay animations (offset + opacity)
     el.style.left=((o.x||0.5)*100)+'%'; el.style.top=((o.y||0.5)*100)+'%';
     const rotDeg=(A.rot||0)+(+o.rot||0);   // static rotation + animation rotation
+    el.style.transformOrigin='50% 50%';    // always rotate/scale around the element's own center
     el.style.transform='translate(-50%,-50%) translate('+A.dx.toFixed(2)+'px,'+A.dy.toFixed(2)+'px) rotate('+rotDeg.toFixed(2)+'deg) scale('+(A.sc!=null?A.sc:1).toFixed(3)+')';
     const sh=o.shadow||{};   // sticker bakes its own shadow into the canvas, so no extra CSS filter for it
     el.style.filter = (ekey!=='sticker' && sh.on) ? `drop-shadow(${(sh.dx!=null?sh.dx:0.004)*W}px ${(sh.dy!=null?sh.dy:0.006)*W}px ${(sh.blur!=null?sh.blur:0.01)*W}px ${hexA(sh.color||'#000000', sh.opacity!=null?sh.opacity:0.5)})` : 'none';
@@ -1743,6 +1765,42 @@ $('#acGo').onclick=()=>{ let cat=$('#acCat').value; if(cat==='__new__') cat=$('#
   $('#addClipModal').style.display='none'; _acFiles=null;
   doUploadClips(files, cat, toTl); };
 $('#btnAddClip').onclick=()=>$('#fileAddClip').click();
+
+/* ---------- manage clips: change category / delete ---------- */
+function openClipMgr(){ $('#clipMgrModal').style.display='flex'; $('#mgrStatus').textContent=''; renderClipMgr(); }
+function closeClipMgr(){ $('#clipMgrModal').style.display='none'; }
+function renderClipMgr(){
+  const box=$('#mgrList'); if(!box) return; const q=($('#mgrFilter').value||'').trim().toLowerCase();
+  const cats=[...new Set(MAN.clips.map(c=>c.product))].sort();
+  const list=MAN.clips.filter(c=>!q || ((c.label||'')+' '+c.product+' '+c.id).toLowerCase().includes(q));
+  $('#mgrCount').textContent=list.length+' / '+MAN.clips.length;
+  box.innerHTML='';
+  list.forEach(c=>{ const row=document.createElement('div'); row.className='mgrrow';
+    row.innerHTML=`<img src="${c.thumb}" loading="lazy"><div class="meta"><b>${(c.label||c.id).replace(/</g,'&lt;')}</b><span>${c.product} · ${fmt(c.dur)}s · ${c.w}×${c.h}</span></div>`;
+    const sel=document.createElement('select'); sel.className='mgrcat'; sel.title='Category (moves the file)';
+    cats.forEach(cat=>{ const o=document.createElement('option'); o.value=cat; o.textContent=cat; if(cat===c.product)o.selected=true; sel.appendChild(o); });
+    const nw=document.createElement('option'); nw.value='__new__'; nw.textContent='➕ New category…'; sel.appendChild(nw);
+    sel.onchange=async()=>{ let cat=sel.value;
+      if(cat==='__new__'){ cat=(prompt('New category name:','')||'').trim().toLowerCase().replace(/[^a-z0-9_-]/g,''); if(!cat){ renderClipMgr(); return; } }
+      if(cat===c.product){ return; }
+      $('#mgrStatus').textContent='Moving “'+(c.label||c.id)+'” → '+cat+'…';
+      const r=await api('/api/clip/recat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:c.id,category:cat})});
+      if(r&&r.ok){ await boot(true); renderClipMgr(); $('#mgrStatus').textContent='Moved to “'+cat+'”'; }
+      else { $('#mgrStatus').textContent='Move failed: '+((r&&r.log)||'error'); renderClipMgr(); }
+    };
+    row.appendChild(sel);
+    const del=document.createElement('button'); del.className='mini'; del.textContent='🗑'; del.title='Delete clip (permanent)';
+    del.onclick=async()=>{ if(!confirm('Delete “'+(c.label||c.id)+'” permanently? This removes the file from disk.')) return;
+      $('#mgrStatus').textContent='Deleting…';
+      const r=await api('/api/clip/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:c.id})});
+      if(r&&r.ok){ await boot(true); renderClipMgr(); $('#mgrStatus').textContent='Deleted.'; }
+      else { $('#mgrStatus').textContent='Delete failed: '+((r&&r.log)||'error'); }
+    };
+    row.appendChild(del); box.appendChild(row);
+  });
+}
+$('#btnMngClips').onclick=openClipMgr; $('#mgrClose').onclick=closeClipMgr;
+$('#mgrFilter').oninput=renderClipMgr;
 $('#fileAddClip').onchange=e=>{ if(e.target.files.length) openAddClip(e.target.files); e.target.value=''; };
 (function(){ function wireDrop(el){ if(!el) return;
     el.addEventListener('dragover', e=>{ if([...(e.dataTransfer.items||[])].some(it=>it.kind==='file')){ e.preventDefault(); el.classList.add('dragover'); } });
