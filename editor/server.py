@@ -695,11 +695,15 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 p = os.path.join(tmp, f"shape_{k}.png")
                 build_shape_png(o, W, H, p)
                 scale_w = None
-            else:
+            anim_img = False
+            if t == "image":
                 p = os.path.join(PROJ, *o["src"].split("/"))
                 if not os.path.exists(p):
                     continue
-                if (o.get("shadow") or {}).get("on"):
+                anim_img = os.path.splitext(p)[1].lower() in (".gif", ".webp", ".apng")   # animated overlay → loop it
+                if anim_img:
+                    scale_w = max(1, int(W * float(o.get("scale", 0.3))))   # shadow PIL would freeze frame 1; skip for animated
+                elif (o.get("shadow") or {}).get("on"):
                     from PIL import Image
                     im = Image.open(p).convert("RGBA")
                     tw = max(1, int(W * float(o.get("scale", 0.3)))); th = max(1, int(im.height * tw / im.width))
@@ -710,7 +714,10 @@ def apply_overlays(silent, overlays, W, H, tmp):
             dur_o = float(o.get("dur", 3))
             odx, ody, _, _, orot = _anim_exprs(o, s, dur_o, W, "t")     # position + rotation (overlay time = t)
             _, _, amT, has_op, _ = _anim_exprs(o, s, dur_o, W, "T")     # opacity (geq pixel time = T)
-            inputs += ["-loop", "1", "-t", str(e), "-i", p]
+            if anim_img:
+                inputs += ["-stream_loop", "-1", "-t", str(e), "-i", p]   # play+loop the animation over the timeline
+            else:
+                inputs += ["-loop", "1", "-t", str(e), "-i", p]
             filt = []
             if scale_w:
                 filt.append(f"scale={scale_w}:-1")
@@ -1009,6 +1016,7 @@ def render(edl, out_dir=None, out_name=None):
 CTYPE = {".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css",
          ".mp4": "video/mp4", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".wav": "audio/wav",
          ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".json": "application/json",
+         ".gif": "image/gif", ".webp": "image/webp", ".apng": "image/apng",
          ".otf": "font/otf", ".ttf": "font/ttf", ".woff": "font/woff", ".woff2": "font/woff2"}
 
 
