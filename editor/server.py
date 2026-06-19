@@ -797,7 +797,14 @@ def apply_overlays(silent, overlays, W, H, tmp):
     if not fc:
         return silent, None
     out = os.path.join(tmp, "overlaid.mp4")
-    cmd = ([FFMPEG, "-y", "-loglevel", "error"] + inputs + ["-filter_complex", ";".join(fc), "-map", f"[{last}]"]
+    # Write the filtergraph to a file and pass it via -filter_complex_script. With many overlays
+    # (e.g. a per-piece sprinkle expanded to dozens of pieces) the inline -filter_complex string
+    # plus all the -i inputs overflows Windows' ~32K command-line limit (WinError 206). A script
+    # file keeps the (potentially huge) graph off the command line entirely.
+    fc_path = os.path.join(tmp, "filtergraph.txt")
+    with open(fc_path, "w", encoding="utf-8") as fh:
+        fh.write(";\n".join(fc))
+    cmd = ([FFMPEG, "-y", "-loglevel", "error"] + inputs + ["-filter_complex_script", fc_path, "-map", f"[{last}]"]
            + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p",
               "-r", "30", "-video_track_timescale", "90000", "-an", out])
     r = run(cmd)
