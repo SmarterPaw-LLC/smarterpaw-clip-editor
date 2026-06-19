@@ -87,6 +87,10 @@
   .clip .qadd:hover { background:var(--acc,#8ab81d); border-color:var(--acc,#8ab81d); color:#10240a; }
   .clip.dragging { opacity:.5; }
   .emptyhint { color:var(--mut); font-size:12px; padding:14px 12px; line-height:1.5; border:1px dashed var(--line); border-radius:8px; margin:8px; }
+  .ovdrop { position:relative; display:inline-block; }
+  .ovmenu { display:none; position:absolute; top:100%; left:0; z-index:20; margin-top:3px; background:var(--panel2,#222); border:1px solid var(--line); border-radius:8px; padding:4px; min-width:150px; box-shadow:0 6px 20px #0008; }
+  .ovmenu.open { display:flex; flex-direction:column; gap:3px; }
+  .ovmenu .mini { text-align:left; width:100%; }
   #clipGrid, #libGrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(58px,1fr)); gap:6px; max-height:46vh; overflow:auto; padding:4px; }
   #libGrid { grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); }
   .clipcell { aspect-ratio:1; background:#3a3a3a; border:1px solid var(--line); border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:6px; }
@@ -180,7 +184,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.33.0</span>
+  <span class="ver" id="appVer">v1.34.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -350,7 +354,13 @@
   <div class="modal-card">
     <div class="modal-hd"><b>✚ Overlays</b><button class="mini" id="ovClose">✕ Done</button></div>
     <div class="modal-body">
-      <div><button class="mini" id="ovAddText">＋ Text</button> <button class="mini" id="ovAddShape">＋ Shape</button> <button class="mini" id="ovAddImage">＋ Image</button> <button class="mini" id="ovAddClip">🎨 Clip art</button> <button class="mini" id="ovAddLib">📚 Library</button>
+      <div><button class="mini" id="ovAddText">＋ Text</button> <button class="mini" id="ovAddShape">＋ Shape</button>
+        <span class="ovdrop"><button class="mini" id="ovAddImage">＋ Image ▾</button>
+          <div class="ovmenu" id="ovImgMenu">
+            <button class="mini" id="ovImgUpload">🖼 Upload image…</button>
+            <button class="mini" id="ovImgClip">🎨 Clip art…</button>
+            <button class="mini" id="ovImgLib">📚 Library…</button>
+          </div></span>
         <input type="file" id="ovFile" accept="image/*" style="display:none"></div>
       <div style="font-size:11px;color:var(--mut)">Tip: scrub the timeline to where an element should appear, then drag it on the preview to position it.</div>
       <hr>
@@ -1044,6 +1054,44 @@ function buildTextOverlayCanvas(o){
   }
   return {canvas:cv, cw, exportW};
 }
+// ---- Shapes (ported from the social image tool: rect/roundrect/circle + polygon shapes) ----
+const SHAPE_TYPES=[['roundrect','Rounded rect'],['rect','Rectangle'],['circle','Circle / ellipse'],['triangle','Triangle'],['diamond','Diamond'],['pentagon','Pentagon'],['hexagon','Hexagon'],['star','Star'],['starburst','Starburst']];
+function _shapeVerts(shape,x,y,w,h){ const cx=x+w/2,cy=y+h/2,p=[];
+  if(shape==='triangle') return [{x:x+w/2,y},{x:x+w,y:y+h},{x,y:y+h}];
+  if(shape==='diamond') return [{x:x+w/2,y},{x:x+w,y:y+h/2},{x:x+w/2,y:y+h},{x,y:y+h/2}];
+  if(shape==='pentagon'){ const r=Math.min(w,h)/2; for(let i=0;i<5;i++){const a=2*Math.PI/5*i-Math.PI/2;p.push({x:cx+Math.cos(a)*r,y:cy+Math.sin(a)*r});} return p; }
+  if(shape==='hexagon'){ const r=Math.min(w,h)/2; for(let i=0;i<6;i++){const a=Math.PI/3*i-Math.PI/2;p.push({x:cx+Math.cos(a)*r,y:cy+Math.sin(a)*r});} return p; }
+  if(shape==='star'){ const o=Math.min(w,h)/2,ir=o*0.45; for(let i=0;i<10;i++){const rr=i%2?ir:o,a=Math.PI/5*i-Math.PI/2;p.push({x:cx+Math.cos(a)*rr,y:cy+Math.sin(a)*rr});} return p; }
+  if(shape==='starburst'){ const o=Math.min(w,h)/2,ir=o*0.67; for(let i=0;i<24;i++){const rr=i%2?ir:o,a=Math.PI/12*i-Math.PI/2;p.push({x:cx+Math.cos(a)*rr,y:cy+Math.sin(a)*rr});} return p; }
+  return null; }
+function _roundPoly(ctx,pts,r){ if(!pts||!pts.length) return;
+  if(r<=0){ ctx.moveTo(pts[0].x,pts[0].y); for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x,pts[i].y); ctx.closePath(); return; }
+  const n=pts.length; let eff=r; for(let i=0;i<n;i++){ const a=pts[i],b=pts[(i+1)%n]; eff=Math.min(eff,Math.hypot(b.x-a.x,b.y-a.y)/2); }
+  const last=pts[n-1],first=pts[0]; ctx.moveTo((last.x+first.x)/2,(last.y+first.y)/2);
+  for(let j=0;j<n;j++){ const cu=pts[j],nx=pts[(j+1)%n]; ctx.arcTo(cu.x,cu.y,nx.x,nx.y,eff); } ctx.closePath(); }
+function _shapePath(ctx,shape,x,y,w,h,cr){ ctx.beginPath();
+  if(shape==='rect'){ if(cr>0) ctx.roundRect(x,y,w,h,Math.min(cr,w/2,h/2)); else ctx.rect(x,y,w,h); }
+  else if(shape==='circle'){ ctx.ellipse(x+w/2,y+h/2,w/2,h/2,0,0,Math.PI*2); }
+  else if(shape==='roundrect'||!_shapeVerts(shape,x,y,w,h)){ ctx.roundRect(x,y,w,h, cr>0?Math.min(cr,w/2,h/2):Math.min(w,h)*0.12); }
+  else { _roundPoly(ctx,_shapeVerts(shape,x,y,w,h),cr); } }
+function buildShapeCanvas(o){
+  const px=CANVAS_PX[EDL.settings.canvas]||[1080,1920], W=px[0], H=px[1];
+  const innerW=Math.max(2,(o.w||0.5)*W), innerH=Math.max(2,(o.h||0.2)*H);
+  const strokeW=Math.max(0,(o.strokeW||0)*W), pad=Math.ceil(strokeW+2);
+  const cw=Math.ceil(innerW+pad*2), ch=Math.ceil(innerH+pad*2);
+  const cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; const c=cv.getContext('2d');
+  const shape=o.shape||'roundrect', cr=(o.radius||0)*Math.min(innerW,innerH), op=(o.opacity!=null?o.opacity:0.5);
+  c.save(); c.globalAlpha=op;
+  if(o.fillType==='gradient'){ let g; const cx=pad+innerW/2, cy=pad+innerH/2;
+    if(o.gradType==='radial'){ g=c.createRadialGradient(cx,cy,0,cx,cy,Math.max(innerW,innerH)/2); }
+    else { const ang=((o.gradAngle!=null?o.gradAngle:180)-90)*Math.PI/180, len=Math.sqrt(innerW*innerW+innerH*innerH)/2;
+      g=c.createLinearGradient(cx-Math.cos(ang)*len,cy-Math.sin(ang)*len,cx+Math.cos(ang)*len,cy+Math.sin(ang)*len); }
+    g.addColorStop(0,o.gradStart||o.fill||'#000000'); g.addColorStop(1,o.gradEnd||'#ffffff'); c.fillStyle=g;
+  } else c.fillStyle=o.fill||'#000000';
+  _shapePath(c,shape,pad,pad,innerW,innerH,cr); c.fill(); c.restore();
+  if(strokeW>0){ c.save(); c.lineWidth=strokeW; c.lineJoin='round'; c.strokeStyle=o.stroke||'#ffffff'; _shapePath(c,shape,pad,pad,innerW,innerH,cr); c.stroke(); c.restore(); }
+  return {canvas:cv, cw, ch, exportW:W};
+}
 // For render: bake each sticker-text overlay to a PNG (same canvas as preview), upload it,
 // and swap it to an image overlay so the server composites the identical pixels.
 async function bakeStickersForRender(edl){
@@ -1058,6 +1106,12 @@ async function bakeStickersForRender(edl){
     else if(o.type==='text' && o.style!=='sticker' && (o.text||'').trim()){   // always bake plain text so render == preview
       try{ const r=buildTextOverlayCanvas(o); const data=r.canvas.toDataURL('image/png');
         const up=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'text_'+o.id+'.png',data})});
+        if(up&&up.ok){ out.push({id:o.id,type:'image',src:up.src,scale:r.cw/r.exportW,x:o.x,y:o.y,start:o.start,dur:o.dur,ch:o.ch,rot:o.rot,anims:o.anims}); continue; }
+      }catch(e){}
+    }
+    else if(o.type==='shape'){   // bake shape (incl. stars/polygons) so render == preview
+      try{ const r=buildShapeCanvas(o); const data=r.canvas.toDataURL('image/png');
+        const up=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'shape_'+o.id+'.png',data})});
         if(up&&up.ok){ out.push({id:o.id,type:'image',src:up.src,scale:r.cw/r.exportW,x:o.x,y:o.y,start:o.start,dur:o.dur,ch:o.ch,rot:o.rot,anims:o.anims}); continue; }
       }catch(e){}
     }
@@ -1113,9 +1167,10 @@ function renderOverlays(time){
     const active = time>=o.start && time < o.start+(+o.dur||0);
     const visible = active || (ovEdit && o.id===ovSel);
     const ekey=(o.type==='text'&&o.style==='sticker')?'sticker':o.type;   // sticker text renders as a baked canvas image
+    const wantImg=(ekey==='image'||ekey==='sticker'||ekey==='shape');     // shapes/stickers/images are <img>; text is <div>
     let el=ovEls[o.id];
-    if(el && el.dataset.t!==ekey){ el.remove(); el=null; }
-    if(!el){ el = (ekey==='image'||ekey==='sticker')?document.createElement('img'):document.createElement('div'); el.dataset.t=ekey; el.style.position='absolute'; ovEls[o.id]=el; layer.appendChild(el); }
+    if(el && (el.dataset.t!==ekey || (wantImg?el.tagName!=='IMG':el.tagName!=='DIV'))){ el.remove(); el=null; }
+    if(!el){ el = wantImg?document.createElement('img'):document.createElement('div'); el.dataset.t=ekey; el.style.position='absolute'; ovEls[o.id]=el; layer.appendChild(el); }
     el.style.zIndex=(+o.ch||0)*1000+idx;   // higher channel on top; array order breaks ties within a channel
     if(!visible){ el.style.display='none'; return; }
     el.style.display='';
@@ -1124,13 +1179,11 @@ function renderOverlays(time){
       if(el._stkey!==key){ const r=buildStickerCanvas(o); el.src=r.canvas.toDataURL('image/png'); el._cw=r.cw; el._ew=r.exportW; el._stkey=key; }   // re-bake only when props change
       el.style.width=(el._cw/el._ew*100)+'%'; el.style.height='auto'; }
     else if(o.type==='image'){ const u=o.src?('/'+encodeURI(o.src)):''; if(el.getAttribute('src')!==u) el.setAttribute('src',u); el.style.width=((o.scale||0.3)*W)+'px'; el.style.height='auto'; }
-    else if(o.type==='shape'){ el.style.boxSizing='border-box'; el.style.width=((o.w||0.5)*100)+'%'; el.style.height=((o.h||0.2)*100)+'%';
-      const sop=(o.opacity!=null?o.opacity:0.5);
-      if(o.fillType==='gradient'){ const c1=hexA(o.gradStart||o.fill||'#000000',sop), c2=hexA(o.gradEnd||'#ffffff',sop);
-        el.style.background=(o.gradType==='radial')?('radial-gradient(circle, '+c1+', '+c2+')'):('linear-gradient('+(o.gradAngle!=null?o.gradAngle:180)+'deg, '+c1+', '+c2+')'); }
-      else el.style.background=hexA(o.fill||'#000000', sop);
-      el.style.borderRadius=((o.radius||0.04)*W)+'px';
-      el.style.border=((o.strokeW||0)>0)?(((o.strokeW)*W)+'px solid '+(o.stroke||'#ffffff')):'none'; }
+    else if(o.type==='shape'){   // baked canvas image (rect/round/circle/polygon/star…)
+      const px=CANVAS_PX[EDL.settings.canvas]||[1080,1920];
+      const key=[o.shape,o.fill,o.fillType,o.gradStart,o.gradEnd,o.gradType,o.gradAngle,o.opacity,o.w,o.h,o.radius,o.strokeW,o.stroke,EDL.settings.canvas].join('|');
+      if(el._shkey!==key){ const r=buildShapeCanvas(o); el.src=r.canvas.toDataURL('image/png'); el._scw=r.cw; el._sch=r.ch; el._shkey=key; }
+      el.style.width=(el._scw/px[0]*100)+'%'; el.style.height=(el._sch/px[1]*100)+'%'; }
     else { el.textContent=o.text||''; el.style.fontFamily=FONTS[o.font]||FONTS.cooper; el.style.fontWeight='800'; el.style.lineHeight='1';
       el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.whiteSpace='nowrap'; el.style.color=o.color||'#fff';
       if(o.button){ el.style.background=o.bg||'#f07830'; const p=(o.size||0.06)*W; el.style.padding=(p*0.38)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.3)+'px'; el.style.textShadow='none'; }
@@ -1200,7 +1253,8 @@ function buildOvEditor(){
       <div id="ovStickRow3"><label>Line spacing <input type="range" id="ovStGap" min="-0.3" max="0.6" step="0.02" value="${o.lineGap!=null?o.lineGap:0.08}"></label></div>
       <div><label>Size <input type="range" id="ovSize" min="0.02" max="0.18" step="0.005" value="${o.size}"></label></div>`;
   } else if(o.type==='shape'){
-    h+=`<div class="sec">Shape (rounded rectangle)</div>
+    h+=`<div class="sec">Shape</div>
+      <div><label>Type <select id="ovShape">${SHAPE_TYPES.map(s=>`<option value="${s[0]}" ${(o.shape||'roundrect')===s[0]?'selected':''}>${s[1]}</option>`).join('')}</select></label></div>
       <div><label>Fill <select id="ovFillType"><option value="solid">Solid</option><option value="gradient">Gradient</option></select></label>
         <label>Opacity <input type="range" id="ovOpacity" min="0" max="1" step="0.05" value="${o.opacity}"></label></div>
       <div id="ovSolidRow"><label>Color <input type="color" id="ovFill" value="${o.fill}"></label></div>
@@ -1251,7 +1305,7 @@ function buildOvEditor(){
         if($('#ovStAngV')) $('#ovStAngV').textContent=(o.gradAngle||0)+'°'; }
       else { o.color=$('#ovColor').value; o.button=$('#ovBtn').checked; o.bg=$('#ovBg').value; }
       ovTextRows(); }
-    else if(o.type==='shape'){ o.fillType=$('#ovFillType').value; o.fill=$('#ovFill').value; o.opacity=parseFloat($('#ovOpacity').value);
+    else if(o.type==='shape'){ if($('#ovShape')) o.shape=$('#ovShape').value; o.fillType=$('#ovFillType').value; o.fill=$('#ovFill').value; o.opacity=parseFloat($('#ovOpacity').value);
       o.gradStart=$('#ovGradStart').value; o.gradEnd=$('#ovGradEnd').value; o.gradType=$('#ovGradType').value; o.gradAngle=parseFloat($('#ovGradAngle').value);
       o.w=parseFloat($('#ovW').value)||0.5; o.h=parseFloat($('#ovH').value)||0.2; o.radius=parseFloat($('#ovRadius').value)||0; o.strokeW=parseFloat($('#ovStrokeW').value)||0; o.stroke=$('#ovStroke').value;
       if($('#ovGradAngV')) $('#ovGradAngV').textContent=(o.gradAngle||0)+'°'; ovShapeRows(); }
@@ -1287,10 +1341,17 @@ function addTextOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o=
   EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 function addImageOverlay(){ pickImage(src=>{ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'image',src,scale:0.3,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }); }
-function addShapeOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'shape',w:0.6,h:0.18,fill:'#000000',opacity:0.45,radius:0.04,stroke:'#ffffff',strokeW:0,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
+function addShapeOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'shape',shape:'roundrect',w:0.6,h:0.18,fill:'#000000',opacity:0.45,radius:0.04,stroke:'#ffffff',strokeW:0,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 $('#btnOverlays').onclick=openOvModal; $('#ovClose').onclick=closeOvModal;
-$('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay; $('#ovAddImage').onclick=addImageOverlay;
+$('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay;
+// + Image dropdown: Upload / Clip art / Library
+function closeImgMenu(){ $('#ovImgMenu').classList.remove('open'); }
+$('#ovAddImage').onclick=e=>{ e.stopPropagation(); $('#ovImgMenu').classList.toggle('open'); };
+$('#ovImgUpload').onclick=()=>{ closeImgMenu(); addImageOverlay(); };
+$('#ovImgClip').onclick=()=>{ closeImgMenu(); openClipPicker(); };
+$('#ovImgLib').onclick=()=>{ closeImgMenu(); openLibrary(); };
+document.addEventListener('click', e=>{ if(!e.target.closest('.ovdrop')) closeImgMenu(); });
 
 /* ---------- clip art (Iconify icons + emoji → image overlay) ---------- */
 const ICONIFY='https://api.iconify.design';
@@ -1408,7 +1469,7 @@ async function pickLibraryImage(it){
     closeLibrary(); toast('Library image added — drag it on the preview to place it');
   }catch(e){ $('#libStatus').textContent='Couldn’t add that image: '+e.message; }
 }
-$('#ovAddLib').onclick=openLibrary; $('#libClose').onclick=closeLibrary;
+$('#libClose').onclick=closeLibrary;
 $('#libSignIn').onclick=async()=>{ const em=$('#libEmail').value.trim(), pw=$('#libPass').value; if(!em||!pw){ $('#libAuthMsg').textContent='Enter email and password.'; return; }
   $('#libAuthMsg').textContent='Signing in…'; try{ await sbSignIn(em,pw); $('#libPass').value=''; libShowBrowse(); }catch(e){ $('#libAuthMsg').textContent='Sign-in failed: '+e.message; } };
 $('#libPass').onkeydown=e=>{ if(e.key==='Enter') $('#libSignIn').click(); };
@@ -1416,7 +1477,7 @@ $('#libSignOut').onclick=()=>{ sbClear(); libItems=[]; libShowAuth('Signed out.'
 $('#libRefresh').onclick=()=>{ libItems=[]; libLoad(); };
 $('#libQuery').oninput=libRender; $('#libBrand').onchange=libRender; $('#libCat').onchange=libRender;
 
-$('#ovAddClip').onclick=openClipPicker; $('#clipClose').onclick=closeClipPicker;
+$('#clipClose').onclick=closeClipPicker;
 $('#clipQuery').oninput=e=>{ clearTimeout(clipTimer); clipTimer=setTimeout(()=>clipSearch(e.target.value), 350); };
 $('#clipQuery').onkeydown=e=>{ if(e.key==='Enter'){ clearTimeout(clipTimer); clipSearch(e.target.value); } };
 $('#clipUseColor').onchange=()=>clipSearch($('#clipQuery').value||$('#clipGrid').dataset.q||'');
