@@ -201,7 +201,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.42.1</span>
+  <span class="ver" id="appVer">v1.42.2</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -1152,6 +1152,8 @@ function getPieceImg(src){ if(!src) return null; let im=_pieceImgs[src]; if(im) 
 function _ensurePieceLoaded(src){ return new Promise(res=>{ const im=getPieceImg(src);
   if(!im || (im.complete && im.naturalWidth)) return res();
   im.addEventListener('load',()=>res(),{once:true}); im.addEventListener('error',()=>res(),{once:true}); setTimeout(res,3000); }); }
+// Max individually-animated pieces (preview AND render use this so what you see == what exports).
+const PIECE_CAP=80;
 // Deterministic scatter layout (uses the same _rsHash as reshuffle so JS == any future port).
 // Returns [{fx,fy (0..1 box fraction), sc (size mult), rot (rad), ph (anim phase secs)}].
 function sprinkleLayout(o){
@@ -1226,7 +1228,7 @@ async function bakeStickersForRender(edl){
     }
     else if(o.type==='sprinkle' && o.src){
       if(o.perPiece && (o.anims||[]).length){   // per-piece: expand into N animated image overlays (each phase-offset)
-        const lay=sprinkleLayout(o).slice(0,60);   // cap pieces so render stays fast
+        const lay=sprinkleLayout(o).slice(0,PIECE_CAP);   // cap pieces so render stays fast (preview uses same cap)
         lay.forEach((p,i)=>{ out.push({ id:o.id+'_p'+i, type:'image', src:o.src, scale:(o.size||0.08)*p.sc,
           x:(o.x!=null?o.x:0.5)-(o.w||0.7)/2 + p.fx*(o.w||0.7), y:(o.y!=null?o.y:0.5)-(o.h||0.7)/2 + p.fy*(o.h||0.7),
           start:o.start, dur:o.dur, ch:o.ch, rot:(+o.rot||0)+p.rot*180/Math.PI, aphase:p.ph, anims:o.anims }); });
@@ -1255,7 +1257,7 @@ function removeSprinklePieces(id){ if(ovPieces[id]){ ovPieces[id].forEach(el=>el
 function renderSprinklePieces(o, time, layer, baseZ){
   const W=$('#stageWrap').clientWidth||360, im=getPieceImg(o.src);
   const ok = o.perPiece && (o.anims||[]).length && o.src && im && im.complete && im.naturalWidth;
-  const lay = ok ? sprinkleLayout(o) : [];
+  const lay = ok ? sprinkleLayout(o).slice(0,PIECE_CAP) : [];   // same cap as render so preview == export
   let arr=ovPieces[o.id]||[];
   while(arr.length<lay.length){ const d=document.createElement('img'); d.style.position='absolute'; d.style.pointerEvents='none'; d.style.transformOrigin='50% 50%'; layer.appendChild(d); arr.push(d); }
   while(arr.length>lay.length){ arr.pop().remove(); }
@@ -1449,7 +1451,8 @@ function buildOvEditor(){
         <label>H <input type="range" id="ovSpH" min="0.1" max="1" step="0.02" value="${o.h||0.7}"></label></div>
       <div><button class="mini" id="ovSpSeed">🎲 Reshuffle</button>
         <label class="ck" title="Apply animations to each piece separately (with phase offsets) instead of to the whole scatter"><input type="checkbox" id="ovSpPer" ${o.perPiece?'checked':''}> animate each piece</label></div>
-      <div style="font-size:11px;color:var(--mut)">Add animations below — with “animate each piece” on, every sprinkled piece animates on its own. Keep the count modest for fast renders.</div>`;
+      ${o.perPiece && !((o.anims||[]).length) ? `<div style="font-size:11px;color:#f3b54a;background:#f3b54a22;border:1px solid #f3b54a55;border-radius:6px;padding:6px 8px">⚠ “Animate each piece” is on but no animation is added — pieces won’t move. Add one below (Float, Jitter, Wiggle…) to see motion in the export.</div>` : `<div style="font-size:11px;color:var(--mut)">Add animations below — with “animate each piece” on, every sprinkled piece animates on its own.</div>`}
+      ${o.perPiece && (o.count||0)>PIECE_CAP ? `<div style="font-size:11px;color:var(--mut)">Note: with per-piece animation, only the first ${PIECE_CAP} pieces animate (preview and export both capped here for speed).</div>` : ``}`;
   } else if(o.type==='arrow'){
     h+=`<div class="sec">Marker</div>
       <div><label>Type <select id="ovArSub">${ARROW_TYPES.map(s=>`<option value="${s[0]}" ${(o.subtype||'arrow')===s[0]?'selected':''}>${s[1]}</option>`).join('')}</select></label>
