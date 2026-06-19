@@ -12,13 +12,13 @@ ONE-TIME: set BASE_URL below to your GitHub Pages URL.
 """
 import os, re, json, shutil, zipfile
 
-# >>> EDIT THIS to your GitHub Pages URL (no trailing slash) <<<
-BASE_URL = "https://USERNAME.github.io/smarterclip"
+# GitHub Pages URL (no trailing slash)
+BASE_URL = "https://smarterpaw-llc.github.io/smarterpaw-clip-editor"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJ = os.path.dirname(HERE)
 EDITOR = os.path.join(PROJ, "editor")
-OUT = os.path.join(HERE, "release")
+OUT = os.path.join(PROJ, "docs")   # GitHub Pages serves from main /docs; this folder is fully managed here
 
 def app_version():
     html = open(os.path.join(EDITOR, "index.html"), encoding="utf-8").read()

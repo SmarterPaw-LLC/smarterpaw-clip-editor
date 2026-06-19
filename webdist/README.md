@@ -16,27 +16,27 @@ How it works:
 
 ---
 
-## One-time setup (you do this once)
+Configured for: `https://smarterpaw-llc.github.io/smarterpaw-clip-editor`
+(repo `SmarterPaw-LLC/smarterpaw-clip-editor`, Pages = branch `main` / folder `/docs`).
 
-1. Create a GitHub repo, e.g. `smarterclip`, and turn on **GitHub Pages**
-   (Settings → Pages → deploy from a branch, e.g. `main` / `/docs`).
-   Your URL will be like `https://YOURNAME.github.io/smarterclip`.
+## One-time setup
 
-2. Open `webdist/make_release.py` and set **`BASE_URL`** to that exact URL
-   (no trailing slash).
+1. Repo **Settings → Pages → Build and deployment**: Source = *Deploy from a branch*,
+   Branch = `main`, folder = **`/docs`**, then **Save**.
+   (If you ever move the repo, update `BASE_URL` in `make_release.py`.)
 
 ## Each time you ship an update
 
-3. `python webdist/make_release.py`
+2. `python webdist/make_release.py`
    - Reads the version from `editor/index.html` (the `appVer` badge).
-   - Builds `webdist/release/` with: the app zip, `version.json`, `launcher.ps1`,
-     `SmarterClip.bat`, and `index.html` (the landing page).
+   - Writes the whole Pages site into **`docs/`**: the app zip, `version.json`,
+     `launcher.ps1`, `SmarterClip.bat`, and `index.html` (landing page).
+   - `docs/` is fully managed by this script (it's rebuilt each run).
 
-4. Publish the **contents of `webdist/release/`** to your Pages location
-   (e.g. copy them into the repo's `/docs` folder and push).
+3. Commit `docs/` and push (GitHub Desktop). Pages redeploys in ~1 min.
 
-5. Share the link: `https://YOURNAME.github.io/smarterclip/`
-   The page has a **Download launcher** button. That's the link you give people.
+4. Share the link: `https://smarterpaw-llc.github.io/smarterpaw-clip-editor/`
+   The page has a **Download launcher** button — that's the link you give people.
 
 Users who already have it auto-update on next launch — you don't resend anything.
 
