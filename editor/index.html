@@ -52,7 +52,7 @@
   .blk { position:absolute; top:3px; bottom:3px; border-radius:4px; font-size:10px; color:#fff; overflow:hidden; white-space:nowrap; cursor:grab; box-sizing:border-box; padding:2px 6px; min-width:8px; }
   .blk.clip { background:#34415a; box-shadow:inset 0 0 0 1px #5b8cff44; cursor:pointer; }
   .blk.endcard { background:#4a3f1a; box-shadow:inset 0 0 0 1px var(--acc); cursor:pointer; }
-  .blk.ov-text { background:#2c6e49; } .blk.ov-shape { background:#5d539e; } .blk.ov-image { background:#7a5230; }
+  .blk.ov-text { background:#2c6e49; } .blk.ov-shape { background:#5d539e; } .blk.ov-image { background:#7a5230; } .blk.ov-sprinkle { background:#8a5a2b; }
   .trk.audiolane { height:30px; background:#1a2620; }
   .blk.audio { background:#1f5b46; box-shadow:inset 0 0 0 1px #3fae7e55; cursor:default; display:flex; align-items:center; gap:8px; padding:2px 8px; }
   .blk.audio.empty { background:#26201a; color:var(--mut); box-shadow:inset 0 0 0 1px var(--line); }
@@ -201,7 +201,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.38.0</span>
+  <span class="ver" id="appVer">v1.39.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -390,6 +390,7 @@
             <button class="mini" id="ovImgClip">🎨 Clip art…</button>
             <button class="mini" id="ovImgLib">📚 Library…</button>
           </div></span>
+        <button class="mini" id="ovAddSprinkle">✨ Sprinkle</button>
         <input type="file" id="ovFile" accept="image/*" style="display:none"></div>
       <div style="font-size:11px;color:var(--mut)">Tip: scrub the timeline to where an element should appear, then drag it on the preview to position it.</div>
       <hr>
@@ -1126,6 +1127,34 @@ function buildShapeCanvas(o){
   if(strokeW>0){ c.save(); c.lineWidth=strokeW; c.lineJoin='round'; c.strokeStyle=o.stroke||'#ffffff'; _shapePath(c,shape,pad,pad,innerW,innerH,cr); c.stroke(); c.restore(); }
   return {canvas:cv, cw, ch, exportW:W};
 }
+// ---- Sprinkle: scatter copies of a piece image (from the Library / clip art / upload) ----
+const _pieceImgs={};
+function getPieceImg(src){ if(!src) return null; let im=_pieceImgs[src]; if(im) return im;
+  im=new Image(); im.onload=()=>{ try{renderOverlays(playhead);}catch(e){} }; im.src='/'+encodeURI(src); _pieceImgs[src]=im; return im; }
+function _ensurePieceLoaded(src){ return new Promise(res=>{ const im=getPieceImg(src);
+  if(!im || (im.complete && im.naturalWidth)) return res();
+  im.addEventListener('load',()=>res(),{once:true}); im.addEventListener('error',()=>res(),{once:true}); setTimeout(res,3000); }); }
+function _mulberry(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function buildSprinkleCanvas(o){
+  const px=CANVAS_PX[EDL.settings.canvas]||[1080,1920], W=px[0], H=px[1];
+  const innerW=Math.max(2,(o.w||0.7)*W), innerH=Math.max(2,(o.h||0.7)*H);
+  const sizePx=Math.max(4,(o.size||0.08)*W), pad=Math.ceil(sizePx*0.9);
+  const cw=Math.ceil(innerW+pad*2), ch=Math.ceil(innerH+pad*2);
+  const cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; const c=cv.getContext('2d');
+  const im=getPieceImg(o.src);
+  if(!im || !im.complete || !im.naturalWidth) return {canvas:cv, cw, ch, exportW:W, ready:false};
+  const ar=im.naturalHeight/im.naturalWidth || 1;
+  const n=Math.max(1,Math.min(300,Math.round(o.count||18)));
+  const jit=(o.jitter!=null?o.jitter:0.4), rotJit=(o.rotJitter!=null?o.rotJitter:20)*Math.PI/180;
+  const rnd=_mulberry((o.seed||1)>>>0);
+  c.globalAlpha=(o.opacity!=null?o.opacity:1);
+  for(let i=0;i<n;i++){
+    const sc=Math.max(0.15,1+(rnd()*2-1)*jit), pw=Math.max(2,sizePx*sc), ph=pw*ar;
+    const cx=pad+rnd()*innerW, cy=pad+rnd()*innerH, rot=(rnd()*2-1)*rotJit;
+    c.save(); c.translate(cx,cy); if(rot) c.rotate(rot); c.drawImage(im,-pw/2,-ph/2,pw,ph); c.restore();
+  }
+  return {canvas:cv, cw, ch, exportW:W, ready:true};
+}
 // For render: bake each sticker-text overlay to a PNG (same canvas as preview), upload it,
 // and swap it to an image overlay so the server composites the identical pixels.
 async function bakeStickersForRender(edl){
@@ -1147,6 +1176,13 @@ async function bakeStickersForRender(edl){
       try{ const r=buildShapeCanvas(o); const data=r.canvas.toDataURL('image/png');
         const up=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'shape_'+o.id+'.png',data})});
         if(up&&up.ok){ out.push({id:o.id,type:'image',src:up.src,scale:r.cw/r.exportW,x:o.x,y:o.y,start:o.start,dur:o.dur,ch:o.ch,rot:o.rot,anims:o.anims}); continue; }
+      }catch(e){}
+    }
+    else if(o.type==='sprinkle' && o.src){   // bake the scatter to a PNG so render == preview
+      try{ await _ensurePieceLoaded(o.src); const r=buildSprinkleCanvas(o);
+        if(r.ready){ const data=r.canvas.toDataURL('image/png');
+          const up=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'sprinkle_'+o.id+'.png',data})});
+          if(up&&up.ok){ out.push({id:o.id,type:'image',src:up.src,scale:r.cw/r.exportW,x:o.x,y:o.y,start:o.start,dur:o.dur,ch:o.ch,rot:o.rot,anims:o.anims}); continue; } }
       }catch(e){}
     }
     out.push(o);
@@ -1201,7 +1237,7 @@ function renderOverlays(time){
     const active = time>=o.start && time < o.start+(+o.dur||0);
     const visible = active || (ovEdit && o.id===ovSel);
     const ekey=(o.type==='text'&&o.style==='sticker')?'sticker':o.type;   // sticker text renders as a baked canvas image
-    const wantImg=(ekey==='image'||ekey==='sticker'||ekey==='shape');     // shapes/stickers/images are <img>; text is <div>
+    const wantImg=(ekey==='image'||ekey==='sticker'||ekey==='shape'||ekey==='sprinkle');     // shapes/stickers/images/sprinkle are <img>; text is <div>
     let el=ovEls[o.id];
     if(el && (el.dataset.t!==ekey || (wantImg?el.tagName!=='IMG':el.tagName!=='DIV'))){ el.remove(); el=null; }
     if(!el){ el = wantImg?document.createElement('img'):document.createElement('div'); el.dataset.t=ekey; el.style.position='absolute'; ovEls[o.id]=el; layer.appendChild(el); }
@@ -1220,6 +1256,11 @@ function renderOverlays(time){
       const px=CANVAS_PX[EDL.settings.canvas]||[1080,1920];
       const key=[o.shape,o.fill,o.fillType,o.gradStart,o.gradEnd,o.gradType,o.gradAngle,o.opacity,o.w,o.h,o.radius,o.strokeW,o.stroke,EDL.settings.canvas].join('|');
       if(el._shkey!==key){ const r=buildShapeCanvas(o); el.src=r.canvas.toDataURL('image/png'); el._scw=r.cw; el._sch=r.ch; el._shkey=key; }
+      el.style.width=(el._scw/px[0]*100)+'%'; el.style.height=(el._sch/px[1]*100)+'%'; }
+    else if(o.type==='sprinkle'){   // baked scatter of a piece image
+      const px=CANVAS_PX[EDL.settings.canvas]||[1080,1920];
+      const key=[o.src,o.count,o.size,o.jitter,o.rotJitter,o.seed,o.opacity,o.w,o.h,EDL.settings.canvas].join('|');
+      if(el._spkey!==key){ const r=buildSprinkleCanvas(o); el.src=r.canvas.toDataURL('image/png'); el._scw=r.cw; el._sch=r.ch; if(r.ready) el._spkey=key; }
       el.style.width=(el._scw/px[0]*100)+'%'; el.style.height=(el._sch/px[1]*100)+'%'; }
     else { el.textContent=o.text||''; el.style.fontFamily=FONTS[o.font]||FONTS.cooper; el.style.fontWeight='800'; el.style.lineHeight='1';
       el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.whiteSpace='nowrap'; el.style.color=o.color||'#fff';
@@ -1257,8 +1298,8 @@ function renderOvList(){
     histCommit(); [EDL.overlays[i],EDL.overlays[j]]=[EDL.overlays[j],EDL.overlays[i]]; renderOvList(); buildOvEditor(); renderOverlays(playhead); renderTracks(); };
   ovs.slice().reverse().forEach(o=>{ const row=document.createElement('div'); row.className='ecline'; if(o.id===ovSel) row.style.borderColor='var(--acc2)';
     const thumb=(o.type==='image'&&o.src)?`<img src="/${encodeURI(o.src)}" style="height:24px;width:auto;max-width:46px;border-radius:3px;background:#0008;flex:none">`:'';
-    const icon=o.type==='image'?'🖼':(o.type==='shape'?'▭':'🅣');
-    const name=o.type==='image'?((o.src||'').split('/').pop()):(o.type==='shape'?'shape':((o.text||'').slice(0,18)||'text'));
+    const icon=o.type==='image'?'🖼':(o.type==='shape'?'▭':(o.type==='sprinkle'?'✨':'🅣'));
+    const name=o.type==='image'?((o.src||'').split('/').pop()):(o.type==='shape'?'shape':(o.type==='sprinkle'?('sprinkle · '+((o.src||'').split('/').pop()||'no image')):((o.text||'').slice(0,18)||'text')));
     row.innerHTML=`<div style="display:flex;flex-direction:column;gap:1px"><button class="mini ovup" title="bring forward">▲</button><button class="mini ovdn" title="send back">▼</button></div>
       <span class="ovsel" style="flex:1;cursor:pointer;display:flex;align-items:center;gap:6px;min-width:0">${thumb}<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${icon} ${name}</span><span style="color:var(--mut);flex:none">@${fmt(o.start)}–${fmt(o.start+(+o.dur||0))}s</span></span>
       <button class="mini ovdel" title="delete">✕</button>`;
@@ -1305,6 +1346,18 @@ function buildOvEditor(){
       <div><label>Radius <input type="range" id="ovRadius" min="0" max="0.3" step="0.005" value="${o.radius}"></label></div>
       <div><label>Border <input type="range" id="ovStrokeW" min="0" max="0.03" step="0.002" value="${o.strokeW}"></label>
         <input type="color" id="ovStroke" value="${o.stroke}" title="border color"></div>`;
+  } else if(o.type==='sprinkle'){
+    h+=`<div class="sec">Sprinkle — scatter an image</div>
+      <div><b style="font-size:11px;color:var(--mut)">Piece:</b> <span id="ovSpName" style="font-size:11px">${o.src?((o.src||'').split('/').pop()):'⚠ none — choose an image'}</span></div>
+      <div><button class="mini" id="ovSpLib">📚 Library</button> <button class="mini" id="ovSpClip">🎨 Clip art</button> <button class="mini" id="ovSpUp">🖼 Upload</button></div>
+      <div><label>Count <input type="range" id="ovSpCount" min="1" max="120" step="1" value="${o.count||18}"></label></div>
+      <div><label>Size <input type="range" id="ovSpSize" min="0.02" max="0.3" step="0.005" value="${o.size!=null?o.size:0.08}"></label>
+        <label>Variation <input type="range" id="ovSpJit" min="0" max="0.8" step="0.05" value="${o.jitter!=null?o.jitter:0.4}"></label></div>
+      <div><label>Rotation <input type="range" id="ovSpRot" min="0" max="180" step="5" value="${o.rotJitter!=null?o.rotJitter:20}"></label>
+        <label>Opacity <input type="range" id="ovSpOp" min="0.1" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label></div>
+      <div><label>Spread W <input type="range" id="ovSpW" min="0.1" max="1" step="0.02" value="${o.w||0.7}"></label>
+        <label>H <input type="range" id="ovSpH" min="0.1" max="1" step="0.02" value="${o.h||0.7}"></label></div>
+      <div><button class="mini" id="ovSpSeed">🎲 Reshuffle</button></div>`;
   } else {
     h+=`<div class="sec">Image</div><div><label>Size <input type="range" id="ovScale" min="0.05" max="1" step="0.01" value="${o.scale}"></label>
       <button class="mini" id="ovReplace">Replace…</button></div>`;
@@ -1347,10 +1400,18 @@ function buildOvEditor(){
       o.gradStart=$('#ovGradStart').value; o.gradEnd=$('#ovGradEnd').value; o.gradType=$('#ovGradType').value; o.gradAngle=parseFloat($('#ovGradAngle').value);
       o.w=parseFloat($('#ovW').value)||0.5; o.h=parseFloat($('#ovH').value)||0.2; o.radius=parseFloat($('#ovRadius').value)||0; o.strokeW=parseFloat($('#ovStrokeW').value)||0; o.stroke=$('#ovStroke').value;
       if($('#ovGradAngV')) $('#ovGradAngV').textContent=(o.gradAngle||0)+'°'; ovShapeRows(); }
+    else if(o.type==='sprinkle'){ o.count=parseFloat($('#ovSpCount').value)||18; o.size=parseFloat($('#ovSpSize').value)||0.08;
+      o.jitter=parseFloat($('#ovSpJit').value); o.rotJitter=parseFloat($('#ovSpRot').value); o.opacity=parseFloat($('#ovSpOp').value);
+      o.w=parseFloat($('#ovSpW').value)||0.7; o.h=parseFloat($('#ovSpH').value)||0.7; }
     else o.scale=parseFloat($('#ovScale').value)||0.3;
     renderOverlays(playhead); renderOvList(); };
   box.querySelectorAll('input,select,textarea').forEach(el=>{ el.oninput=upd; el.onchange=upd; });
   if($('#ovRot0')) $('#ovRot0').onclick=()=>{ $('#ovRot').value=0; upd(); };
+  const spSet=src=>{ o.src=src; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
+  if($('#ovSpLib')) $('#ovSpLib').onclick=()=>openLibrary(spSet);
+  if($('#ovSpClip')) $('#ovSpClip').onclick=()=>openClipPicker(spSet);
+  if($('#ovSpUp')) $('#ovSpUp').onclick=()=>pickImage(spSet);
+  if($('#ovSpSeed')) $('#ovSpSeed').onclick=()=>{ histCommit(); o.seed=Math.floor(Math.random()*1e6); renderOverlays(playhead); };
   function animCtrl(ai,a,c){ const key=c[0],label=c[1],kind=c[2],v=a[key];
     if(kind==='text'){ return `<label>${label} <input type="text" class="anc" data-ai="${ai}" data-k="${key}" value="${(v||'').replace(/"/g,'&quot;')}" style="width:46px;text-align:center"></label>`; }
     if(kind==='img'){ const fn=(v||'').split('/').pop()||'none'; return `<label>${label} <button class="mini anpick" data-ai="${ai}" data-k="${key}">${v?'Replace':'Choose'}…</button> <span style="font-size:10px;color:var(--mut)">${fn}</span></label>`; }
@@ -1361,7 +1422,7 @@ function buildOvEditor(){
       return `<div class="ecline" style="flex-direction:column;align-items:stretch;gap:4px"><div style="display:flex;align-items:center;gap:6px"><b style="flex:1;font-size:12px">${def.label}</b><button class="mini anrm" data-ai="${ai}" title="remove">✕</button></div><div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--mut)">${def.ctrls.map(c=>animCtrl(ai,a,c)).join('')}</div></div>`;
     }).join('') : '<div style="color:var(--mut);font-size:11px">No animations yet.</div>';
     const have=new Set(anims.map(a=>a.type));
-    const png=(o.type==='image'||o.type==='shape'||(o.type==='text'&&o.style==='sticker'));   // rotation effects need a pixel layer
+    const png=(o.type==='image'||o.type==='shape'||o.type==='sprinkle'||(o.type==='text'&&o.style==='sticker'));   // rotation effects need a pixel layer
     $('#ovAnimAdd').innerHTML='<option value="">＋ Add animation…</option>'+Object.keys(ANIM_DEFS).filter(t=>!have.has(t)&&(!ANIM_DEFS[t].png||png)).map(t=>`<option value="${t}">${ANIM_DEFS[t].label}</option>`).join('');
     L.querySelectorAll('.anc').forEach(el=>{ el.oninput=el.onchange=()=>{ let v=el.value; if(el.type==='number'||el.type==='range') v=parseFloat(v); o.anims[+el.dataset.ai][el.dataset.k]=v; renderOverlays(playhead); }; });
     L.querySelectorAll('.anpick').forEach(b=>{ b.onclick=()=>{ const ai=+b.dataset.ai, k=b.dataset.k; pickImage(src=>{ histCommit(); o.anims[ai][k]=src; renderAnimList(); renderOverlays(playhead); }); }; });
@@ -1379,10 +1440,15 @@ function addTextOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o=
   EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 function addImageOverlay(){ pickImage(src=>{ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'image',src,scale:0.3,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }); }
+function addSprinkleOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[];
+  const o={id:uid(),type:'sprinkle',src:'',w:0.7,h:0.7,count:18,size:0.08,jitter:0.4,rotJitter:20,seed:Math.floor(Math.random()*1e6),opacity:1,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
+  EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead);
+  openLibrary(src=>{ o.src=src; renderOvList(); buildOvEditor(); renderOverlays(playhead); });   // immediately pick the piece image
+}
 function addShapeOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'shape',shape:'roundrect',w:0.6,h:0.18,fill:'#000000',opacity:0.45,radius:0.04,stroke:'#ffffff',strokeW:0,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 $('#btnOverlays').onclick=openOvModal; $('#ovClose').onclick=closeOvModal;
-$('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay;
+$('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay; $('#ovAddSprinkle').onclick=addSprinkleOverlay;
 // + Image dropdown: Upload / Clip art / Library
 function closeImgMenu(){ $('#ovImgMenu').classList.remove('open'); }
 $('#ovAddImage').onclick=e=>{ e.stopPropagation(); $('#ovImgMenu').classList.toggle('open'); };
@@ -1393,8 +1459,9 @@ document.addEventListener('click', e=>{ if(!e.target.closest('.ovdrop')) closeIm
 
 /* ---------- clip art (Iconify icons + emoji → image overlay) ---------- */
 const ICONIFY='https://api.iconify.design';
-function openClipPicker(){ $('#clipModal').style.display='flex'; $('#clipStatus').textContent=''; $('#clipQuery').focus(); if(!$('#clipGrid').dataset.q) clipSearch('cat'); }
-function closeClipPicker(){ $('#clipModal').style.display='none'; }
+let _pickInto=null;   // when set, library/clip-art pick calls this with the local src instead of adding an overlay
+function openClipPicker(cb){ _pickInto=cb||null; $('#clipModal').style.display='flex'; $('#clipStatus').textContent=''; $('#clipQuery').focus(); if(!$('#clipGrid').dataset.q) clipSearch('cat'); }
+function closeClipPicker(){ _pickInto=null; $('#clipModal').style.display='none'; }
 let clipTimer=null;
 async function clipSearch(q){ const grid=$('#clipGrid'); q=(q||'').trim();
   if(q.length<2){ grid.innerHTML='<div style="grid-column:1/-1;color:var(--mut);font-size:12px;padding:8px">Type at least 2 letters…</div>'; return; }
@@ -1431,6 +1498,7 @@ async function pickClip(name){
     const data=await iconifyToPng(name, color, 512);
     const res=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'clip_'+name.replace(/[^a-z0-9]+/gi,'_')+'.png',data})});
     if(!res||!res.ok){ $('#clipStatus').textContent='Upload failed.'; return; }
+    if(_pickInto){ const cb=_pickInto; _pickInto=null; closeClipPicker(); cb(res.src); return; }   // "pick into" mode (e.g. sprinkle piece)
     histCommit(); EDL.overlays=EDL.overlays||[];
     const o={id:uid(),type:'image',src:res.src,scale:0.22,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
     const mo=$('#clipMotion')&&$('#clipMotion').value;   // looping motion → ready animated sticker
@@ -1465,8 +1533,8 @@ async function sbRest(pathQs){
   if(!r.ok) throw new Error('library request failed ('+r.status+')'); return r.json();
 }
 function libPublicUrl(path){ return SB_URL+'/storage/v1/object/public/image-library/'+path.split('/').map(encodeURIComponent).join('/'); }
-function openLibrary(){ $('#libModal').style.display='flex'; if(sbSession){ libShowBrowse(); } else { libShowAuth(); } }
-function closeLibrary(){ $('#libModal').style.display='none'; }
+function openLibrary(cb){ _pickInto=cb||null; $('#libModal').style.display='flex'; if(sbSession){ libShowBrowse(); } else { libShowAuth(); } }
+function closeLibrary(){ _pickInto=null; $('#libModal').style.display='none'; }
 function libShowAuth(msg){ $('#libAuth').style.display=''; $('#libBrowse').style.display='none'; $('#libAuthMsg').textContent=msg||''; if(sbSession&&sbSession.email) $('#libEmail').value=sbSession.email; }
 function libShowBrowse(){ $('#libAuth').style.display='none'; $('#libBrowse').style.display=''; if(!libItems.length) libLoad(); else libRender(); }
 async function libLoad(){ $('#libStatus').textContent='Loading library…';
@@ -1503,6 +1571,7 @@ async function pickLibraryImage(it){
     const nm='lib_'+((it.name||'image').replace(/[^a-z0-9]+/gi,'_').slice(0,40))+'_'+(it.id)+'.'+((it.storage_path.split('.').pop()||'png').toLowerCase());
     const res=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nm,data})});
     if(!res||!res.ok){ $('#libStatus').textContent='Upload failed.'; return; }
+    if(_pickInto){ const cb=_pickInto; _pickInto=null; closeLibrary(); cb(res.src); return; }   // "pick into" mode (e.g. sprinkle piece)
     histCommit(); EDL.overlays=EDL.overlays||[];
     const o={id:uid(),type:'image',src:res.src,scale:0.3,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
     EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead);
@@ -1568,7 +1637,7 @@ function renderTracks(){
 // Build one overlay bar element on its channel lane (drag to move/retime/change channel).
 function buildOverlayBar(o,total){ const b=document.createElement('div'); b.className='blk ov-'+o.type+(o.id===ovSel?' sel':'');
   b.style.left=((+o.start||0)/total*100)+'%'; b.style.width=((+o.dur||0)/total*100)+'%';
-  b.appendChild(document.createTextNode(o.type==='image'?'🖼 image':(o.type==='shape'?'▭ shape':('🅣 '+(o.text||'text')))));
+  b.appendChild(document.createTextNode(o.type==='image'?'🖼 image':(o.type==='shape'?'▭ shape':(o.type==='sprinkle'?'✨ sprinkle':('🅣 '+(o.text||'text'))))));
   const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR'; b.appendChild(hL); b.appendChild(hR);
   ovBarInteract(b,hL,hR,o,total); return b; }
 // Build one clip block element for a layout entry `o` (handles base vs upper-channel behavior).
