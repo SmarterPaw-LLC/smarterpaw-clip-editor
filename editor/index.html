@@ -153,9 +153,9 @@
      background:repeating-linear-gradient(45deg, #ffffff14, #ffffff14 5px, #ffffff30 5px, #ffffff30 10px);
      border-left:1px dashed #ffffffaa; display:flex; align-items:center; justify-content:center; overflow:hidden; }
   .blk .freeze span { font-size:9px; color:#dfe9ff; white-space:nowrap; text-shadow:0 1px 2px #000; }
-  .clipicons { position:absolute; top:1px; right:2px; z-index:3; display:flex; gap:1px; }
-  .clipicons .cic { font-size:10px; line-height:14px; width:15px; text-align:center; cursor:pointer; opacity:.65; border-radius:3px; }
-  .clipicons .cic:hover { opacity:1; background:#0006; }
+  .clipicons { position:absolute; top:2px; right:2px; z-index:5; display:flex; gap:3px; padding:1px 3px; background:rgba(10,12,16,.55); border-radius:6px; }
+  .clipicons .cic { font-size:13px; line-height:18px; width:20px; height:18px; text-align:center; cursor:pointer; opacity:.85; border-radius:4px; }
+  .clipicons .cic:hover { opacity:1; background:#fff3; }
   .settings { padding:10px 12px; border-top:1px solid var(--line); }
   .settings .row { display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
   .settings label { font-size:12px; color:var(--mut); min-width:64px; }
@@ -201,7 +201,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.43.0</span>
+  <span class="ver" id="appVer">v1.44.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -247,6 +247,7 @@
       <span class="arlbl">Aspect</span>
       <button class="arbtn" data-ar="9x16">9:16</button>
       <button class="arbtn" data-ar="4x5">4:5</button>
+      <button class="arbtn" data-ar="1x1">1:1</button>
       <button class="arbtn" data-ar="16x9">16:9</button>
       <span class="ardim" id="arDim"></span>
     </div>
@@ -302,7 +303,7 @@
     <div class="settings">
       <div class="row"><label>Canvas</label>
         <select id="setCanvas"><option value="9x16">9:16 Reels/Stories</option>
-          <option value="4x5">4:5 Meta feed</option><option value="16x9">16:9 YouTube</option></select></div>
+          <option value="4x5">4:5 Meta feed</option><option value="1x1">1:1 Square</option><option value="16x9">16:9 YouTube</option></select></div>
       <div class="row"><label>Music</label><select id="setMusic"></select></div>
       <div class="row"><label>Level</label><input type="range" id="setMusicVol" min="0" max="1" step="0.05" style="flex:1"> <span id="setMusicVolV" style="font-size:11px;color:var(--mut);min-width:32px">50%</span></div>
       <div class="row"><label>End card</label><button class="mini" id="btnEndcard">🎬 Edit end card…</button></div>
@@ -453,7 +454,7 @@
     <div class="bd">
       <div class="row"><label class="k">Canvas</label>
         <select id="exCanvas"><option value="9x16">9:16 Reels / Stories</option>
-          <option value="4x5">4:5 Meta feed</option><option value="16x9">16:9 YouTube</option></select></div>
+          <option value="4x5">4:5 Meta feed</option><option value="1x1">1:1 Square</option><option value="16x9">16:9 YouTube</option></select></div>
       <div class="row"><label class="k">Folder</label><input type="text" id="exDir" spellcheck="false"></div>
       <div class="row"><label class="k">Filename</label><input type="text" id="exName" placeholder="project name" spellcheck="false"></div>
       <div class="row"><label class="k"></label><span id="exNamePreview" style="font-size:11px;color:var(--mut)"></span></div>
@@ -471,7 +472,7 @@
       <div class="row"><label class="k">Name</label><input type="text" id="aiName" placeholder="e.g. Zoomies hero" spellcheck="false"></div>
       <div class="row"><label class="k">Placement</label>
         <select id="aiCanvas"><option value="9x16">9:16 Reels / Stories</option>
-          <option value="4x5">4:5 Meta feed</option><option value="16x9">16:9 YouTube</option></select>
+          <option value="4x5">4:5 Meta feed</option><option value="1x1">1:1 Square</option><option value="16x9">16:9 YouTube</option></select>
         <label class="k" style="min-width:auto">Length</label>
         <input type="number" id="aiLen" value="15" min="3" max="120" step="1" style="width:64px"><span style="color:var(--mut);font-size:12px">sec</span></div>
       <div class="row" style="align-items:flex-start"><label class="k" style="margin-top:6px">Brief</label>
@@ -495,7 +496,7 @@ let sel = -1;          // selected segment index
 const stage = $('#stageWrap');
 const vids = {};       // clip id -> its own preloaded, muted <video> element
 let activeId = null;   // currently visible clip id
-const ASPECT = {'9x16':[9,16], '4x5':[4,5], '16x9':[16,9]};
+const ASPECT = {'9x16':[9,16], '4x5':[4,5], '1x1':[1,1], '16x9':[16,9]};
 function getVid(id){
   if(vids[id]) return vids[id];
   const c=MAN.byId[id]; if(!c) return null;
@@ -736,6 +737,24 @@ function segAction(a,i){
   else if(a==='mode'){ EDL.segments[i].editMode=(EDL.segments[i].editMode==='free')?'roll':'free'; }
   renderTimeline();
 }
+// Split a clip cleanly into two at the playhead. Part 1 keeps [in, here); part 2 is [here, end).
+function splitAtPlayhead(i){
+  const seg=EDL.segments[i]; if(!seg) return;
+  if(seg.locked){ toast('Unlock the clip first (🔒)'); return; }
+  const L=layout().all.find(o=>o.idx===i); if(!L){ toast('Clip is not on the timeline'); return; }
+  const ph=playhead||0, eps=0.06;
+  if(ph<=L.start+eps || ph>=L.end-eps){ toast('Move the playhead inside this clip, then split'); return; }
+  const spd=segSpeed(seg), totalSrc=Math.max(0.05,+seg.dur||1);
+  const srcOff=Math.round((ph-L.start)*spd*1000)/1000;   // timeline offset → source seconds from seg.in
+  if(srcOff<=0.02 || srcOff>=totalSrc-0.02){ toast('Too close to the edge to split'); return; }
+  histCommit();
+  const second=JSON.parse(JSON.stringify(seg));
+  second.in=(+seg.in||0)+srcOff; second.dur=totalSrc-srcOff; seg.dur=srcOff;
+  second.cap=''; second.fadeIn=0; seg.fadeOut=0;                 // no caption/fade duplication at the cut
+  if((+seg.ch||0)===0) second.gap=0; else second.t0=ph;          // ch0 follows sequentially; upper clip pins at playhead
+  EDL.segments.splice(i+1,0,second);
+  sel=i; renderTimeline(); loadSegIntoTrim(); renderOverlays(playhead); toast('Clip split at playhead');
+}
 function selectSeg(i){ stop(); sel=i; renderTimeline(); loadSegIntoTrim(); }
 function loadSegIntoTrim(){
   if(sel<0||!EDL.segments[sel]) return; const s=EDL.segments[sel]; const c=MAN.byId[s.id];
@@ -904,7 +923,7 @@ $('#btnAddSel').onclick=()=>{ const id=$('#btnAddSel').dataset.id || (sel>=0&&ED
 })();
 
 /* ---------- settings ---------- */
-const CANVAS_PX={'9x16':[1080,1920],'4x5':[1080,1350],'16x9':[1920,1080]};
+const CANVAS_PX={'9x16':[1080,1920],'4x5':[1080,1350],'1x1':[1080,1080],'16x9':[1920,1080]};
 function chooseCanvas(c){ EDL.settings.canvas=c; if($('#setCanvas')) $('#setCanvas').value=c;
   document.querySelectorAll('.arbtn').forEach(b=>b.classList.toggle('on', b.dataset.ar===c));
   const px=CANVAS_PX[c]||[1080,1920]; if($('#arDim')) $('#arDim').textContent=px[0]+'×'+px[1];
@@ -1785,18 +1804,21 @@ function buildClipBlock(o,total){ const i=o.idx, sg=o.seg;
   clipDragMulti(b,o);
   const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR'; b.appendChild(hL); b.appendChild(hR);
   if(o.ch===0){ clipResize(hL,i,'l'); clipResize(hR,i,'r'); } else { clipResizeUpper(hL,o,'l'); clipResizeUpper(hR,o,'r'); }
-  if(o.ch===0){   // roll/free is a base-track sequencing concept; upper clips are always free-positioned
-    const md=document.createElement('span'); md.className='modedot'+(sg.editMode==='free'?' free':''); md.textContent=sg.editMode==='free'?'✂':'🔗';
-    md.title=sg.editMode==='free'?'Independent — resizing opens/closes a gap (click to link to neighbor)':'Linked — neighbor absorbs the resize (click to make independent)';
-    md.onpointerdown=ev=>ev.stopPropagation(); md.onclick=ev=>{ ev.stopPropagation(); segAction('mode',i); }; b.appendChild(md);
-  }
-  // quick hide / lock icons
+  // one spaced, clickable icon row (mode · split · hide · lock) — no more overlapping corner icons
   const ic=document.createElement('div'); ic.className='clipicons';
-  const eye=document.createElement('span'); eye.className='cic'; eye.textContent=sg.hidden?'🚫':'👁'; eye.title=sg.hidden?'Hidden — click to show':'Click to hide (skips in preview + render)';
-  eye.onpointerdown=ev=>ev.stopPropagation(); eye.onclick=ev=>{ ev.stopPropagation(); histCommit(); sg.hidden=!sg.hidden; renderTimeline(); renderOverlays(playhead); seekToPlayhead(); };
-  const lk=document.createElement('span'); lk.className='cic'; lk.textContent=sg.locked?'🔒':'🔓'; lk.title=sg.locked?'Locked — click to unlock':'Click to lock (prevents drag/resize)';
-  lk.onpointerdown=ev=>ev.stopPropagation(); lk.onclick=ev=>{ ev.stopPropagation(); histCommit(); sg.locked=!sg.locked; renderTimeline(); };
-  ic.appendChild(eye); ic.appendChild(lk); b.appendChild(ic);
+  const mkIcon=(txt,title,fn)=>{ const el=document.createElement('span'); el.className='cic'; el.textContent=txt; el.title=title;
+    el.onpointerdown=ev=>ev.stopPropagation(); el.onclick=ev=>{ ev.stopPropagation(); fn(); }; return el; };
+  if(o.ch===0){   // roll/free is a base-track sequencing concept; upper clips are always free-positioned
+    ic.appendChild(mkIcon(sg.editMode==='free'?'✂':'🔗',
+      sg.editMode==='free'?'Independent — resizing opens/closes a gap (click to link to neighbor)':'Linked — neighbor absorbs the resize (click to make independent)',
+      ()=>segAction('mode',i)));
+  }
+  ic.appendChild(mkIcon('⎇','Split this clip at the playhead', ()=>splitAtPlayhead(i)));
+  ic.appendChild(mkIcon(sg.hidden?'🚫':'👁', sg.hidden?'Hidden — click to show':'Click to hide (skips in preview + render)',
+    ()=>{ histCommit(); sg.hidden=!sg.hidden; renderTimeline(); renderOverlays(playhead); seekToPlayhead(); }));
+  ic.appendChild(mkIcon(sg.locked?'🔒':'🔓', sg.locked?'Locked — click to unlock':'Click to lock (prevents drag/resize)',
+    ()=>{ histCommit(); sg.locked=!sg.locked; renderTimeline(); }));
+  b.appendChild(ic);
   return b;
 }
 function addChannel(){ histCommit(); EDL.channels=chCount()+1; renderTimeline(); toast('Channel '+(chCount()-1)+' added — drag clips up into it'); }
@@ -2197,6 +2219,12 @@ document.addEventListener('keydown', e=>{ if(!(e.ctrlKey||e.metaKey)) return; co
   if(k==='z'&&!e.shiftKey){ e.preventDefault(); doUndo(); }
   else if(k==='y'||(k==='z'&&e.shiftKey)){ e.preventDefault(); doRedo(); } });
 // Arrow keys nudge the selected overlay (Shift = bigger step); can move it off the render area.
+document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) return;   // S = split selected clip at playhead
+  if((e.key==='s'||e.key==='S') && sel>=0 && EDL.segments[sel]){
+    const ae=document.activeElement, tag=(ae&&ae.tagName||'').toLowerCase(), ty=(ae&&ae.type||'').toLowerCase();
+    if(tag==='textarea'||tag==='select'||(tag==='input'&&(ty==='text'||ty==='number'||ty==='search'||ty===''))) return;
+    e.preventDefault(); splitAtPlayhead(sel); return; }
+});
 document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) return;
   if(!(e.key==='ArrowLeft'||e.key==='ArrowRight'||e.key==='ArrowUp'||e.key==='ArrowDown')) return;
   if(!ovSel) return; const o=(EDL.overlays||[]).find(x=>x.id===ovSel); if(!o) return;   // an overlay is selected → arrows nudge it
