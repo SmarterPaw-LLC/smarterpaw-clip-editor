@@ -201,7 +201,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.42.2</span>
+  <span class="ver" id="appVer">v1.42.3</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -1451,8 +1451,9 @@ function buildOvEditor(){
         <label>H <input type="range" id="ovSpH" min="0.1" max="1" step="0.02" value="${o.h||0.7}"></label></div>
       <div><button class="mini" id="ovSpSeed">🎲 Reshuffle</button>
         <label class="ck" title="Apply animations to each piece separately (with phase offsets) instead of to the whole scatter"><input type="checkbox" id="ovSpPer" ${o.perPiece?'checked':''}> animate each piece</label></div>
-      ${o.perPiece && !((o.anims||[]).length) ? `<div style="font-size:11px;color:#f3b54a;background:#f3b54a22;border:1px solid #f3b54a55;border-radius:6px;padding:6px 8px">⚠ “Animate each piece” is on but no animation is added — pieces won’t move. Add one below (Float, Jitter, Wiggle…) to see motion in the export.</div>` : `<div style="font-size:11px;color:var(--mut)">Add animations below — with “animate each piece” on, every sprinkled piece animates on its own.</div>`}
-      ${o.perPiece && (o.count||0)>PIECE_CAP ? `<div style="font-size:11px;color:var(--mut)">Note: with per-piece animation, only the first ${PIECE_CAP} pieces animate (preview and export both capped here for speed).</div>` : ``}`;
+      <div id="ovSpWarn" style="font-size:11px;color:#f3b54a;background:#f3b54a22;border:1px solid #f3b54a55;border-radius:6px;padding:6px 8px;display:none">⚠ “Animate each piece” is on but no animation is added — pieces won’t move. Add one below (Float, Jitter, Wiggle…) to see motion in the export.</div>
+      <div id="ovSpHint" style="font-size:11px;color:var(--mut)">Add animations below — with “animate each piece” on, every sprinkled piece animates on its own.</div>
+      <div id="ovSpCap" style="font-size:11px;color:var(--mut);display:none">Note: with per-piece animation, only the first ${PIECE_CAP} pieces animate (preview and export both capped here for speed).</div>`;
   } else if(o.type==='arrow'){
     h+=`<div class="sec">Marker</div>
       <div><label>Type <select id="ovArSub">${ARROW_TYPES.map(s=>`<option value="${s[0]}" ${(o.subtype||'arrow')===s[0]?'selected':''}>${s[1]}</option>`).join('')}</select></label>
@@ -1518,6 +1519,7 @@ function buildOvEditor(){
       if($('#ovArGrad')){ const g=o.fillType==='gradient'; $('#ovArGrad').style.display=g?'':'none'; $('#ovArSolid').style.display=g?'none':''; }
       if($('#ovArArchRow')) $('#ovArArchRow').style.display=(o.subtype==='arrow')?'':'none'; }
     else o.scale=parseFloat($('#ovScale').value)||0.3;
+    if(o.type==='sprinkle') updSpWarn();   // live-refresh per-piece hints on toggle/count change
     renderOverlays(playhead); renderOvList(); };
   box.querySelectorAll('input,select,textarea').forEach(el=>{ el.oninput=upd; el.onchange=upd; });
   if($('#ovRot0')) $('#ovRot0').onclick=()=>{ $('#ovRot').value=0; upd(); };
@@ -1547,7 +1549,13 @@ function buildOvEditor(){
     L.querySelectorAll('.anseed').forEach(b=>{ b.onclick=()=>{ histCommit(); o.anims[+b.dataset.ai].seed=Math.floor(Math.random()*1e6); renderOverlays(playhead); }; });
     L.querySelectorAll('.anpick').forEach(b=>{ b.onclick=()=>{ const ai=+b.dataset.ai, k=b.dataset.k; pickImage(src=>{ histCommit(); o.anims[ai][k]=src; renderAnimList(); renderOverlays(playhead); }); }; });
     L.querySelectorAll('.anrm').forEach(b=>{ b.onclick=()=>{ histCommit(); o.anims.splice(+b.dataset.ai,1); renderAnimList(); renderOverlays(playhead); }; });
+    updSpWarn();
   }
+  function updSpWarn(){ const hasAnim=(o.anims||[]).length>0;   // sprinkle per-piece hints react live to anim add/remove + toggle
+    const w=$('#ovSpWarn'), hi=$('#ovSpHint'), cap=$('#ovSpCap');
+    if(w) w.style.display=(o.perPiece && !hasAnim)?'':'none';
+    if(hi) hi.style.display=(o.perPiece && !hasAnim)?'none':'';
+    if(cap) cap.style.display=(o.perPiece && (o.count||0)>PIECE_CAP)?'':'none'; }
   $('#ovAnimAdd').onchange=()=>{ const t=$('#ovAnimAdd').value; if(!t) return; histCommit(); (o.anims=o.anims||[]).push(Object.assign({type:t},JSON.parse(JSON.stringify(ANIM_DEFS[t].def)))); renderAnimList(); renderOverlays(playhead); };
   renderAnimList();
   if($('#ovHere')) $('#ovHere').onclick=()=>{ o.start=Math.round(playhead*100)/100; $('#ovStart').value=o.start; renderOvList(); renderOverlays(playhead); };
