@@ -201,7 +201,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.42.4</span>
+  <span class="ver" id="appVer">v1.43.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -1227,11 +1227,12 @@ async function bakeStickersForRender(edl){
       }catch(e){}
     }
     else if(o.type==='sprinkle' && o.src){
-      if(o.perPiece && (o.anims||[]).length){   // per-piece: expand into N animated image overlays (each phase-offset)
-        const lay=sprinkleLayout(o).slice(0,PIECE_CAP);   // cap pieces so render stays fast (preview uses same cap)
-        lay.forEach((p,i)=>{ out.push({ id:o.id+'_p'+i, type:'image', src:o.src, scale:(o.size||0.08)*p.sc,
+      if(o.perPiece && (o.anims||[]).length){   // per-piece: one 'piececlip' overlay; server pre-renders the pieces
+        const lay=sprinkleLayout(o).slice(0,PIECE_CAP);   // cap pieces (preview uses same cap)
+        const pieces=lay.map(p=>({ scale:(o.size||0.08)*p.sc,
           x:(o.x!=null?o.x:0.5)-(o.w||0.7)/2 + p.fx*(o.w||0.7), y:(o.y!=null?o.y:0.5)-(o.h||0.7)/2 + p.fy*(o.h||0.7),
-          start:o.start, dur:o.dur, ch:o.ch, rot:(+o.rot||0)+p.rot*180/Math.PI, aphase:p.ph, anims:o.anims }); });
+          rot:(+o.rot||0)+p.rot*180/Math.PI, aphase:p.ph }));
+        out.push({ id:o.id, type:'piececlip', src:o.src, start:o.start, dur:o.dur, ch:o.ch, anims:o.anims, pieces });
         continue;
       }
       try{ await _ensurePieceLoaded(o.src); const r=buildSprinkleCanvas(o);   // static: one baked image

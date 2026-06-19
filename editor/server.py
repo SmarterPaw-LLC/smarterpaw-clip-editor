@@ -659,13 +659,90 @@ def _emoji_png(emoji, out, px=256):
     img.save(out)
 
 
+def prerender_piececlip(o, W, H, tmp, k):
+    """Render a per-piece sprinkle's N pieces onto a SHORT transparent clip (length = dur).
+    Each piece animates with its own phase offset. Returns the clip path (qtrle MOV w/ alpha),
+    or None to fall back to inline compositing. Compositing N pieces here runs only for the
+    sprinkle's window, not the whole timeline — the big win."""
+    pieces = o.get("pieces") or []
+    dur = float(o.get("dur", 0) or 0)
+    src = o.get("src")
+    if not pieces or dur <= 0 or not src:
+        return None
+    p = os.path.join(PROJ, *src.split("/"))
+    if not os.path.exists(p):
+        return None
+    anims = o.get("anims") or []
+    n = len(pieces)
+    # transparent base (alpha 0) + one shared piece input split n ways (decode once, not n times)
+    inputs = ["-f", "lavfi", "-i", "nullsrc=s=%dx%d:r=30:d=%g,format=rgba,colorchannelmixer=aa=0" % (W, H, dur)]
+    inputs += ["-loop", "1", "-t", str(dur), "-i", p]
+    fc = ["[0:v]format=rgba[base0]"]
+    last = "base0"
+    if n > 1:
+        fc.append("[1:v]split=%d%s" % (n, "".join("[ps%d]" % i for i in range(n))))
+        srcs = ["ps%d" % i for i in range(n)]
+    else:
+        srcs = ["1:v"]
+    for i, pc in enumerate(pieces):
+        po = {"start": 0, "dur": dur, "aphase": pc.get("aphase", 0), "anims": anims, "rot": pc.get("rot", 0)}
+        ox = float(pc.get("x", 0.5)); oy = float(pc.get("y", 0.5))
+        sw = max(1, int(W * float(pc.get("scale", 0.08))))
+        odx, ody, _, _, orot = _anim_exprs(po, 0, dur, W, "t")    # position + anim rotation (overlay/clip time = t)
+        _, _, amT, has_op, _ = _anim_exprs(po, 0, dur, W, "T")    # opacity via geq (pixel time = T)
+        filt = ["scale=%d:-1" % sw, "format=rgba"]
+        if has_op:
+            filt.append("geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(%s)'" % amT)
+        pop = next((a for a in anims if a.get("type") == "popIn"), None)
+        if pop:
+            d = max(0.01, float(pop.get("d", 0.45)))
+            kk = "(t/%g)" % d; eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (kk, kk)
+            pops = "if(between(t,0,%g),max(0.05,%s),1)" % (d, eb)
+            filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame" % (pops, pops))
+        srot = float(pc.get("rot", 0) or 0)
+        rot_terms = ([orot] if orot else []) + (["%.6f" % math.radians(srot)] if abs(srot) > 1e-6 else [])
+        if rot_terms:
+            rexpr = "+".join("(%s)" % r for r in rot_terms)
+            filt.append("pad=ceil(iw*1.08):ceil(ih*1.08):(ow-iw)/2:(oh-ih)/2:color=black@0")
+            filt.append("rotate='%s':c=none:ow='hypot(iw,ih)':oh='hypot(iw,ih)'" % rexpr)
+        fc.append("[%s]%s[oi%d]" % (srcs[i], ",".join(filt), i))
+        fc.append("[%s][oi%d]overlay=x='W*%g-w/2+(%s)':y='H*%g-h/2+(%s)'[v%d]" % (last, i, ox, odx, oy, ody, i))
+        last = "v%d" % i
+    out = os.path.join(tmp, "piececlip_%d.mov" % k)
+    fc_path = os.path.join(tmp, "pc_fg_%d.txt" % k)
+    with open(fc_path, "w", encoding="utf-8") as fh:
+        fh.write(";\n".join(fc))
+    r = run([FFMPEG, "-y", "-loglevel", "error"] + inputs
+            + ["-filter_complex_script", fc_path, "-map", "[%s]" % last, "-c:v", "qtrle", "-pix_fmt", "argb", out])
+    if r.returncode != 0 or not os.path.exists(out):
+        return None
+    return out
+
+
 def apply_overlays(silent, overlays, W, H, tmp):
     """Composite free-floating text/image/shape overlays over the full timeline (global time),
     preserving list order as z-order (later = on top)."""
-    overlays = [o for o in (overlays or []) if isinstance(o, dict) and o.get("type") in ("text", "image", "shape")]
+    overlays = [o for o in (overlays or []) if isinstance(o, dict) and o.get("type") in ("text", "image", "shape", "piececlip")]
     if not overlays:
         return silent, None
     overlays = sorted(overlays, key=lambda o: int(o.get("ch", 0) or 0))   # higher channel composited later = on top (stable within a channel)
+    # Per-piece sprinkles arrive as a single 'piececlip'. Pre-render their pieces onto a SHORT
+    # transparent clip (only the [start,end] window), so the heavy N-piece composite runs once
+    # for the window instead of across the whole timeline. Fall back to inline pieces on failure.
+    expanded = []
+    for o in overlays:
+        if o.get("type") == "piececlip":
+            clip = prerender_piececlip(o, W, H, tmp, len(expanded))
+            if clip:
+                oo = dict(o); oo["_clip"] = clip; expanded.append(oo)
+            else:
+                for pc in (o.get("pieces") or []):
+                    expanded.append({"type": "image", "src": o.get("src"), "x": pc.get("x", 0.5), "y": pc.get("y", 0.5),
+                                     "scale": pc.get("scale", 0.08), "start": o.get("start", 0), "dur": o.get("dur", 3),
+                                     "ch": o.get("ch", 0), "rot": pc.get("rot", 0), "aphase": pc.get("aphase", 0), "anims": o.get("anims")})
+        else:
+            expanded.append(o)
+    overlays = expanded
     inputs = ["-i", silent]
     fc = []
     # Normalize the base to clean CFR/timestamps first. The concatenated video can carry
@@ -679,6 +756,14 @@ def apply_overlays(silent, overlays, W, H, tmp):
         s = float(o.get("start", 0)); e = s + float(o.get("dur", 3))
         ox, oy = float(o.get("x", 0.5)), float(o.get("y", 0.5))
         en = f"enable='between(t,{s},{e})'"
+        if t == "piececlip":                       # pre-rendered per-piece sprinkle clip, shown only in its window
+            clip = o.get("_clip")
+            if clip:
+                inputs += ["-i", clip]
+                fc.append(f"[{ii}:v]setpts=PTS-STARTPTS+{s}/TB,format=rgba[pcc{k}]")
+                fc.append(f"[{last}][pcc{k}]overlay=0:0:{en}:eof_action=pass[v{k}]")
+                last = f"v{k}"; ii += 1
+            continue
         if t == "text" and o.get("style") != "sticker":
             if not (o.get("text") or "").strip():
                 continue
