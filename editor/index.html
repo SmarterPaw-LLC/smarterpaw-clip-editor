@@ -203,7 +203,8 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.46.0</span>
+  <span class="ver" id="appVer">v1.47.0</span>
+  <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -2249,6 +2250,35 @@ document.addEventListener('keydown', e=>{ if(!(e.ctrlKey||e.metaKey)) return; co
         localStorage.setItem(LS[side], parseFloat(topRow.style.getPropertyValue('--'+side+'W'))||DEF[side]); };
       document.addEventListener('pointermove',mv); document.addEventListener('pointerup',up); });
     sp.addEventListener('dblclick', ()=>{ topRow.style.setProperty('--'+side+'W', DEF[side]+'px'); localStorage.removeItem(LS[side]); }); });
+})();
+// In-app updater: checks the hosted version, one-click download + restart (no re-download by hand).
+(function initUpdater(){
+  const btn=document.getElementById('btnUpdate'); if(!btn) return; const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  let info=null, busy=false;
+  const show=(txt,hl)=>{ btn.textContent=txt; btn.style.display=''; btn.style.background=hl?'var(--acc,#8ab81d)':''; btn.style.color=hl?'#111':''; };
+  async function check(silent){
+    try{ info=await (await fetch('/api/check-update',{cache:'no-store'})).json();
+      if(info.updateAvailable){ show('⬆ Update to v'+info.latest,true); btn.title='Click to update & restart'; }
+      else if(!silent){ show('✓ latest',false); btn.title='Up to date'; setTimeout(()=>{ btn.textContent='⟳'; btn.title='Check for updates'; },2000); }
+      else { btn.textContent='⟳'; btn.style.display=''; btn.title='Check for updates'; }
+    }catch(e){ if(!silent) show('⟳',false); }
+  }
+  async function waitBackUp(){ await sleep(2500);                         // let the server exit + relaunch + bind
+    for(let i=0;i<40;i++){ try{ if((await fetch('/api/version',{cache:'no-store'})).ok) return true; }catch(e){} await sleep(700); } return false; }
+  btn.onclick=async()=>{ if(busy) return;
+    if(!info||!info.updateAvailable){ btn.textContent='…'; await check(false); return; }
+    if(!confirm('Update to v'+info.latest+'?\nThe editor will briefly restart — save your project first.')) return;
+    busy=true; btn.disabled=true; show('⏳ Updating…',true);
+    try{
+      const u=await (await fetch('/api/self-update',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
+      if(!u.ok){ alert('Update failed: '+(u.log||'error')); busy=false; btn.disabled=false; return check(false); }
+      show('🔄 Restarting…',true);
+      await fetch('/api/restart',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).catch(()=>{});
+      if(await waitBackUp()) location.reload();
+      else { alert('Updated to v'+u.version+'. Please close the app window and run it again to finish.'); }
+    }catch(e){ alert('Update error: '+e); busy=false; btn.disabled=false; }
+  };
+  setTimeout(()=>check(true), 1500);   // silent auto-check shortly after load
 })();
 document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) return;   // S = split selected clip at playhead
   if((e.key==='s'||e.key==='S') && sel>=0 && EDL.segments[sel]){

@@ -3,8 +3,12 @@
 Stdlib only. Serves the editor UI + source clips (with HTTP Range) and renders
 the timeline to MP4 via ffmpeg. Bind: http://127.0.0.1:8765/
 """
-import os, re, json, subprocess, tempfile, shutil, threading, urllib.parse, math, datetime
+import os, re, json, subprocess, tempfile, shutil, threading, urllib.parse, urllib.request, math, datetime, time, zipfile, io
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# Where the in-app updater checks for new versions (the GitHub Pages site).
+UPDATE_URL = "https://smarterpaw-llc.github.io/smarterpaw-clip-editor"
+RESTART_EXIT_CODE = 42   # launcher loop re-runs server.py when it exits with this code
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EDITOR = os.path.join(PROJ, "editor")
@@ -1156,6 +1160,67 @@ CTYPE = {".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": 
          ".otf": "font/otf", ".ttf": "font/ttf", ".woff": "font/woff", ".woff2": "font/woff2"}
 
 
+# ---------- in-app self-update ----------
+def app_version():
+    """The running app's version = the appVer badge in index.html (single source of truth)."""
+    try:
+        html = open(os.path.join(EDITOR, "index.html"), encoding="utf-8").read()
+        m = re.search(r'id="appVer"[^>]*>v?([0-9][0-9.]*)<', html)
+        return m.group(1) if m else "0"
+    except Exception:
+        return "0"
+
+
+def check_update():
+    """Compare the local version to version.json hosted at UPDATE_URL."""
+    cur = app_version()
+    try:
+        with urllib.request.urlopen(UPDATE_URL.rstrip("/") + "/version.json", timeout=15) as r:
+            remote = json.loads(r.read().decode("utf-8"))
+        latest = str(remote.get("version", "")).strip()
+        zip_name = remote.get("zip", "")
+        def _vt(v):
+            try: return tuple(int(x) for x in str(v).split("."))
+            except Exception: return (0,)
+        return {"current": cur, "latest": latest, "zip": zip_name,
+                "updateAvailable": bool(latest) and _vt(latest) > _vt(cur)}
+    except Exception as e:
+        return {"current": cur, "latest": None, "updateAvailable": False, "error": str(e)}
+
+
+def do_self_update():
+    """Download the latest zip and extract the app code + music over this install,
+    leaving user data (clips/projects/exports/assets) untouched. Returns the new version."""
+    info = check_update()
+    if not info.get("updateAvailable"):
+        return {"ok": False, "log": "Already up to date.", **info}
+    zip_name = info.get("zip") or ""
+    zip_url = zip_name if zip_name.startswith("http") else (UPDATE_URL.rstrip("/") + "/" + zip_name)
+    with urllib.request.urlopen(zip_url, timeout=120) as r:
+        data = r.read()
+    safe = ("editor/", "sources/music/")   # only ever overwrite app code + music
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        for name in z.namelist():
+            if name.endswith("/"):
+                continue
+            norm = name.replace("\\", "/")
+            if not norm.startswith(safe):
+                continue
+            dest = os.path.join(PROJ, *norm.split("/"))
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with z.open(name) as src, open(dest, "wb") as out:
+                shutil.copyfileobj(src, out)
+    return {"ok": True, "version": info.get("latest")}
+
+
+def _schedule_restart():
+    """Exit with RESTART_EXIT_CODE after the HTTP response flushes; the launcher loop re-runs us."""
+    def _go():
+        time.sleep(0.6)
+        os._exit(RESTART_EXIT_CODE)
+    threading.Thread(target=_go, daemon=True).start()
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -1216,6 +1281,10 @@ class Handler(BaseHTTPRequestHandler):
                                "exportsDir": EXPORTS})
         if path == "/api/edl":
             return self._json(load_edl())
+        if path == "/api/version":
+            return self._json({"version": app_version()})
+        if path == "/api/check-update":
+            return self._json(check_update())
         if path == "/api/projects":
             return self._json({"projects": list_projects()})
         if path == "/api/project":
@@ -1241,6 +1310,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/edl":
             save_edl(data)
             return self._json({"ok": True})
+        if path == "/api/self-update":
+            try:
+                return self._json(do_self_update())
+            except Exception as e:
+                return self._json({"ok": False, "log": repr(e)}, 500)
+        if path == "/api/restart":
+            self._json({"ok": True})
+            _schedule_restart()
+            return
         if path == "/api/clip/recat":
             cid = (data.get("id") or "").strip()
             cat = re.sub(r"[^A-Za-z0-9_-]", "", (data.get("category") or "").lower())

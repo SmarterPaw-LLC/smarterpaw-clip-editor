@@ -53,4 +53,8 @@ if (Missing python) { Write-Host 'Python was just installed — please reboot on
 Start-Process 'http://127.0.0.1:8765/'
 Write-Host 'Editor running at http://127.0.0.1:8765/  — keep this window open; close it to quit.' -ForegroundColor Cyan
 Set-Location $editor
-python server.py
+do {                                   # exit code 42 = in-app "Update & restart" — re-run the (now updated) server
+  python server.py
+  $code = $LASTEXITCODE
+  if ($code -eq 42) { Write-Host 'Restarting after update...' -ForegroundColor Yellow; Start-Sleep -Milliseconds 500 }
+} while ($code -eq 42)
