@@ -828,6 +828,8 @@ def flatten_segments(edl):
         m = (a + b) / 2.0
         top = None
         for c in clips:
+            if c["s"].get("hidden"):          # hidden clips don't show (slot becomes black / lower channel shows)
+                continue
             if c["start"] <= m < c["end"]:
                 if top is None or c["ch"] > top["ch"] or (c["ch"] == top["ch"] and c["i"] > top["i"]):
                     top = c
@@ -913,6 +915,7 @@ def render(edl, out_dir=None, out_name=None):
             outlen = dur / spd                          # timeline (output) seconds
             if abs(spd - 1.0) > 1e-3:
                 base = f"setpts={1.0/spd:.6f}*PTS," + base   # slow (<1) / speed up (>1)
+            base += f",tpad=stop_mode=clone:stop_duration={outlen:.3f}"   # freeze-fill the last frame so over-length clips hold (matches preview); -t clamps to outlen
             sfi = float(seg.get("fadeIn", 0) or 0); sfo = float(seg.get("fadeOut", 0) or 0)
             if sfi > 0:
                 base += f",fade=t=in:st=0:d={sfi}"

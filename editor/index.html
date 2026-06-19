@@ -145,6 +145,17 @@
   .seg .ctl { display:flex; gap:4px; }
   .seg .modebtn.on { background:var(--acc2); color:#06122e; border-color:var(--acc2); }
   .blk.clip.free { box-shadow:inset 0 0 0 2px var(--acc2); }
+  .blk.clip .clbl { position:relative; z-index:2; }
+  .blk.clip.clhidden { opacity:.4; filter:grayscale(.6); }
+  .blk.clip.cllocked { box-shadow:inset 0 0 0 2px #d9a441; }
+  .blk.clip.cllocked .hL, .blk.clip.cllocked .hR { display:none; }
+  .blk .freeze { position:absolute; top:0; bottom:0; z-index:1; pointer-events:none;
+     background:repeating-linear-gradient(45deg, #ffffff14, #ffffff14 5px, #ffffff30 5px, #ffffff30 10px);
+     border-left:1px dashed #ffffffaa; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  .blk .freeze span { font-size:9px; color:#dfe9ff; white-space:nowrap; text-shadow:0 1px 2px #000; }
+  .clipicons { position:absolute; top:1px; right:2px; z-index:3; display:flex; gap:1px; }
+  .clipicons .cic { font-size:10px; line-height:14px; width:15px; text-align:center; cursor:pointer; opacity:.65; border-radius:3px; }
+  .clipicons .cic:hover { opacity:1; background:#0006; }
   .settings { padding:10px 12px; border-top:1px solid var(--line); }
   .settings .row { display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
   .settings label { font-size:12px; color:var(--mut); min-width:64px; }
@@ -190,7 +201,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.35.0</span>
+  <span class="ver" id="appVer">v1.36.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -583,6 +594,7 @@ function buildEndcard(ec){
 function addClipToTimeline(id, atIdx){ const c=MAN.byId[id]; if(!c) return toast('Clip not found');
   histCommit();
   const seg={id, in:0, dur:Math.min(3, c.dur||3)||2, cap:'', zoom:1, anchor:'center'};
+  if(atIdx===undefined) atIdx=(sel>=0 && sel<EDL.segments.length)?sel+1:null;   // default: insert right after the selected clip
   if(atIdx==null || atIdx<0 || atIdx>EDL.segments.length){ EDL.segments.push(seg); sel=EDL.segments.length-1; }
   else { EDL.segments.splice(atIdx,0,seg); sel=atIdx; }
   renderTimeline(); selectSeg(sel); histCommit(); toast('Added “'+(c.label||id)+'”'); }
@@ -634,7 +646,7 @@ function layout(){ const base=clipBounds(); const all=base.bounds.map(o=>Object.
     all.push({seg:s, idx:i, ch, start:t0, end:t0+d, dur:d, gap:0}); if(t0+d>vt) vt=t0+d; });
   return {base:base.bounds, all, vidTotal:vt}; }
 // Topmost clip visible at master-clock time t (higher channel covers lower; tie → later in the array).
-function topAt(t){ let best=null; layout().all.forEach(o=>{ if(t>=o.start && t<o.end){ if(!best||o.ch>best.ch||(o.ch===best.ch&&o.idx>best.idx)) best=o; } });
+function topAt(t){ let best=null; layout().all.forEach(o=>{ if(o.seg&&o.seg.hidden) return; if(t>=o.start && t<o.end){ if(!best||o.ch>best.ch||(o.ch===best.ch&&o.idx>best.idx)) best=o; } });
   if(!best) return null; return {seg:best.seg, off:t-best.start, dur:best.dur, ch:best.ch}; }
 function totalDur(){ const ec=normEndcard(EDL.settings); return layout().vidTotal + (ec.enabled?ec.dur:0); }
 function renderTimeline(){
@@ -1555,9 +1567,14 @@ function buildOverlayBar(o,total){ const b=document.createElement('div'); b.clas
   ovBarInteract(b,hL,hR,o,total); return b; }
 // Build one clip block element for a layout entry `o` (handles base vs upper-channel behavior).
 function buildClipBlock(o,total){ const i=o.idx, sg=o.seg;
-  const b=document.createElement('div'); b.className='blk clip'+(i===sel?' sel':'')+(o.ch===0&&sg.editMode==='free'?' free':'');
+  const b=document.createElement('div'); b.className='blk clip'+(i===sel?' sel':'')+(o.ch===0&&sg.editMode==='free'?' free':'')+(sg.hidden?' clhidden':'')+(sg.locked?' cllocked':'');
   b.style.left=(o.start/total*100)+'%'; b.style.width=(o.dur/total*100)+'%'; const c=MAN.byId[sg.id];
-  b.textContent=(i+1)+'. '+(((c&&c.label)||sg.id).slice(0,16)); b.title=b.textContent;
+  const txt=document.createElement('span'); txt.className='clbl'; txt.textContent=(i+1)+'. '+(((c&&c.label)||sg.id).slice(0,16)); b.appendChild(txt);
+  b.title=txt.textContent+(sg.hidden?' (hidden)':'')+(sg.locked?' (locked)':'');
+  // freeze-frame region: any timeline length beyond the source clip's available footage holds the last frame
+  if(c && c.dur){ const realTL=Math.max(0,(c.dur-(+sg.in||0)))/segSpeed(sg);
+    if(realTL < o.dur-0.05){ const fz=document.createElement('div'); fz.className='freeze';
+      fz.style.left=(realTL/o.dur*100)+'%'; fz.style.width=((o.dur-realTL)/o.dur*100)+'%'; fz.title='Freeze frame — beyond the clip’s '+fmt(c.dur)+'s length'; fz.innerHTML='<span>❄ freeze</span>'; b.appendChild(fz); } }
   clipDragMulti(b,o);
   const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR'; b.appendChild(hL); b.appendChild(hR);
   if(o.ch===0){ clipResize(hL,i,'l'); clipResize(hR,i,'r'); } else { clipResizeUpper(hL,o,'l'); clipResizeUpper(hR,o,'r'); }
@@ -1566,6 +1583,13 @@ function buildClipBlock(o,total){ const i=o.idx, sg=o.seg;
     md.title=sg.editMode==='free'?'Independent — resizing opens/closes a gap (click to link to neighbor)':'Linked — neighbor absorbs the resize (click to make independent)';
     md.onpointerdown=ev=>ev.stopPropagation(); md.onclick=ev=>{ ev.stopPropagation(); segAction('mode',i); }; b.appendChild(md);
   }
+  // quick hide / lock icons
+  const ic=document.createElement('div'); ic.className='clipicons';
+  const eye=document.createElement('span'); eye.className='cic'; eye.textContent=sg.hidden?'🚫':'👁'; eye.title=sg.hidden?'Hidden — click to show':'Click to hide (skips in preview + render)';
+  eye.onpointerdown=ev=>ev.stopPropagation(); eye.onclick=ev=>{ ev.stopPropagation(); histCommit(); sg.hidden=!sg.hidden; renderTimeline(); renderOverlays(playhead); seekToPlayhead(); };
+  const lk=document.createElement('span'); lk.className='cic'; lk.textContent=sg.locked?'🔒':'🔓'; lk.title=sg.locked?'Locked — click to unlock':'Click to lock (prevents drag/resize)';
+  lk.onpointerdown=ev=>ev.stopPropagation(); lk.onclick=ev=>{ ev.stopPropagation(); histCommit(); sg.locked=!sg.locked; renderTimeline(); };
+  ic.appendChild(eye); ic.appendChild(lk); b.appendChild(ic);
   return b;
 }
 function addChannel(){ histCommit(); EDL.channels=chCount()+1; renderTimeline(); toast('Channel '+(chCount()-1)+' added — drag clips up into it'); }
@@ -1577,7 +1601,7 @@ function removeChannel(){ histCommit(); let used=0; (EDL.segments||[]).forEach(s
 //  • free  — only this clip's duration changes; neighbors stay pinned, opening/closing
 //            black gaps in the timeline (total can grow/shrink). Gaps are seg.gap (lead seconds).
 function clipResize(handle,i,side){
-  handle.onpointerdown=ev=>{ ev.stopPropagation(); ev.preventDefault(); histCommit();
+  handle.onpointerdown=ev=>{ if(EDL.segments[i]&&EDL.segments[i].locked){ ev.stopPropagation(); return; } ev.stopPropagation(); ev.preventDefault(); histCommit();
     const wrap=$('#tlTracksWrap'); const W=wrap.clientWidth||wrap.getBoundingClientRect().width||1; const x0=ev.clientX; const total0=totalDur()||1;
     const segs=EDL.segments; const free=(segs[i]&&segs[i].editMode==='free');   // per-clip edge-drag mode
     const d0=+segs[i].dur||0; const g0=+segs[i].gap||0;
@@ -1605,7 +1629,7 @@ function clipResize(handle,i,side){
 //  • base (ch0): horizontal = resequence in the story order; drop onto ch0 = rejoin the sequence.
 //  • upper (ch≥1): horizontal = set absolute start t0; drop onto a higher lane = cover the base there.
 function clipDragMulti(b,o){ const seg=o.seg;
-  b.onpointerdown=ev=>{ if(ev.target.closest('.hL,.hR,.modedot')) return; ev.stopPropagation(); ev.preventDefault(); histCommit();
+  b.onpointerdown=ev=>{ if(ev.target.closest('.hL,.hR,.modedot,.cic')) return; if(seg.locked){ ev.stopPropagation(); return; } ev.stopPropagation(); ev.preventDefault(); histCommit();
     const area=$('#tlTracks').getBoundingClientRect(); const total=totalDur()||1; let moved=false; const x0=ev.clientX, y0=ev.clientY;
     const ptDown=Math.max(0,Math.min(total,(x0-area.left)/area.width*total)); const grabOff=ptDown-(o.start||0);   // keep the grabbed point under the cursor
     const targetCh=cy=>{ const lanes=[...document.querySelectorAll('#tlTracks .trk[data-ch]')];   // top→bottom = high→low
@@ -1641,7 +1665,7 @@ function clipDragMulti(b,o){ const seg=o.seg;
 }
 // Resize an upper-channel clip: right edge changes dur; left edge moves t0 while keeping the end fixed.
 function clipResizeUpper(handle,o,side){ const seg=o.seg;
-  handle.onpointerdown=ev=>{ ev.stopPropagation(); ev.preventDefault(); histCommit();
+  handle.onpointerdown=ev=>{ if(seg.locked){ ev.stopPropagation(); return; } ev.stopPropagation(); ev.preventDefault(); histCommit();
     const area=$('#tlTracks').getBoundingClientRect(); const total=totalDur()||1; const x0=ev.clientX; const d0=+seg.dur||0, t0=+seg.t0||0;
     const rnd=x=>Math.round(x*100)/100;
     const mv=e=>{ const dt=(e.clientX-x0)/area.width*total;
