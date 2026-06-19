@@ -180,7 +180,7 @@
 <body>
 <header>
   <h1>🐾 Meowi Clip Editor</h1>
-  <span class="ver" id="appVer">v1.32.0</span>
+  <span class="ver" id="appVer">v1.32.1</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -413,7 +413,8 @@
         <select id="exCanvas"><option value="9x16">9:16 Reels / Stories</option>
           <option value="4x5">4:5 Meta feed</option><option value="16x9">16:9 YouTube</option></select></div>
       <div class="row"><label class="k">Folder</label><input type="text" id="exDir" spellcheck="false"></div>
-      <div class="row"><label class="k">Filename</label><input type="text" id="exName" placeholder="Meowi_rollies_hero" spellcheck="false"></div>
+      <div class="row"><label class="k">Filename</label><input type="text" id="exName" placeholder="project name" spellcheck="false"></div>
+      <div class="row"><label class="k"></label><span id="exNamePreview" style="font-size:11px;color:var(--mut)"></span></div>
       <div class="row"><label class="k"></label><label class="ck" style="color:var(--txt)"><input type="checkbox" id="exStamp" checked> Add timestamp (never overwrite an existing file)</label></div>
       <div class="row" style="justify-content:flex-end;gap:8px"><button class="ghost" id="exCancel">Cancel</button><button class="primary" id="exGo">▶ Render</button></div>
       <div class="status" id="exStatus"></div>
@@ -1595,18 +1596,22 @@ $('#tlPhGrip').addEventListener('pointerdown', ev=>{ ev.stopPropagation(); start
 
 /* ---------- save / render ---------- */
 $('#btnSave').onclick=()=>projSave();
+function projFileBase(){ const n=(curProj&&curProj.name)?curProj.name:''; return n.replace(/[^A-Za-z0-9_-]+/g,'_').replace(/^_+|_+$/g,''); }
+function exNamePreview(){ const base=($('#exName').value.trim()||projFileBase()||'clip'); const cv=$('#exCanvas').value;
+  if($('#exNamePreview')) $('#exNamePreview').textContent='→ saves as: '+base+($('#exStamp').checked?'_<timestamp>':'')+'_'+cv+'.mp4'; }
 function openExportModal(){ stop();
   $('#exDir').value=(EDL.settings.outDir)||MAN.exportsDir||'';
-  $('#exName').value=(EDL.settings.outName)||'Meowi_rollies_hero';
+  $('#exName').value=projFileBase()||(EDL.settings.outName)||'clip';   // default to the project name
   $('#exCanvas').value=EDL.settings.canvas||'9x16';
-  $('#exStatus').textContent=''; $('#exModal').style.display='flex'; }
+  $('#exStatus').textContent=''; exNamePreview(); $('#exModal').style.display='flex'; }
 function closeExportModal(){ $('#exModal').style.display='none'; }
 $('#btnRender').onclick=openExportModal;
 $('#exClose').onclick=closeExportModal; $('#exCancel').onclick=closeExportModal;
 $('#exModal').onclick=e=>{ if(e.target.id==='exModal') closeExportModal(); };
+['exName','exCanvas','exStamp'].forEach(id=>{ const el=$('#'+id); if(el){ el.oninput=exNamePreview; el.onchange=exNamePreview; } });
 $('#exGo').onclick=async()=>{
   const canvas=$('#exCanvas').value; EDL.settings.canvas=canvas; $('#setCanvas').value=canvas; sizeStage(); updateTotal();
-  const dir=$('#exDir').value.trim(), base=($('#exName').value.trim()||'Meowi_rollies_hero');
+  const dir=$('#exDir').value.trim(), base=($('#exName').value.trim()||projFileBase()||'clip');
   EDL.settings.outDir=dir; EDL.settings.outName=base;
   let name=base;
   if($('#exStamp').checked){ const d=new Date(), p=n=>String(n).padStart(2,'0');
