@@ -37,7 +37,9 @@
   .projbar .cur { font-size:12px; color:var(--acc); font-weight:700; }
   .projbar select { min-width:160px; }
   .wrap { display:flex; flex-direction:column; gap:10px; padding:10px 12px; height:calc(100vh - 99px); }
-  .topRow { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:220px 1fr 340px; gap:12px; }
+  .topRow { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:var(--leftW,220px) 7px minmax(220px,1fr) 7px var(--rightW,340px); gap:5px; }
+  .psplit { align-self:stretch; cursor:col-resize; border-radius:4px; background:transparent; transition:background .12s; }
+  .psplit:hover, .psplit.drag { background:var(--acc,#8ab81d); }
   #tlPanel { flex:0 0 auto; height:200px; background:var(--panel); border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; overflow:hidden; }
   #tlPanel h2 { font-size:12px; text-transform:uppercase; letter-spacing:.6px; color:var(--mut); margin:0; padding:7px 12px; border-bottom:1px solid var(--line); display:flex; gap:10px; align-items:center; }
   #tlTracksWrap { position:relative; flex:1; overflow:auto; }
@@ -201,7 +203,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.45.0</span>
+  <span class="ver" id="appVer">v1.46.0</span>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
@@ -240,6 +242,8 @@
     <input type="file" id="fileAddClip" accept="video/*,.mp4,.mov,.webm,.m4v" multiple style="display:none">
     <div id="bin"></div>
   </div>
+
+  <div class="psplit" data-side="left" title="Drag to resize · double-click to reset"></div>
 
   <!-- PREVIEW / TRIMMER -->
   <div class="col center">
@@ -295,6 +299,8 @@
       </div>
     </div>
   </div>
+
+  <div class="psplit" data-side="right" title="Drag to resize · double-click to reset"></div>
 
   <!-- CLIPS + SETTINGS -->
   <div class="col" id="tlCol">
@@ -2229,6 +2235,21 @@ document.addEventListener('keydown', e=>{ if(!(e.ctrlKey||e.metaKey)) return; co
   if(k==='z'&&!e.shiftKey){ e.preventDefault(); doUndo(); }
   else if(k==='y'||(k==='z'&&e.shiftKey)){ e.preventDefault(); doRedo(); } });
 // Arrow keys nudge the selected overlay (Shift = bigger step); can move it off the render area.
+// Resizable left/right panes — drag the splitter bars; widths persist in localStorage; double-click resets.
+(function initPaneResize(){
+  const topRow=document.querySelector('.topRow'); if(!topRow) return;
+  const LS={left:'scl_leftW',right:'scl_rightW'}, DEF={left:220,right:340}, MIN={left:150,right:240}, MAX={left:560,right:720};
+  for(const side of ['left','right']){ const v=parseFloat(localStorage.getItem(LS[side])); if(v) topRow.style.setProperty('--'+side+'W', v+'px'); }
+  document.querySelectorAll('.psplit').forEach(sp=>{ const side=sp.dataset.side;
+    sp.addEventListener('pointerdown', ev=>{ ev.preventDefault(); sp.classList.add('drag'); try{sp.setPointerCapture(ev.pointerId);}catch(e){}
+      const rect=topRow.getBoundingClientRect();
+      const mv=e=>{ let w=(side==='left')?(e.clientX-rect.left):(rect.right-e.clientX);
+        w=Math.max(MIN[side],Math.min(MAX[side],Math.round(w))); topRow.style.setProperty('--'+side+'W', w+'px'); };
+      const up=()=>{ sp.classList.remove('drag'); document.removeEventListener('pointermove',mv); document.removeEventListener('pointerup',up);
+        localStorage.setItem(LS[side], parseFloat(topRow.style.getPropertyValue('--'+side+'W'))||DEF[side]); };
+      document.addEventListener('pointermove',mv); document.addEventListener('pointerup',up); });
+    sp.addEventListener('dblclick', ()=>{ topRow.style.setProperty('--'+side+'W', DEF[side]+'px'); localStorage.removeItem(LS[side]); }); });
+})();
 document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) return;   // S = split selected clip at playhead
   if((e.key==='s'||e.key==='S') && sel>=0 && EDL.segments[sel]){
     const ae=document.activeElement, tag=(ae&&ae.tagName||'').toLowerCase(), ty=(ae&&ae.type||'').toLowerCase();
