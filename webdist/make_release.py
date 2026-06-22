@@ -94,6 +94,8 @@ LANDING = """<!doctype html><html><head><meta charset="utf-8">
  .cmd code{flex:1;background:#0008;border:1px solid #333;border-radius:8px;padding:12px 14px;
    text-align:left;font-size:12.5px;color:#cfe6a0;overflow:auto;white-space:nowrap}
  button.copy{background:#f0a830;color:#111;font-weight:700;border:0;border-radius:8px;padding:0 16px;cursor:pointer}
+ a.btn{display:inline-block;margin:14px 0 6px;background:#8ab81d;color:#111;font-weight:700;text-decoration:none;
+   padding:13px 28px;border-radius:10px;font-size:17px}
  ol{text-align:left;color:#cfd3da;line-height:1.7;margin-top:10px}
  a.alt{color:#9ab;font-size:13px} code.k{background:#0006;padding:1px 6px;border-radius:5px}
  .hr{border-top:1px solid #2a2d33;margin:26px 0}
@@ -101,7 +103,14 @@ LANDING = """<!doctype html><html><head><meta charset="utf-8">
  <h1>SmarterClip Editor</h1>
  <div class="ver">latest version __VER__ · runs locally on your PC — your clips never leave your machine</div>
 
- <h2>Install &amp; run (recommended)</h2>
+ <h2>Already installed?</h2>
+ <a class="btn" href="http://127.0.0.1:8765/">▶ Open the editor</a>
+ <div class="ver">Works only while the app is running. Launch it from the <b>“SmarterClip Editor”</b> icon
+  on your Desktop (or Start menu) — that starts it and opens it automatically. This web page can't
+  start the app for you (browsers can't launch local programs). If you see “can't be reached,” it isn't running yet.</div>
+
+ <div class="hr"></div>
+ <h2>First time — install &amp; run</h2>
  <ol>
   <li>Press <b>Windows key</b>, type <b>PowerShell</b>, press <b>Enter</b>.</li>
   <li>Paste this and press <b>Enter</b>:</li>

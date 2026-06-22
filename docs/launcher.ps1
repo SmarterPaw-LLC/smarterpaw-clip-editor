@@ -47,6 +47,25 @@ if (Missing python) { Write-Host 'Installing Python...' -ForegroundColor Yellow;
 if (Missing ffmpeg) { Write-Host 'Installing ffmpeg...'  -ForegroundColor Yellow; winget install -e --id Gyan.FFmpeg     --accept-source-agreements --accept-package-agreements }
 try { python -m pip install --user --quiet pillow 2>$null } catch {}
 
+# 3b) Leave a local launcher + Desktop/Start-menu shortcut so it opens like a normal app (no web page needed)
+try {
+  $localBat = Join-Path $Install 'SmarterClip.bat'
+  $bat = @'
+@echo off
+title SmarterClip Editor
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:SCBASE='https://smarterpaw-llc.github.io/smarterpaw-clip-editor'; iex (irm $env:SCBASE/launcher.ps1)"
+'@
+  $bat = $bat.Replace('https://smarterpaw-llc.github.io/smarterpaw-clip-editor', $BASE)
+  Set-Content -Encoding ASCII -Path $localBat -Value $bat
+  $ws = New-Object -ComObject WScript.Shell
+  foreach ($dir in @([Environment]::GetFolderPath('Desktop'), (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'))) {
+    $lnk = $ws.CreateShortcut((Join-Path $dir 'SmarterClip Editor.lnk'))
+    $lnk.TargetPath = $localBat; $lnk.WorkingDirectory = $Install; $lnk.Description = 'SmarterClip Editor'
+    $lnk.Save()
+  }
+  Write-Host 'Shortcut ready: "SmarterClip Editor" on your Desktop & Start menu.' -ForegroundColor Green
+} catch {}
+
 # 4) Launch
 $editor = Join-Path $AppDir 'editor'
 if (Missing python) { Write-Host 'Python was just installed — please reboot once, then run SmarterClip again.' -ForegroundColor Yellow; Read-Host 'Press Enter to exit'; exit 0 }
