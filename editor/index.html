@@ -110,7 +110,11 @@
   #timeline.clipdrop, #tlTracksWrap.clipdrop { outline:2px dashed var(--acc,#8ab81d); outline-offset:-3px; background:rgba(138,184,29,.07); }
   /* center */
   .center { display:flex; flex-direction:column; align-items:center; gap:10px; padding:12px; overflow:auto; }
-  #stageWrap { position:relative; background:#000; border-radius:10px; overflow:hidden; box-shadow:0 6px 24px #0008; flex:none; }
+  #stageViewport { position:relative; overflow:hidden; border-radius:10px; box-shadow:0 6px 24px #0008; flex:none; }
+  #stageWrap { position:relative; background:#000; border-radius:10px; overflow:hidden; flex:none; transform-origin:0 0; will-change:transform; }
+  .pzctl { display:inline-flex; align-items:center; gap:3px; margin-left:auto; }
+  .pzctl #pzLbl { font-size:11px; color:var(--mut); min-width:34px; text-align:center; }
+  .pzctl .mini { padding:1px 7px; }
   #stage { display:block; width:100%; height:100%; }
   .clipvid { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:none; background:#000; }
   #capOverlay { position:absolute; left:7%; right:7%; text-align:center; color:#fff; font-weight:800;
@@ -203,7 +207,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.48.0</span>
+  <span class="ver" id="appVer">v1.49.0</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -255,12 +259,17 @@
       <button class="arbtn" data-ar="1x1">1:1</button>
       <button class="arbtn" data-ar="16x9">16:9</button>
       <span class="ardim" id="arDim"></span>
+      <span class="pzctl" title="Preview zoom — Ctrl+scroll on the canvas to zoom, Alt-drag or middle-drag to pan. Does not change the clip or render.">
+        <button class="mini" id="pzOut">−</button><span id="pzLbl">100%</span><button class="mini" id="pzIn">+</button><button class="mini" id="pzFit">Fit</button>
+      </span>
     </div>
+    <div id="stageViewport">
     <div id="stageWrap">
       <!-- one <video class="clipvid"> per clip is injected here -->
       <div id="capOverlay"><span></span></div>
       <div id="endcard"><img id="ecLogo" alt=""><div id="ecLines"></div></div>
       <div id="overlayLayer"></div>
+    </div>
     </div>
     <div class="transport">
       <button id="btnPlayTl" class="primary">▶ Play timeline</button>
@@ -521,11 +530,26 @@ function withClip(id, cb){ const v=getVid(id); if(!v){ if(cb)cb(null); return; }
 function toast(m){ const t=$('#toast'); t.textContent=m; t.style.display='block'; clearTimeout(t._t); t._t=setTimeout(()=>t.style.display='none',2200); }
 function fmt(n){ return (Math.round(n*10)/10).toFixed(1); }
 
+// ---- Preview-only view zoom (does NOT touch the clip or the render) ----
+let pz={z:1, px:0, py:0};   // scale + pan (px) of the stage within its viewport
+function applyStageZoom(){ const wrap=$('#stageWrap'); if(!wrap) return;
+  wrap.style.transform = 'translate('+pz.px+'px,'+pz.py+'px) scale('+pz.z+')';
+  const l=$('#pzLbl'); if(l) l.textContent=Math.round(pz.z*100)+'%'; }
+function clampPan(){ const vp=$('#stageViewport'); if(!vp) return; const r=vp.getBoundingClientRect();
+  if(pz.z<=1){ pz.z=1; pz.px=0; pz.py=0; return; }
+  pz.px=Math.min(0, Math.max(r.width  - r.width *pz.z, pz.px));
+  pz.py=Math.min(0, Math.max(r.height - r.height*pz.z, pz.py)); }
+function setStageZoom(nz, cx, cy){ const vp=$('#stageViewport'); if(!vp) return; const r=vp.getBoundingClientRect();
+  nz=Math.max(1, Math.min(8, nz)); if(cx==null){ cx=r.width/2; cy=r.height/2; }
+  const wx=(cx-pz.px)/pz.z, wy=(cy-pz.py)/pz.z;   // keep the focal point under the cursor fixed
+  pz.z=nz; pz.px=cx-wx*nz; pz.py=cy-wy*nz; clampPan(); applyStageZoom(); }
 function sizeStage(){
   const [aw,ah]=ASPECT[EDL.settings.canvas]||[9,16];
   const wrap=$('#stageWrap'); const maxH=Math.max(180, Math.min(440, window.innerHeight-540)); const maxW=480;
   let h=maxH, w=h*aw/ah; if(w>maxW){ w=maxW; h=w*ah/aw; }
   wrap.style.width=w+'px'; wrap.style.height=h+'px';
+  const vp=$('#stageViewport'); if(vp){ vp.style.width=w+'px'; vp.style.height=h+'px'; }
+  clampPan(); applyStageZoom();
   // caption sizing approximates render: fontsize = captionSize * canvasWidth, scaled to stage width
   const fpx = (EDL.settings.captionSize||0.058) * w * 1.0;
   $('#capOverlay').style.fontSize = fpx+'px';
@@ -2297,6 +2321,21 @@ document.addEventListener('keydown', e=>{ if(!(e.ctrlKey||e.metaKey)) return; co
     }catch(e){ alert('Update error: '+e); busy=false; btn.disabled=false; }
   };
   setTimeout(()=>check(true), 1500);   // silent auto-check shortly after load
+})();
+// Preview view-zoom wiring: buttons, Ctrl+scroll to zoom toward cursor, Alt/middle-drag to pan.
+(function initStageZoom(){
+  const vp=$('#stageViewport'); if(!vp) return;
+  const inB=$('#pzIn'), outB=$('#pzOut'), fitB=$('#pzFit');
+  if(inB) inB.onclick=()=>setStageZoom(pz.z*1.25);
+  if(outB) outB.onclick=()=>setStageZoom(pz.z/1.25);
+  if(fitB) fitB.onclick=()=>{ pz={z:1,px:0,py:0}; applyStageZoom(); };
+  vp.addEventListener('wheel', e=>{ if(!(e.ctrlKey||e.metaKey)) return; e.preventDefault();
+    const r=vp.getBoundingClientRect(); setStageZoom(pz.z*(e.deltaY<0?1.15:1/1.15), e.clientX-r.left, e.clientY-r.top); }, {passive:false});
+  vp.addEventListener('pointerdown', e=>{ if(pz.z<=1) return; if(e.button!==1 && !e.altKey) return;   // middle-drag or Alt-drag = pan
+    e.preventDefault(); const sx=e.clientX, sy=e.clientY, px0=pz.px, py0=pz.py; try{vp.setPointerCapture(e.pointerId);}catch(_){}
+    const mv=ev=>{ pz.px=px0+(ev.clientX-sx); pz.py=py0+(ev.clientY-sy); clampPan(); applyStageZoom(); };
+    const up=()=>{ vp.removeEventListener('pointermove',mv); vp.removeEventListener('pointerup',up); };
+    vp.addEventListener('pointermove',mv); vp.addEventListener('pointerup',up); });
 })();
 document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) return;   // S = split selected clip at playhead
   if((e.key==='s'||e.key==='S') && sel>=0 && EDL.segments[sel]){
