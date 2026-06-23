@@ -132,7 +132,10 @@
                      padding:.1em .3em; border-radius:5px; -webkit-text-stroke:2px rgba(0,0,0,.9); paint-order:stroke fill; }
   #endcard { position:absolute; inset:0; background:#111; display:none; flex-direction:column;
              align-items:center; justify-content:center; gap:2%; }
-  #overlayLayer { position:absolute; inset:0; pointer-events:none; z-index:1; }   /* own stacking context so overlay z-indexes don't escape above modals */
+  #overlayLayer { position:absolute; inset:0; pointer-events:none; z-index:1; }
+  #guideV, #guideH { position:absolute; display:none; z-index:40; pointer-events:none; background:#ff35d0; box-shadow:0 0 3px #ff35d0; }
+  #guideV { left:50%; top:0; bottom:0; width:1px; transform:translateX(-0.5px); }
+  #guideH { top:50%; left:0; right:0; height:1px; transform:translateY(-0.5px); }   /* own stacking context so overlay z-indexes don't escape above modals */
   #endcard img#ecLogo { width:80%; height:auto; display:none; margin-bottom:5%; }
   #endcard .l1 { color:#fff; font-weight:800; } #endcard .l2 { color:var(--acc); font-weight:800; }
   #endcard .l3 { color:#111; background:var(--acc); font-weight:800; padding:.25em .7em; border-radius:7px; margin-top:4%; }
@@ -218,7 +221,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.51.2</span>
+  <span class="ver" id="appVer">v1.52.0</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -280,6 +283,7 @@
       <div id="capOverlay"><span></span></div>
       <div id="endcard"><img id="ecLogo" alt=""><div id="ecLines"></div></div>
       <div id="overlayLayer"></div>
+      <div id="guideV"></div><div id="guideH"></div>
     </div>
     <div id="pzBadge"></div>
     </div>
@@ -523,6 +527,7 @@ let MAN = {clips:[], byId:{}, music:[]};
 let EDL = null;
 let sel = -1;          // selected segment index
 let _msel = [];        // multi-selected segment objects (timeline group select)
+let _lastPick = null;  // 'ov' or 'seg' — which kind was selected most recently (for copy/paste)
 const stage = $('#stageWrap');
 const vids = {};       // clip id -> its own preloaded, muted <video> element
 let activeId = null;   // currently visible clip id
@@ -808,7 +813,7 @@ function splitAtPlayhead(i){
   EDL.segments.splice(i+1,0,second);
   sel=i; renderTimeline(); loadSegIntoTrim(); renderOverlays(playhead); toast('Clip split at playhead');
 }
-function selectSeg(i){ stop(); sel=i; _msel=[]; renderTimeline(); loadSegIntoTrim();
+function selectSeg(i){ stop(); sel=i; _msel=[]; _lastPick='seg'; renderTimeline(); loadSegIntoTrim();
   const card=document.querySelector('#timeline .seg.sel'); if(card) card.scrollIntoView({block:'nearest', behavior:'smooth'}); }
 function loadSegIntoTrim(){
   if(sel<0||!EDL.segments[sel]) return; const s=EDL.segments[sel]; const c=MAN.byId[s.id];
@@ -1452,11 +1457,14 @@ function renderOverlays(time){
   });
   histSchedule();
 }
-function dragify(el,o){ el.onpointerdown=ev=>{ ev.preventDefault(); if(document.activeElement&&document.activeElement.blur)document.activeElement.blur(); histCommit(); ovSel=o.id; renderOvList(); buildOvEditor();
-  const wrap=$('#stageWrap').getBoundingClientRect();
-  const move=e=>{ o.x=Math.max(-1,Math.min(2,(e.clientX-wrap.left)/wrap.width)); o.y=Math.max(-1,Math.min(2,(e.clientY-wrap.top)/wrap.height)); renderOverlays(playhead); };   // allow dragging well off the render area
-  const up=()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); };
+function dragify(el,o){ el.onpointerdown=ev=>{ ev.preventDefault(); if(document.activeElement&&document.activeElement.blur)document.activeElement.blur(); histCommit(); ovSel=o.id; _lastPick='ov'; renderOvList(); buildOvEditor();
+  const wrap=$('#stageWrap').getBoundingClientRect(); const TH=0.012;   // center-snap threshold (≈1.2%)
+  const move=e=>{ let nx=(e.clientX-wrap.left)/wrap.width, ny=(e.clientY-wrap.top)/wrap.height;
+    const sx=Math.abs(nx-0.5)<TH, sy=Math.abs(ny-0.5)<TH; if(sx) nx=0.5; if(sy) ny=0.5;   // snap to center
+    o.x=Math.max(-1,Math.min(2,nx)); o.y=Math.max(-1,Math.min(2,ny)); centerGuides(sx,sy); renderOverlays(playhead); };
+  const up=()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); centerGuides(false,false); };
   window.addEventListener('pointermove',move); window.addEventListener('pointerup',up); }; }
+function centerGuides(showV, showH){ const v=$('#guideV'), h=$('#guideH'); if(v) v.style.display=showV?'block':'none'; if(h) h.style.display=showH?'block':'none'; }
 function uid(){ return 'ov'+Date.now()+Math.floor(Math.random()*1000); }
 function openOvModal(){ stop(); ovEdit=true; $('#ovModal').style.display='flex'; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 function closeOvModal(){ ovEdit=false; ovSel=null; $('#ovModal').style.display='none'; renderOverlays(playhead); }
@@ -1474,7 +1482,7 @@ function renderOvList(){
     row.innerHTML=`<div style="display:flex;flex-direction:column;gap:1px"><button class="mini ovup" title="bring forward">▲</button><button class="mini ovdn" title="send back">▼</button></div>
       <span class="ovsel" style="flex:1;cursor:pointer;display:flex;align-items:center;gap:6px;min-width:0">${thumb}<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${icon} ${name}</span><span style="color:var(--mut);flex:none">@${fmt(o.start)}–${fmt(o.start+(+o.dur||0))}s</span></span>
       <button class="mini ovdel" title="delete">✕</button>`;
-    row.querySelector('.ovsel').onclick=()=>{ if(document.activeElement&&document.activeElement.blur)document.activeElement.blur(); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
+    row.querySelector('.ovsel').onclick=()=>{ if(document.activeElement&&document.activeElement.blur)document.activeElement.blur(); ovSel=o.id; _lastPick='ov'; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
     row.querySelector('.ovup').onclick=()=>move(o,+1);
     row.querySelector('.ovdn').onclick=()=>move(o,-1);
     row.querySelector('.ovdel').onclick=()=>{ histCommit(); EDL.overlays=EDL.overlays.filter(x=>x.id!==o.id); if(ovSel===o.id) ovSel=null; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
@@ -2019,7 +2027,7 @@ function snap(t,pts,th){ let best=t,bd=th; for(const p of pts){ const d=Math.abs
 function ovBarInteract(b,hL,hR,o,total){
   const areaW=()=>($('#tlTracks').getBoundingClientRect().width||1);
   b.onclick=ev=>{ if(ev.shiftKey||ev.ctrlKey||ev.metaKey) return;   // additive handled on pointerdown
-    ev.stopPropagation(); _msel=[]; ovSel=o.id; if(!ovEdit) openOvModal(); else { renderOvList(); buildOvEditor(); } renderOverlays(playhead); renderTracks(); };
+    ev.stopPropagation(); if(document.activeElement&&document.activeElement.blur)document.activeElement.blur(); _msel=[]; ovSel=o.id; _lastPick='ov'; if(!ovEdit) openOvModal(); else { renderOvList(); buildOvEditor(); } renderOverlays(playhead); renderTracks(); };
   // Shift/Ctrl-click an overlay bar → toggle into the multi-selection
   b.addEventListener('pointerdown', ev=>{ if(ev.target.closest('.hL,.hR')) return;
     if(ev.shiftKey||ev.ctrlKey||ev.metaKey){ ev.stopPropagation(); ev.preventDefault(); ovSel=o.id; mselToggle(o); return; }
@@ -2341,19 +2349,22 @@ document.addEventListener('keydown', e=>{ if(!(e.ctrlKey||e.metaKey)) return; co
   if(tag==='input'||tag==='textarea'||tag==='select') return;   // let form fields keep native undo/copy/paste
   if(k==='z'&&!e.shiftKey){ e.preventDefault(); doUndo(); return; }
   if(k==='y'||(k==='z'&&e.shiftKey)){ e.preventDefault(); doRedo(); return; }
-  if(k==='c'||k==='x'){   // copy / cut the selected overlay (preferred) or clip
-    if(ovSel){ const o=(EDL.overlays||[]).find(x=>x.id===ovSel); if(!o) return; e.preventDefault();
-      _clipboard={kind:'ov', obj:JSON.parse(JSON.stringify(o))};
+  if(k==='c'||k==='x'){   // copy / cut — act on whichever was selected most recently
+    const ov=ovSel?(EDL.overlays||[]).find(x=>x.id===ovSel):null;
+    const clipOk=sel>=0 && EDL.segments[sel];
+    const useOv = ov && (_lastPick==='ov' || !clipOk);   // overlay wins if it was picked last (or no clip selected)
+    if(useOv){ e.preventDefault();
+      _clipboard={kind:'ov', obj:JSON.parse(JSON.stringify(ov))};
       if(k==='x'){ histCommit(); EDL.overlays=EDL.overlays.filter(x=>x.id!==ovSel); ovSel=null; renderOvList(); buildOvEditor(); renderTracks(); renderOverlays(playhead); toast('Overlay cut'); }
       else toast('Overlay copied'); }
-    else if(sel>=0 && EDL.segments[sel]){ e.preventDefault();
+    else if(clipOk){ e.preventDefault();
       _clipboard={kind:'seg', obj:JSON.parse(JSON.stringify(EDL.segments[sel]))};
       if(k==='x'){ segAction('del', sel); renderTracks(); toast('Clip cut'); } else toast('Clip copied'); }
     return; }
   if(k==='v'){   // paste at the playhead
     if(!_clipboard) return; e.preventDefault(); histCommit();
     if(_clipboard.kind==='ov'){ const o=JSON.parse(JSON.stringify(_clipboard.obj)); o.id=uid(); ovPlace(o);
-      EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderTimeline(); renderTracks(); renderOverlays(playhead); toast('Overlay pasted'); }
+      EDL.overlays.push(o); ovSel=o.id; _lastPick='ov'; renderOvList(); buildOvEditor(); renderTimeline(); renderTracks(); renderOverlays(playhead); toast('Overlay pasted'); }
     else { const c=JSON.parse(JSON.stringify(_clipboard.obj)); delete c.gap; const p=placeAtPlayhead(segLen(c),1); c.ch=p.ch; c.t0=p.t0;
       EDL.segments.push(c); sel=EDL.segments.length-1; renderTimeline(); renderTracks(); selectSeg(sel); toast('Clip pasted'); }
     return; }
