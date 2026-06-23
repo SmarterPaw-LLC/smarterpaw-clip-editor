@@ -62,6 +62,7 @@
   .blk.audio .volsl { flex:1; max-width:220px; accent-color:var(--acc,#8ab81d); cursor:pointer; height:14px; }
   .blk.audio .vpct { flex:none; font-size:10px; color:#cde9d8; }
   .blk.sel { box-shadow:0 0 0 2px var(--acc2); z-index:2; }
+  .blk.clip.msel { box-shadow:0 0 0 2px var(--acc,#8ab81d); outline:1px solid var(--acc,#8ab81d); z-index:2; }
   .blk .hL,.blk .hR { position:absolute; top:0; bottom:0; width:7px; cursor:ew-resize; background:rgba(255,255,255,.18); z-index:6; } .blk .hL{left:0} .blk .hR{right:0}
   .blk .modedot { position:absolute; top:1px; right:9px; font-size:10px; line-height:1; cursor:pointer; background:#0007; border-radius:3px; padding:1px 3px; z-index:3; }
   .blk .modedot.free { background:var(--acc2); }
@@ -178,6 +179,8 @@
   .modal-body label { font-size:12px; color:var(--mut); display:inline-flex; align-items:center; gap:6px; margin-right:12px; }
   .modal-body label.ck { color:var(--txt); }
   .modal-body input[type=range] { vertical-align:middle; }
+  input.rngnum { width:52px; margin-left:6px; font-size:11px; padding:2px 4px; background:var(--panel2,#222);
+    color:var(--txt); border:1px solid var(--line); border-radius:5px; vertical-align:middle; }
   .cmodal { position:fixed; inset:0; background:#000a; z-index:1100; display:flex; align-items:center; justify-content:center; }
   .cmodal .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; width:540px; max-width:94vw; }
   .cmodal .hd { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); font-weight:700; }
@@ -207,7 +210,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.49.0</span>
+  <span class="ver" id="appVer">v1.50.0</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -328,7 +331,7 @@
   </div>
   </div><!-- /topRow -->
   <div id="tlPanel">
-    <h2>Timeline <span style="color:var(--mut);font-weight:400;text-transform:none;letter-spacing:0">— drag a source clip here to add · click to scrub · drag clips between channels · drag bars to move/resize</span>
+    <h2>Timeline <span style="color:var(--mut);font-weight:400;text-transform:none;letter-spacing:0">— drag a source clip here to add · click to scrub · drag bars to move/resize · Shift-click clips to multi-select, then drag the group</span>
       <button class="mini" id="btnAddCh" title="Add a clip channel above (higher channels cover lower ones)" style="margin-left:auto">＋ Channel</button></h2>
     <div id="tlTracksWrap">
       <div id="tlRuler"></div>
@@ -509,6 +512,7 @@ const api = (u,o) => fetch(u,o).then(r=>r.json());
 let MAN = {clips:[], byId:{}, music:[]};
 let EDL = null;
 let sel = -1;          // selected segment index
+let _msel = [];        // multi-selected segment objects (timeline group select)
 const stage = $('#stageWrap');
 const vids = {};       // clip id -> its own preloaded, muted <video> element
 let activeId = null;   // currently visible clip id
@@ -765,6 +769,7 @@ function updateTotal(){ const t=totalDur(); $('#totalPill').textContent=fmt(t)+'
   if(!tlPlaying){ $('#tlTime').textContent=fmt(Math.min(playhead,t))+' / '+fmt(t)+'s'; $('#scrub').max=t; $('#scrub').value=Math.min(playhead,t); } }
 function segAction(a,i){
   histCommit();   // seal prior state so this discrete action is its own undo step
+  _msel=[];       // single-clip action clears any multi-selection
   if(a==='up'&&i>0){ [EDL.segments[i-1],EDL.segments[i]]=[EDL.segments[i],EDL.segments[i-1]]; sel=i-1; }
   else if(a==='down'&&i<EDL.segments.length-1){ [EDL.segments[i+1],EDL.segments[i]]=[EDL.segments[i],EDL.segments[i+1]]; sel=i+1; }
   else if(a==='dup'){ EDL.segments.splice(i+1,0,JSON.parse(JSON.stringify(EDL.segments[i]))); sel=i+1; }
@@ -790,7 +795,7 @@ function splitAtPlayhead(i){
   EDL.segments.splice(i+1,0,second);
   sel=i; renderTimeline(); loadSegIntoTrim(); renderOverlays(playhead); toast('Clip split at playhead');
 }
-function selectSeg(i){ stop(); sel=i; renderTimeline(); loadSegIntoTrim();
+function selectSeg(i){ stop(); sel=i; _msel=[]; renderTimeline(); loadSegIntoTrim();
   const card=document.querySelector('#timeline .seg.sel'); if(card) card.scrollIntoView({block:'nearest', behavior:'smooth'}); }
 function loadSegIntoTrim(){
   if(sel<0||!EDL.segments[sel]) return; const s=EDL.segments[sel]; const c=MAN.byId[s.id];
@@ -1463,6 +1468,20 @@ function renderOvList(){
     box.appendChild(row); });
   renderTracks();
 }
+// Pair every range slider in `scope` with a synced number box (native up/down steppers), two-way bound.
+function addSliderNumbers(scope){
+  if(!scope) return;
+  scope.querySelectorAll('input[type=range]').forEach(r=>{
+    if(r._numPair) return; r._numPair=true;
+    const n=document.createElement('input'); n.type='number'; n.className='rngnum';
+    if(r.min!=='') n.min=r.min; if(r.max!=='') n.max=r.max; if(r.step!=='') n.step=r.step; n.value=r.value;
+    r.addEventListener('input', ()=>{ if(n.value!==r.value) n.value=r.value; });
+    const push=ev=>{ r.value=n.value; r.dispatchEvent(new Event(ev,{bubbles:true})); };
+    n.addEventListener('input', ()=>push('input'));
+    n.addEventListener('change', ()=>push('change'));
+    r.insertAdjacentElement('afterend', n);
+  });
+}
 function buildOvEditor(){
   const box=$('#ovEditor'); if(!box) return; const o=(EDL.overlays||[]).find(x=>x.id===ovSel);
   if(!o){ box.innerHTML='<div style="color:var(--mut);font-size:12px">Select an overlay to edit it.</div>'; return; }
@@ -1583,6 +1602,7 @@ function buildOvEditor(){
     if(o.type==='sprinkle') updSpWarn();   // live-refresh per-piece hints on toggle/count change
     renderOverlays(playhead); renderOvList(); };
   box.querySelectorAll('input,select,textarea').forEach(el=>{ el.oninput=upd; el.onchange=upd; });
+  addSliderNumbers(box);   // pair every slider with a number box + up/down steppers
   if($('#ovRot0')) $('#ovRot0').onclick=()=>{ $('#ovRot').value=0; upd(); };
   const spSet=src=>{ o.src=src; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
   if($('#ovSpLib')) $('#ovSpLib').onclick=()=>openLibrary(spSet);
@@ -1610,6 +1630,7 @@ function buildOvEditor(){
     L.querySelectorAll('.anseed').forEach(b=>{ b.onclick=()=>{ histCommit(); o.anims[+b.dataset.ai].seed=Math.floor(Math.random()*1e6); renderOverlays(playhead); }; });
     L.querySelectorAll('.anpick').forEach(b=>{ b.onclick=()=>{ const ai=+b.dataset.ai, k=b.dataset.k; pickImage(src=>{ histCommit(); o.anims[ai][k]=src; renderAnimList(); renderOverlays(playhead); }); }; });
     L.querySelectorAll('.anrm').forEach(b=>{ b.onclick=()=>{ histCommit(); o.anims.splice(+b.dataset.ai,1); renderAnimList(); renderOverlays(playhead); }; });
+    addSliderNumbers(L);   // number steppers on animation sliders too
     updSpWarn();
   }
   function updSpWarn(){ const hasAnim=(o.anims||[]).length>0;   // sprinkle per-piece hints react live to anim add/remove + toggle
@@ -1834,7 +1855,7 @@ function buildOverlayBar(o,total){ const b=document.createElement('div'); b.clas
   ovBarInteract(b,hL,hR,o,total); return b; }
 // Build one clip block element for a layout entry `o` (handles base vs upper-channel behavior).
 function buildClipBlock(o,total){ const i=o.idx, sg=o.seg;
-  const b=document.createElement('div'); b.className='blk clip'+(i===sel?' sel':'')+(o.ch===0&&sg.editMode==='free'?' free':'')+(sg.hidden?' clhidden':'')+(sg.locked?' cllocked':'');
+  const b=document.createElement('div'); b.className='blk clip'+(i===sel?' sel':'')+(_msel.includes(sg)?' msel':'')+(o.ch===0&&sg.editMode==='free'?' free':'')+(sg.hidden?' clhidden':'')+(sg.locked?' cllocked':'');
   b.style.left=(o.start/total*100)+'%'; b.style.width=(o.dur/total*100)+'%'; const c=MAN.byId[sg.id];
   const txt=document.createElement('span'); txt.className='clbl'; txt.textContent=(i+1)+'. '+(((c&&c.label)||sg.id).slice(0,16)); b.appendChild(txt);
   b.title=txt.textContent+(sg.hidden?' (hidden)':'')+(sg.locked?' (locked)':'');
@@ -1900,8 +1921,22 @@ function clipResize(handle,i,side){
 //  • upper (ch≥1): horizontal = set absolute start t0; drop onto a higher lane = cover the base there.
 function clipDragMulti(b,o){ const seg=o.seg;
   b.onpointerdown=ev=>{ if(ev.target.closest('.hL,.hR,.modedot,.cic')) return; if(seg.locked){ ev.stopPropagation(); return; } ev.stopPropagation(); ev.preventDefault(); histCommit();
+    const additive = ev.shiftKey||ev.ctrlKey||ev.metaKey;
     const area=$('#tlTracks').getBoundingClientRect(); const total=totalDur()||1; let moved=false; const x0=ev.clientX, y0=ev.clientY;
     const ptDown=Math.max(0,Math.min(total,(x0-area.left)/area.width*total)); const grabOff=ptDown-(o.start||0);   // keep the grabbed point under the cursor
+    const targetChG=cy=>{ const lanes=[...document.querySelectorAll('#tlTracks .trk[data-ch]')]; let tch=0; for(const ln of lanes){ const r=ln.getBoundingClientRect(); if(cy<r.bottom){ tch=+ln.dataset.ch; break; } } return tch; };
+    if(_msel.includes(seg) && _msel.length>1 && !additive){   // GROUP move: shift all selected clips together (free-positioned, channels ≥1)
+      const snap=_msel.map(s=>{ const Ls=layout().all.find(z=>z.seg===s); return {s, start:Ls?Ls.start:(+s.t0||0), ch:+s.ch||0}; });
+      const grab=snap.find(z=>z.s===seg)||{start:o.start||0, ch:+seg.ch||0};
+      const mvg=e=>{ if(!moved && Math.abs(e.clientX-x0)<5 && Math.abs(e.clientY-y0)<5) return; moved=true;
+        const pt=Math.max(0,Math.min(total,(e.clientX-area.left)/area.width*total));
+        const dt=Math.max(0,pt-grabOff)-grab.start, dch=Math.max(0,Math.min(chCount()-1,targetChG(e.clientY)))-grab.ch;
+        snap.forEach(({s,start,ch})=>{ const nc=Math.max(1,Math.min(chCount()-1,ch+dch)); s.ch=nc; delete s.gap; s.t0=Math.max(0,Math.round((start+dt)*100)/100); });
+        renderTracks(); updateTotal(); };
+      const upg=()=>{ window.removeEventListener('pointermove',mvg); window.removeEventListener('pointerup',upg);
+        if(!moved){ _msel=[]; selectSeg(o.idx); } else renderTimeline(); };
+      window.addEventListener('pointermove',mvg); window.addEventListener('pointerup',upg); return;
+    }
     const targetCh=cy=>{ const lanes=[...document.querySelectorAll('#tlTracks .trk[data-ch]')];   // top→bottom = high→low
       let tch=0; for(const ln of lanes){ const r=ln.getBoundingClientRect(); if(cy<r.bottom){ tch=+ln.dataset.ch; break; } } return tch; };
     const baseIdxAt=pt=>{ let ti=EDL.segments.length-1; for(const bd of clipBounds().bounds){ if(pt<bd.end){ ti=bd.idx; break; } } return ti; };
@@ -1929,7 +1964,14 @@ function clipDragMulti(b,o){ const seg=o.seg;
         if(cur>=0 && ti!==cur){ EDL.segments.splice(ti,0,EDL.segments.splice(cur,1)[0]); sel=ti; renderTimeline(); } }
       else { seg.t0=Math.max(0,Math.round((pt-grabOff)*100)/100); sel=EDL.segments.indexOf(seg); renderTracks(); updateTotal(); }   // upper: track the cursor
     };
-    const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); if(!moved) selectSeg(o.idx); else renderTimeline(); };
+    const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up);
+      if(!moved){
+        if(additive){   // Shift/Ctrl-click toggles this clip in the multi-selection
+          if(!_msel.length && sel>=0 && EDL.segments[sel] && EDL.segments[sel]!==seg) _msel.push(EDL.segments[sel]);
+          const ix=_msel.indexOf(seg); if(ix>=0) _msel.splice(ix,1); else _msel.push(seg);
+          sel=EDL.segments.indexOf(seg); renderTracks(); renderTimeline();
+        } else { _msel=[]; selectSeg(o.idx); }
+      } else renderTimeline(); };
     window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up);
   };
 }
