@@ -221,7 +221,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.52.0</span>
+  <span class="ver" id="appVer">v1.52.1</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -2462,14 +2462,24 @@ document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) ret
 });
 document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) return;
   if(!(e.key==='ArrowLeft'||e.key==='ArrowRight'||e.key==='ArrowUp'||e.key==='ArrowDown')) return;
-  if(!ovSel) return; const o=(EDL.overlays||[]).find(x=>x.id===ovSel); if(!o) return;   // an overlay is selected → arrows nudge it
   const ae=document.activeElement, tag=(ae&&ae.tagName||'').toLowerCase(), ty=(ae&&ae.type||'').toLowerCase();
   if(tag==='textarea' || tag==='select' || (tag==='input' && (ty==='text'||ty==='number'||ty==='search'||ty===''))) return;   // let real typing fields keep arrows
+  // nudge ALL selected overlays (multi-selection), else just the single selected one
+  let targets=(_msel||[]).filter(x=>(EDL.overlays||[]).includes(x));
+  if(!targets.length && ovSel){ const o=(EDL.overlays||[]).find(x=>x.id===ovSel); if(o) targets=[o]; }
+  if(!targets.length) return;
   const step=e.shiftKey?0.04:0.005; let dx=0,dy=0;
   if(e.key==='ArrowLeft')dx=-step; else if(e.key==='ArrowRight')dx=step; else if(e.key==='ArrowUp')dy=-step; else dy=step;
   e.preventDefault(); histSchedule();
-  o.x=Math.max(-1,Math.min(2,(o.x!=null?o.x:0.5)+dx)); o.y=Math.max(-1,Math.min(2,(o.y!=null?o.y:0.5)+dy));
+  targets.forEach(o=>{ o.x=Math.max(-1,Math.min(2,(o.x!=null?o.x:0.5)+dx)); o.y=Math.max(-1,Math.min(2,(o.y!=null?o.y:0.5)+dy)); });
   renderOverlays(playhead); });
+// Escape = deselect everything (clip, overlay, multi-selection)
+document.addEventListener('keydown', e=>{ if(e.key!=='Escape') return;
+  const ae=document.activeElement, tag=(ae&&ae.tagName||'').toLowerCase();
+  if(tag==='input'||tag==='textarea'||tag==='select'){ ae.blur(); return; }   // first Escape just leaves the field
+  if(!ovSel && sel<0 && !_msel.length) return;
+  ovSel=null; sel=-1; _msel=[]; _lastPick=null;
+  renderTimeline(); renderTracks(); if(ovEdit) buildOvEditor(); renderOverlays(playhead); });
 
 /* ---------- boot ---------- */
 async function boot(reload){
