@@ -222,7 +222,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.52.2</span>
+  <span class="ver" id="appVer">v1.52.3</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -2042,13 +2042,14 @@ function ovBarInteract(b,hL,hR,o,total){
         const pt=Math.max(0,Math.min(total,(e.clientX-area.left)/area.width*total));
         groupApply(snap, Math.max(0,pt-grabOff)-grab.start, Math.max(0,Math.min(chCount()-1,tch(e.clientY)))-grab.ch);
         renderTracks(); renderOverlays(playhead); };
-      const upg=()=>{ window.removeEventListener('pointermove',mvg); window.removeEventListener('pointerup',upg); if(ovEdit) renderOvList(); };
+      const upg=()=>{ window.removeEventListener('pointermove',mvg); window.removeEventListener('pointerup',upg); if(ovEdit){ renderOvList(); buildOvEditor(); } };
       window.addEventListener('pointermove',mvg); window.addEventListener('pointerup',upg); }
   }, true);   // capture so it runs before the move-drag handler
   const drag=mode=>ev=>{ if(ev.shiftKey||ev.ctrlKey||ev.metaKey||(_msel.includes(o)&&_msel.length>1&&mode==='move')) return;   // handled above
-    ev.stopPropagation(); ev.preventDefault(); histCommit(); ovSel=o.id; const x0=ev.clientX, s0=o.start, d0=+o.dur||0, w=areaW();
-    const th=Math.max(0.12, total*0.012);   // snap threshold (seconds)
-    const mv=e=>{ const dt=(e.clientX-x0)/w*total; const pts=snapPoints(o);
+    ev.stopPropagation(); ev.preventDefault(); histCommit(); ovSel=o.id; _lastPick='ov'; const x0=ev.clientX, y0=ev.clientY, s0=o.start, d0=+o.dur||0, w=areaW();
+    const th=Math.max(0.12, total*0.012); let moved=false;   // snap threshold; moved guards accidental nudges on a click
+    const mv=e=>{ if(mode==='move' && !moved && Math.abs(e.clientX-x0)<4 && Math.abs(e.clientY-y0)<4) return; moved=true;
+      const dt=(e.clientX-x0)/w*total; const pts=snapPoints(o);
       if(mode==='move'){ let ns=Math.max(0,s0+dt);
         const ss=snap(ns,pts,th), se=snap(ns+d0,pts,th);          // snap whichever edge is closer
         if(ss!==ns && (se===ns+d0 || Math.abs(ss-ns)<=Math.abs(se-(ns+d0)))) ns=ss; else if(se!==ns+d0) ns=se-d0;
@@ -2059,7 +2060,7 @@ function ovBarInteract(b,hL,hR,o,total){
       else if(mode==='r'){ let ne=snap(s0+d0+dt,pts,th); o.dur=Math.max(0.2, ne-o.start); }
       else { let ns=snap(s0+dt,pts,th); ns=Math.max(0,Math.min(ns,s0+d0-0.2)); o.dur=d0+(s0-ns); o.start=ns; }
       renderTracks(); renderOverlays(playhead); if(ovEdit&&ovSel===o.id) buildOvEditor(); };
-    const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); if(ovEdit) renderOvList(); };
+    const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); if(ovEdit){ renderOvList(); buildOvEditor(); } };   // sync editor to the selected overlay
     window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up); };
   b.onpointerdown=drag('move'); hL.onpointerdown=drag('l'); hR.onpointerdown=drag('r');
 }
