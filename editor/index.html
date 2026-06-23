@@ -203,7 +203,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.47.0</span>
+  <span class="ver" id="appVer">v1.48.0</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -2230,11 +2230,29 @@ $('#btnExport').onclick=exportJSON;
 $('#btnImport').onclick=()=>$('#fileImport').click();
 $('#fileImport').onchange=e=>{ if(e.target.files[0]) importJSON(e.target.files[0]); e.target.value=''; };
 $('#btnUndo').onclick=doUndo; $('#btnRedo').onclick=doRedo;
+let _clipboard=null;   // copy/paste buffer: a cloned segment or overlay
 document.addEventListener('keydown', e=>{ if(!(e.ctrlKey||e.metaKey)) return; const k=(e.key||'').toLowerCase();
   const tag=(document.activeElement&&document.activeElement.tagName||'').toLowerCase();
-  if(tag==='input'||tag==='textarea'||tag==='select') return;   // let form fields keep their own text undo
-  if(k==='z'&&!e.shiftKey){ e.preventDefault(); doUndo(); }
-  else if(k==='y'||(k==='z'&&e.shiftKey)){ e.preventDefault(); doRedo(); } });
+  if(tag==='input'||tag==='textarea'||tag==='select') return;   // let form fields keep native undo/copy/paste
+  if(k==='z'&&!e.shiftKey){ e.preventDefault(); doUndo(); return; }
+  if(k==='y'||(k==='z'&&e.shiftKey)){ e.preventDefault(); doRedo(); return; }
+  if(k==='c'||k==='x'){   // copy / cut the selected overlay (preferred) or clip
+    if(ovSel){ const o=(EDL.overlays||[]).find(x=>x.id===ovSel); if(!o) return; e.preventDefault();
+      _clipboard={kind:'ov', obj:JSON.parse(JSON.stringify(o))};
+      if(k==='x'){ histCommit(); EDL.overlays=EDL.overlays.filter(x=>x.id!==ovSel); ovSel=null; renderOvList(); buildOvEditor(); renderTracks(); renderOverlays(playhead); toast('Overlay cut'); }
+      else toast('Overlay copied'); }
+    else if(sel>=0 && EDL.segments[sel]){ e.preventDefault();
+      _clipboard={kind:'seg', obj:JSON.parse(JSON.stringify(EDL.segments[sel]))};
+      if(k==='x'){ segAction('del', sel); renderTracks(); toast('Clip cut'); } else toast('Clip copied'); }
+    return; }
+  if(k==='v'){   // paste at the playhead
+    if(!_clipboard) return; e.preventDefault(); histCommit();
+    if(_clipboard.kind==='ov'){ const o=JSON.parse(JSON.stringify(_clipboard.obj)); o.id=uid(); ovPlace(o);
+      EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderTimeline(); renderTracks(); renderOverlays(playhead); toast('Overlay pasted'); }
+    else { const c=JSON.parse(JSON.stringify(_clipboard.obj)); delete c.gap; const p=placeAtPlayhead(segLen(c),1); c.ch=p.ch; c.t0=p.t0;
+      EDL.segments.push(c); sel=EDL.segments.length-1; renderTimeline(); renderTracks(); selectSeg(sel); toast('Clip pasted'); }
+    return; }
+});
 // Arrow keys nudge the selected overlay (Shift = bigger step); can move it off the render area.
 // Resizable left/right panes — drag the splitter bars; widths persist in localStorage; double-click resets.
 (function initPaneResize(){
