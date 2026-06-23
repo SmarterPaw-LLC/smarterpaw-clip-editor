@@ -40,7 +40,9 @@
   .topRow { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:var(--leftW,220px) 7px minmax(220px,1fr) 7px var(--rightW,340px); gap:5px; }
   .psplit { align-self:stretch; cursor:col-resize; border-radius:4px; background:transparent; transition:background .12s; }
   .psplit:hover, .psplit.drag { background:var(--acc,#8ab81d); }
-  #tlPanel { flex:0 0 auto; height:200px; background:var(--panel); border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; overflow:hidden; }
+  #tlPanel { flex:0 0 auto; height:var(--tlH,200px); background:var(--panel); border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; overflow:hidden; }
+  .hsplit { flex:0 0 auto; height:7px; margin:-3px 0; cursor:row-resize; border-radius:4px; background:transparent; transition:background .12s; }
+  .hsplit:hover, .hsplit.drag { background:var(--acc,#8ab81d); }
   #tlPanel h2 { font-size:12px; text-transform:uppercase; letter-spacing:.6px; color:var(--mut); margin:0; padding:7px 12px; border-bottom:1px solid var(--line); display:flex; gap:10px; align-items:center; }
   #tlTracksWrap { position:relative; flex:1; overflow:auto; }
   #tlRuler { height:22px; position:relative; background:var(--panel2); border-bottom:1px solid var(--line); }
@@ -216,7 +218,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.51.1</span>
+  <span class="ver" id="appVer">v1.51.2</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -337,6 +339,7 @@
     <div class="status" id="status">Loading…</div>
   </div>
   </div><!-- /topRow -->
+  <div class="hsplit" id="tlSplit" title="Drag to resize the timeline · double-click to reset"></div>
   <div id="tlPanel">
     <h2>Timeline <span style="color:var(--mut);font-weight:400;text-transform:none;letter-spacing:0">— drag a source clip here to add · click to scrub · drag bars to move/resize · Shift-click clips to multi-select, then drag the group</span>
       <button class="mini" id="btnAddCh" title="Add a clip channel above (higher channels cover lower ones)" style="margin-left:auto">＋ Channel</button></h2>
@@ -2401,6 +2404,20 @@ document.addEventListener('keydown', e=>{ if(!(e.ctrlKey||e.metaKey)) return; co
   setTimeout(()=>check(true), 1500);   // silent auto-check shortly after load
 })();
 // Preview view-zoom wiring: buttons, Ctrl+scroll to zoom toward cursor, Alt/middle-drag to pan.
+// Drag the horizontal splitter to make the timeline pane taller/shorter; persists; double-click resets.
+(function initTlResize(){
+  const panel=$('#tlPanel'), sp=$('#tlSplit'); if(!panel||!sp) return;
+  const KEY='scl_tlH', MIN=110, MAXh=()=>Math.max(180, window.innerHeight*0.72);
+  const apply=h=>panel.style.setProperty('--tlH', Math.round(Math.max(MIN,Math.min(MAXh(),h)))+'px');
+  const saved=parseFloat(localStorage.getItem(KEY)); if(saved) apply(saved);
+  sp.addEventListener('pointerdown', ev=>{ ev.preventDefault(); sp.classList.add('drag'); try{sp.setPointerCapture(ev.pointerId);}catch(_){}
+    const y0=ev.clientY, h0=panel.getBoundingClientRect().height;
+    const mv=e=>apply(h0+(y0-e.clientY));   // drag up = taller timeline
+    const up=()=>{ sp.classList.remove('drag'); document.removeEventListener('pointermove',mv); document.removeEventListener('pointerup',up);
+      localStorage.setItem(KEY, parseFloat(panel.style.getPropertyValue('--tlH'))||200); positionPlayhead&&positionPlayhead(); };
+    document.addEventListener('pointermove',mv); document.addEventListener('pointerup',up); });
+  sp.addEventListener('dblclick', ()=>{ panel.style.setProperty('--tlH','200px'); localStorage.removeItem(KEY); });
+})();
 let _panKey=false;   // Space held = pan mode
 (function initStageZoom(){
   const vp=$('#stageViewport'); if(!vp) return; const center=document.querySelector('.center');
