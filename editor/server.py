@@ -580,61 +580,76 @@ def _anim_exprs(o, s, dur, W, tv="t"):
         if float(o.get("fadeIn", 0) or 0) > 0: anims.append({"type": "fadeIn", "d": float(o.get("fadeIn"))})
         if float(o.get("fadeOut", 0) or 0) > 0: anims.append({"type": "fadeOut", "d": float(o.get("fadeOut"))})
     aphase = float(o.get("aphase", 0) or 0)   # per-piece sprinkle animation phase offset
-    lt = "((%s-%g)+%g)" % (tv, s, aphase) if aphase else "(%s-%g)" % (tv, s)
     dxs, dys, amul, rots = [], [], [], []
     for a in anims:
+        # Per-animation window within the overlay; defaults to the whole overlay.
+        aS = max(0.0, float(a.get("tStart", 0) or 0))
+        aEv = a.get("tEnd")
+        aE = min(dur, float(aEv)) if (aEv is not None and float(aEv) > 0) else dur
+        if aE <= aS: continue
+        dw = aE - aS                       # animation's local duration
+        eA = s + aE                        # absolute timeline end of the window
+        win_open, win_close = s + aS, eA
+        lt = "((%s-%g)+%g)" % (tv, win_open, aphase) if aphase else "(%s-%g)" % (tv, win_open)
+        gate = "between(%s,%g,%g)" % (tv, win_open, win_close)
+        windowed = (aS > 0 or aE < dur)
+        def add_dx(expr): dxs.append(("if(%s,%s,0)" % (gate, expr)) if windowed else expr)
+        def add_dy(expr): dys.append(("if(%s,%s,0)" % (gate, expr)) if windowed else expr)
+        def add_rot(expr): rots.append(("if(%s,%s,0)" % (gate, expr)) if windowed else expr)
+        def add_amul(expr): amul.append(("if(%s,%s,1)" % (gate, expr)) if windowed else expr)
         ty = a.get("type")
         if ty == "fadeIn":
-            d = max(0.01, float(a.get("d", 0.5))); amul.append("min(1,max(0,(%s-%g)/%g))" % (tv, s, d))
+            d = max(0.01, float(a.get("d", 0.5))); add_amul("min(1,max(0,(%s)/%g))" % (lt, d))
         elif ty == "fadeOut":
-            d = max(0.01, float(a.get("d", 0.5))); amul.append("min(1,max(0,(%g-%s)/%g))" % (e, tv, d))
+            d = max(0.01, float(a.get("d", 0.5))); add_amul("min(1,max(0,(%g-%s)/%g))" % (eA, tv, d))
         elif ty == "pulse":
-            amp = float(a.get("amp", 0.5)); sp = float(a.get("speed", 1.5)); amul.append("(1-%g*(0.5-0.5*cos(2*PI*%g*%s)))" % (amp, sp, lt))
+            amp = float(a.get("amp", 0.5)); sp = float(a.get("speed", 1.5)); add_amul("(1-%g*(0.5-0.5*cos(2*PI*%g*%s)))" % (amp, sp, lt))
         elif ty == "jitter":
             amp = float(a.get("amp", 0.012)) * W; sp = float(a.get("speed", 11))
-            dxs.append("%g*(sin(2*PI*%g*%s)+0.7*sin(2*PI*%g*%s+1.1))/1.7" % (amp, sp, lt, sp * 1.7, lt))
-            dys.append("%g*(cos(2*PI*%g*%s)+0.7*sin(2*PI*%g*%s+0.5))/1.7" % (amp, sp * 1.3, lt, sp * 2.1, lt))
+            add_dx("%g*(sin(2*PI*%g*%s)+0.7*sin(2*PI*%g*%s+1.1))/1.7" % (amp, sp, lt, sp * 1.7, lt))
+            add_dy("%g*(cos(2*PI*%g*%s)+0.7*sin(2*PI*%g*%s+0.5))/1.7" % (amp, sp * 1.3, lt, sp * 2.1, lt))
         elif ty == "float":
-            amp = float(a.get("amp", 0.02)) * W; sp = float(a.get("speed", 0.6)); dys.append("%g*sin(2*PI*%g*%s)" % (amp, sp, lt))
+            amp = float(a.get("amp", 0.02)) * W; sp = float(a.get("speed", 0.6)); add_dy("%g*sin(2*PI*%g*%s)" % (amp, sp, lt))
         elif ty == "bounce":
-            amp = float(a.get("amp", 0.05)) * W; sp = float(a.get("speed", 1)); dys.append("-%g*abs(sin(PI*%g*%s))" % (amp, sp, lt))
+            amp = float(a.get("amp", 0.05)) * W; sp = float(a.get("speed", 1)); add_dy("-%g*abs(sin(PI*%g*%s))" % (amp, sp, lt))
         elif ty == "slideIn":
             d = max(0.01, float(a.get("d", 0.5))); dist = float(a.get("dist", 0.2)) * W; dr = a.get("dir", "left")
             term = "if(lt(%s,%g),pow(1-%s/%g,2)*%g,0)" % (lt, d, lt, d, dist)
-            (dxs if dr in ("left", "right") else dys).append(("-" if dr in ("left", "up") else "") + term)
+            term = ("-" if dr in ("left", "up") else "") + term
+            (add_dx if dr in ("left", "right") else add_dy)(term)
         elif ty == "bounceIn":
             d = max(0.01, float(a.get("d", 0.6))); amp = float(a.get("amp", 0.12)) * W
-            dys.append("if(lt(%s,%g),-%g*exp(-3*%s/%g)*cos(2*PI*1.6*%s/%g)*(1-%s/%g),0)" % (lt, d, amp, lt, d, lt, d, lt, d))
+            add_dy("if(lt(%s,%g),-%g*exp(-3*%s/%g)*cos(2*PI*1.6*%s/%g)*(1-%s/%g),0)" % (lt, d, amp, lt, d, lt, d, lt, d))
         elif ty == "dropIn":
             d = max(0.01, float(a.get("d", 0.6))); dist = float(a.get("dist", 0.5)) * W
             k = "((%s)/%g)" % (lt, d); eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (k, k)
-            dys.append("if(lt(%s,%g),-%g*(1-%s),0)" % (lt, d, dist, eb))
+            add_dy("if(lt(%s,%g),-%g*(1-%s),0)" % (lt, d, dist, eb))
         elif ty == "popIn":
             d = max(0.01, float(a.get("d", 0.45)))   # scale isn't animatable on an ffmpeg overlay → render as a quick fade-in
-            amul.append("min(1,max(0,(%s)/%g))" % (lt, d * 0.5))
+            add_amul("min(1,max(0,(%s)/%g))" % (lt, d * 0.5))
         elif ty == "reshuffle":   # seeded per-step randomization; same hash math as _rsHash() in the UI
             freq = max(0.2, float(a.get("freq", 2))); amt = float(a.get("amt", 0.15)); rseed = float(a.get("seed", 1))
             def _H(salt):
                 inner = "(floor(%s*%g)*12.9898+%g*78.233+%g*45.13)" % (lt, freq, rseed, salt)
                 sx = "sin(%s)*43758.5453" % inner
                 return "((%s)-floor(%s))*2-1" % (sx, sx)
-            if a.get("posX"): dxs.append("%g*(%s)" % (amt * W, _H(1.1)))
-            if a.get("posY"): dys.append("%g*(%s)" % (amt * W, _H(2.3)))
-            if a.get("rot"): rots.append("%g*(%s)" % (amt * math.pi, _H(3.7)))
-            if a.get("opacity"): amul.append("max(0,1-((%s)*0.5+0.5)*%g)" % (_H(6.1), amt * 1.4))
+            if a.get("posX"): add_dx("%g*(%s)" % (amt * W, _H(1.1)))
+            if a.get("posY"): add_dy("%g*(%s)" % (amt * W, _H(2.3)))
+            if a.get("rot"): add_rot("%g*(%s)" % (amt * math.pi, _H(3.7)))
+            if a.get("opacity"): add_amul("max(0,1-((%s)*0.5+0.5)*%g)" % (_H(6.1), amt * 1.4))
         elif ty == "blink":
-            sp = float(a.get("speed", 2)); amul.append("gte(sin(2*PI*%g*%s),0)" % (sp, lt))
+            sp = float(a.get("speed", 2)); add_amul("gte(sin(2*PI*%g*%s),0)" % (sp, lt))
         elif ty == "wiggle":
-            amp = float(a.get("amp", 8)) * math.pi / 180.0; sp = float(a.get("speed", 2)); rots.append("%g*sin(2*PI*%g*%s)" % (amp, sp, lt))
+            amp = float(a.get("amp", 8)) * math.pi / 180.0; sp = float(a.get("speed", 2)); add_rot("%g*sin(2*PI*%g*%s)" % (amp, sp, lt))
         elif ty == "gifwobble":   # low-framerate stepped wobble (GIF sticker look); time quantized via floor
             fps = max(2.0, float(a.get("fps", 8))); amp = float(a.get("amp", 0.6)); sp = float(a.get("speed", 2))
             tq = "(floor(%s*%g)/%g)" % (lt, fps, fps)
-            rots.append("%g*sin(2*PI*%g*%s)" % (math.radians(amp * 10), sp, tq))
+            add_rot("%g*sin(2*PI*%g*%s)" % (math.radians(amp * 10), sp, tq))
             j = amp * 0.01 * W
-            dxs.append("%g*sin(2*PI*%g*%s+1.7)" % (j, sp * 1.3, tq))
-            dys.append("%g*cos(2*PI*%g*%s+0.6)" % (j, sp * 0.9, tq))
+            add_dx("%g*sin(2*PI*%g*%s+1.7)" % (j, sp * 1.3, tq))
+            add_dy("%g*cos(2*PI*%g*%s+0.6)" % (j, sp * 0.9, tq))
         elif ty == "spin":
-            sp = float(a.get("speed", 0.5)); sign = -1 if a.get("dir") == "ccw" else 1; rots.append("%g*2*PI*%g*%s" % (sign, sp, lt))
+            sp = float(a.get("speed", 0.5)); sign = -1 if a.get("dir") == "ccw" else 1; add_rot("%g*2*PI*%g*%s" % (sign, sp, lt))
     dx = "+".join("(%s)" % x for x in dxs) if dxs else "0"
     dy = "+".join("(%s)" % x for x in dys) if dys else "0"
     am = "max(0,min(1,%s))" % ("*".join("(%s)" % x for x in amul)) if amul else "1"
