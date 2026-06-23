@@ -213,6 +213,7 @@
   .aigrid .grphd b { color:var(--txt); text-transform:none; letter-spacing:0; font-size:12px; }
   .aigrid .grphd button { font-size:10px; padding:1px 7px; margin-left:auto; }
   .ecline { display:flex; flex-wrap:wrap; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:8px; }
+  .ecline.ovselrow { border-color:var(--acc2); box-shadow:0 0 0 1px var(--acc2); background:#1c2b33; }
   .ecline input.ecl-text { flex:1; min-width:120px; }
   .ecline input[type=color] { width:34px; height:26px; padding:0; border:none; background:none; }
   a.dl { color:var(--acc2); }
@@ -221,7 +222,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.52.1</span>
+  <span class="ver" id="appVer">v1.52.2</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1475,7 +1476,7 @@ function renderOvList(){
   box.insertAdjacentHTML('beforeend','<div style="font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px">▲ top of list = front layer</div>');
   const move=(o,dir)=>{ const i=EDL.overlays.indexOf(o), j=i+dir; if(i<0||j<0||j>=EDL.overlays.length) return;
     histCommit(); [EDL.overlays[i],EDL.overlays[j]]=[EDL.overlays[j],EDL.overlays[i]]; renderOvList(); buildOvEditor(); renderOverlays(playhead); renderTracks(); };
-  ovs.slice().reverse().forEach(o=>{ const row=document.createElement('div'); row.className='ecline'; if(o.id===ovSel) row.style.borderColor='var(--acc2)';
+  ovs.slice().reverse().forEach(o=>{ const row=document.createElement('div'); row.className='ecline'+(o.id===ovSel?' ovselrow':'');
     const thumb=(o.type==='image'&&o.src)?`<img src="/${encodeURI(o.src)}" style="height:24px;width:auto;max-width:46px;border-radius:3px;background:#0008;flex:none">`:'';
     const icon=o.type==='image'?'🖼':(o.type==='shape'?'▭':(o.type==='sprinkle'?'✨':(o.type==='arrow'?'➴':'🅣')));
     const name=o.type==='image'?((o.src||'').split('/').pop()):(o.type==='shape'?'shape':(o.type==='sprinkle'?('sprinkle · '+((o.src||'').split('/').pop()||'no image')):(o.type==='arrow'?((o.subtype||'arrow')):((o.text||'').slice(0,18)||'text'))));
@@ -1487,6 +1488,7 @@ function renderOvList(){
     row.querySelector('.ovdn').onclick=()=>move(o,-1);
     row.querySelector('.ovdel').onclick=()=>{ histCommit(); EDL.overlays=EDL.overlays.filter(x=>x.id!==o.id); if(ovSel===o.id) ovSel=null; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
     box.appendChild(row); });
+  const sr=box.querySelector('.ovselrow'); if(sr) sr.scrollIntoView({block:'nearest'});   // keep the selected overlay visible in the list
   renderTracks();
 }
 // Pair every range slider in `scope` with a synced number box (native up/down steppers), two-way bound.
@@ -2507,6 +2509,13 @@ async function pollSrc(){
     }
   }catch(e){}
 }
+// Canvas baking does NOT trigger @font-face loading, so brand fonts can fall back to a generic
+// face in baked stickers. Force-load them, then re-bake any text overlays once they're ready.
+(function loadBrandFonts(){ if(!document.fonts||!document.fonts.load) return;
+  const reb=()=>{ try{ for(const id in ovEls){ if(ovEls[id]) ovEls[id]._stkey=null; } renderOverlays(playhead); }catch(e){}
+    try{ buildEndcard(normEndcard(EDL.settings)); }catch(e){} };
+  Promise.all([document.fonts.load("800 40px Meowijuana"), document.fonts.load("800 40px 'Cooper Std Black'")]).catch(()=>{}).then(reb);
+  document.fonts.ready.then(reb); })();
 boot().then(()=>{ pollSrc(); setInterval(pollSrc, 4000); window.addEventListener('focus', pollSrc); });
 </script>
 </body>
