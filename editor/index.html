@@ -114,6 +114,8 @@
   .center { display:flex; flex-direction:column; align-items:center; gap:10px; padding:12px; overflow:auto; }
   #stageViewport { position:relative; overflow:hidden; border-radius:10px; box-shadow:0 6px 24px #0008; flex:none; }
   #stageViewport.zoomed { outline:3px dashed #f0a830; outline-offset:-3px; }
+  #stageViewport.canpan { cursor:grab; }
+  #stageViewport.panning { cursor:grabbing; }
   #pzBadge { display:none; position:absolute; top:6px; left:6px; z-index:30; pointer-events:none;
     background:#f0a830; color:#111; font-size:10px; font-weight:700; padding:3px 7px; border-radius:6px; box-shadow:0 1px 4px #0009; }
   #stageWrap { position:relative; background:#000; border-radius:10px; overflow:hidden; flex:none; transform-origin:0 0; will-change:transform; }
@@ -214,7 +216,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.51.0</span>
+  <span class="ver" id="appVer">v1.51.1</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -546,7 +548,7 @@ function applyStageZoom(){ const wrap=$('#stageWrap'); if(!wrap) return;
   const zoomed = pz.z>1.001;
   const l=$('#pzLbl'); if(l) l.textContent=Math.round(pz.z*100)+'%';
   const vp=$('#stageViewport'); if(vp) vp.classList.toggle('zoomed', zoomed);
-  const badge=$('#pzBadge'); if(badge){ badge.style.display=zoomed?'block':'none'; badge.textContent='🔍 Inspect '+Math.round(pz.z*100)+'% — not the render frame'; } }
+  const badge=$('#pzBadge'); if(badge){ badge.style.display=zoomed?'block':'none'; badge.textContent='🔍 Inspect '+Math.round(pz.z*100)+'% — hold Space to pan · not the render frame'; } }
 function clampPan(){ const vp=$('#stageViewport'); if(!vp) return; const r=vp.getBoundingClientRect();
   if(pz.z<=1){ pz.z=1; pz.px=0; pz.py=0; return; }
   pz.px=Math.min(0, Math.max(r.width  - r.width *pz.z, pz.px));
@@ -2399,19 +2401,30 @@ document.addEventListener('keydown', e=>{ if(!(e.ctrlKey||e.metaKey)) return; co
   setTimeout(()=>check(true), 1500);   // silent auto-check shortly after load
 })();
 // Preview view-zoom wiring: buttons, Ctrl+scroll to zoom toward cursor, Alt/middle-drag to pan.
+let _panKey=false;   // Space held = pan mode
 (function initStageZoom(){
-  const vp=$('#stageViewport'); if(!vp) return;
+  const vp=$('#stageViewport'); if(!vp) return; const center=document.querySelector('.center');
   const inB=$('#pzIn'), outB=$('#pzOut'), fitB=$('#pzFit');
   if(inB) inB.onclick=()=>setStageZoom(pz.z*1.25);
   if(outB) outB.onclick=()=>setStageZoom(pz.z/1.25);
   if(fitB) fitB.onclick=()=>{ pz={z:1,px:0,py:0}; applyStageZoom(); };
-  vp.addEventListener('wheel', e=>{ if(!(e.ctrlKey||e.metaKey)) return; e.preventDefault();
-    const r=vp.getBoundingClientRect(); setStageZoom(pz.z*(e.deltaY<0?1.15:1/1.15), e.clientX-r.left, e.clientY-r.top); }, {passive:false});
-  vp.addEventListener('pointerdown', e=>{ if(pz.z<=1) return; if(e.button!==1 && !e.altKey) return;   // middle-drag or Alt-drag = pan
-    e.preventDefault(); const sx=e.clientX, sy=e.clientY, px0=pz.px, py0=pz.py; try{vp.setPointerCapture(e.pointerId);}catch(_){}
+  // Plain mouse wheel anywhere in the preview pane zooms the VIEW (never the clip/render).
+  (center||vp).addEventListener('wheel', e=>{ e.preventDefault();
+    const r=vp.getBoundingClientRect();
+    const inside = e.clientX>=r.left && e.clientX<=r.right && e.clientY>=r.top && e.clientY<=r.bottom;
+    const fx = inside ? e.clientX-r.left : r.width/2, fy = inside ? e.clientY-r.top : r.height/2;
+    setStageZoom(pz.z*(e.deltaY<0?1.12:1/1.12), fx, fy); }, {passive:false});
+  // Pan when zoomed: Space-drag, Alt-drag, or middle-drag. Capture phase so it beats overlay/crop drags.
+  vp.addEventListener('pointerdown', e=>{ if(pz.z<=1) return; if(!(e.button===1 || e.altKey || _panKey)) return;
+    e.preventDefault(); e.stopPropagation();
+    const sx=e.clientX, sy=e.clientY, px0=pz.px, py0=pz.py; vp.classList.add('panning'); try{vp.setPointerCapture(e.pointerId);}catch(_){}
     const mv=ev=>{ pz.px=px0+(ev.clientX-sx); pz.py=py0+(ev.clientY-sy); clampPan(); applyStageZoom(); };
-    const up=()=>{ vp.removeEventListener('pointermove',mv); vp.removeEventListener('pointerup',up); };
-    vp.addEventListener('pointermove',mv); vp.addEventListener('pointerup',up); });
+    const up=()=>{ vp.classList.remove('panning'); vp.removeEventListener('pointermove',mv); vp.removeEventListener('pointerup',up); };
+    vp.addEventListener('pointermove',mv); vp.addEventListener('pointerup',up); }, true);
+  // Space = pan mode (only while not typing); show grab cursor when zoomed.
+  document.addEventListener('keydown', e=>{ if(e.code!=='Space') return; const t=(document.activeElement&&document.activeElement.tagName||'').toLowerCase();
+    if(t==='input'||t==='textarea'||t==='select') return; _panKey=true; if(pz.z>1){ e.preventDefault(); vp.classList.add('canpan'); } });
+  document.addEventListener('keyup', e=>{ if(e.code==='Space'){ _panKey=false; vp.classList.remove('canpan'); } });
 })();
 document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) return;   // S = split selected clip at playhead
   if((e.key==='s'||e.key==='S') && sel>=0 && EDL.segments[sel]){
