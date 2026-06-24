@@ -80,9 +80,14 @@
   #stageWrap.panning { cursor:grabbing; }
   #stageWrap.dragover, #bin.dragover { outline:2px dashed var(--acc,#8ab81d); outline-offset:-4px; }
   /* bin */
-  .grp { padding:8px 10px 2px; font-size:11px; color:var(--acc); text-transform:uppercase; letter-spacing:.5px; }
-  .brandgrp { padding:10px 10px 4px 10px; margin-top:6px; font-size:13px; font-weight:700; color:#fff; border-top:1px solid var(--line); background:linear-gradient(90deg,#0006,#0001); }
-  .brandgrp:first-child { border-top:none; margin-top:0; }
+  .grp { padding:8px 10px 2px; font-size:11px; color:var(--acc); text-transform:uppercase; letter-spacing:.5px; display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none; }
+  .grp:hover, .brandgrp:hover { background:#ffffff08; }
+  .brandgrp { padding:10px 10px 4px 10px; margin-top:6px; font-size:13px; font-weight:700; color:#fff; border-top:1px solid var(--line); background:linear-gradient(90deg,#0006,#0001); display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none; }
+  .brandbox:first-child > .brandgrp { border-top:none; margin-top:0; }
+  .grp .cr, .brandgrp .cr { display:inline-block; width:12px; transition:transform .15s; opacity:.7; font-size:10px; }
+  .grp .ct, .brandgrp .ct { margin-left:auto; font-weight:400; color:var(--mut); font-size:11px; }
+  .brandbox.collapsed > .grpbody, .prodbox.collapsed > .grpbody { display:none; }
+  .brandbox.collapsed > .brandgrp .cr, .prodbox.collapsed > .grp .cr { transform:rotate(-90deg); }
   .clip { display:flex; gap:8px; padding:6px 10px; cursor:pointer; align-items:center; }
   .clip:hover { background:var(--panel2); }
   .clip img { width:54px; height:54px; object-fit:cover; border-radius:6px; background:#000; flex:none; }
@@ -224,7 +229,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.55.1</span>
+  <span class="ver" id="appVer">v1.55.2</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -661,24 +666,42 @@ function addClipToTimeline(id, atIdx){ const c=MAN.byId[id]; if(!c) return toast
 const BRAND_LABELS={meowijuana:'🌿 Meowijuana',doggijuana:'🐶 Doggijuana',kkz:'⚡ Kitty Ka-Zoom',unassigned:'⚠ Unassigned'};
 const BRAND_ORDER=['meowijuana','doggijuana','kkz','unassigned'];
 function clipBrand(c){ return BRAND_LABELS[c.brand]?c.brand:'unassigned'; }
+// Collapsed brand/product groups persist in localStorage so the bin stays the way Jason left it across reloads.
+const BIN_COLLAPSE_KEY='scl_bin_collapsed';
+function _binCollapsed(){ try{ return new Set(JSON.parse(localStorage.getItem(BIN_COLLAPSE_KEY)||'[]')); }catch(_){ return new Set(); } }
+function _binSaveCollapsed(s){ try{ localStorage.setItem(BIN_COLLAPSE_KEY, JSON.stringify([...s])); }catch(_){} }
+function _binToggle(key, el){ const s=_binCollapsed(); if(s.has(key)){ s.delete(key); el.classList.remove('collapsed'); } else { s.add(key); el.classList.add('collapsed'); } _binSaveCollapsed(s); }
 function renderBin(){
-  const bin=$('#bin'); bin.innerHTML='';
-  let curBrand='', curProd='';
-  MAN.clips.forEach(c=>{
-    const br=clipBrand(c);
-    if(br!==curBrand){ curBrand=br; curProd=''; const bh=document.createElement('div'); bh.className='brandgrp'; bh.textContent=BRAND_LABELS[br]||br; bin.appendChild(bh); }
-    if(c.product!==curProd){ curProd=c.product; const g=document.createElement('div'); g.className='grp'; g.textContent=curProd; bin.appendChild(g); }
-    const d=document.createElement('div'); d.className='clip'; d.draggable=true;
-    d.innerHTML=`<img src="${c.thumb}" loading="lazy"><div class="meta"><b>${c.label}</b>
-      <span>${c.id} · ${fmt(c.dur)}s · ${c.w}×${c.h}</span></div>
-      <button class="qadd" title="Add to timeline">＋</button>`;
-    d.onclick=()=>{ stop(); sel=-1; renderTimeline(); $('#trimName').textContent=c.label;
-      withClip(c.id, v=>{ if(!v) return; showVid(c.id); applyFraming({anchor:'center',zoom:1}, v); try{v.currentTime=0;}catch(e){} showCap(''); });
-      $('#btnAddSel').dataset.id=c.id; };
-    d.querySelector('.qadd').onclick=e=>{ e.stopPropagation(); addClipToTimeline(c.id); };
-    d.addEventListener('dragstart', e=>{ e.dataTransfer.setData('text/clip-id', c.id); e.dataTransfer.setData('text/plain', c.id); e.dataTransfer.effectAllowed='copy'; d.classList.add('dragging'); });
-    d.addEventListener('dragend', ()=>d.classList.remove('dragging'));
-    bin.appendChild(d);
+  const bin=$('#bin'); bin.innerHTML=''; const collapsed=_binCollapsed();
+  // group clips into brand → product nested structure
+  const byBrand={}; MAN.clips.forEach(c=>{ const br=clipBrand(c); (byBrand[br]=byBrand[br]||{}); (byBrand[br][c.product]=byBrand[br][c.product]||[]).push(c); });
+  BRAND_ORDER.concat(Object.keys(byBrand).filter(b=>!BRAND_ORDER.includes(b))).forEach(br=>{
+    const prods=byBrand[br]; if(!prods) return;
+    const bk='b:'+br;
+    const brandBox=document.createElement('div'); brandBox.className='brandbox'+(collapsed.has(bk)?' collapsed':'');
+    const brandHd=document.createElement('div'); brandHd.className='brandgrp'; brandHd.innerHTML=`<span class="cr">▾</span><span>${BRAND_LABELS[br]||br}</span><span class="ct">${Object.values(prods).reduce((a,b)=>a+b.length,0)}</span>`;
+    brandHd.onclick=()=>_binToggle(bk, brandBox); brandBox.appendChild(brandHd);
+    const brandBody=document.createElement('div'); brandBody.className='grpbody'; brandBox.appendChild(brandBody);
+    Object.keys(prods).sort().forEach(prod=>{
+      const pk='b:'+br+'/p:'+prod;
+      const prodBox=document.createElement('div'); prodBox.className='prodbox'+(collapsed.has(pk)?' collapsed':'');
+      const prodHd=document.createElement('div'); prodHd.className='grp'; prodHd.innerHTML=`<span class="cr">▾</span><span>${prod}</span><span class="ct">${prods[prod].length}</span>`;
+      prodHd.onclick=()=>_binToggle(pk, prodBox); prodBox.appendChild(prodHd);
+      const prodBody=document.createElement('div'); prodBody.className='grpbody'; prodBox.appendChild(prodBody);
+      prods[prod].forEach(c=>{ const d=document.createElement('div'); d.className='clip'; d.draggable=true;
+        d.innerHTML=`<img src="${c.thumb}" loading="lazy"><div class="meta"><b>${c.label}</b>
+          <span>${c.id} · ${fmt(c.dur)}s · ${c.w}×${c.h}</span></div>
+          <button class="qadd" title="Add to timeline">＋</button>`;
+        d.onclick=()=>{ stop(); sel=-1; renderTimeline(); $('#trimName').textContent=c.label;
+          withClip(c.id, v=>{ if(!v) return; showVid(c.id); applyFraming({anchor:'center',zoom:1}, v); try{v.currentTime=0;}catch(e){} showCap(''); });
+          $('#btnAddSel').dataset.id=c.id; };
+        d.querySelector('.qadd').onclick=e=>{ e.stopPropagation(); addClipToTimeline(c.id); };
+        d.addEventListener('dragstart', e=>{ e.dataTransfer.setData('text/clip-id', c.id); e.dataTransfer.setData('text/plain', c.id); e.dataTransfer.effectAllowed='copy'; d.classList.add('dragging'); });
+        d.addEventListener('dragend', ()=>d.classList.remove('dragging'));
+        prodBody.appendChild(d); });
+      brandBody.appendChild(prodBox);
+    });
+    bin.appendChild(brandBox);
   });
 }
 /* drop a source clip onto the right Clips pane or the bottom timeline to add it */
