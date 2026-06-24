@@ -229,7 +229,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.56.2</span>
+  <span class="ver" id="appVer">v1.56.3</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -675,9 +675,10 @@ const BRAND_ORDER=['meowijuana','doggijuana','kkz','unassigned'];
 function clipBrand(c){ return BRAND_LABELS[c.brand]?c.brand:'unassigned'; }
 // Per-brand 2-color gradients (yellow→orange Meowi, light→dark green Doggi, purple→orange KK).
 // Used as defaults for newly added overlays (text-sticker / shape / arrow). Existing overlays unchanged.
-const BRAND_GRADIENTS={meowijuana:{from:'#f07830',to:'#257741',solid:'#f07830'},   // orange → dark green (brand palette)
-                      doggijuana:{from:'#76b753',to:'#257741',solid:'#257741'},
-                      kkz:{from:'#5d539e',to:'#f07830',solid:'#5d539e'}};
+// Each gradient pairs two colors from WITHIN that brand's own palette — never cross-mix.
+const BRAND_GRADIENTS={meowijuana:{from:'#f6ae40',to:'#f07830',solid:'#f07830'},   // light orange → orange
+                      doggijuana:{from:'#8ab81d',to:'#3c8e14',solid:'#3c8e14'},    // lime → dark olive
+                      kkz:        {from:'#81c568',to:'#00a76b',solid:'#00a76b'}};   // light green → medium green
 function projectBrand(){ const b=EDL&&EDL.settings&&EDL.settings.brand; return BRAND_GRADIENTS[b]?b:'meowijuana'; }
 function brandGrad(){ return BRAND_GRADIENTS[projectBrand()]; }
 // Re-apply the project brand's gradient colors to ANY existing overlay (text-sticker / shape / arrow). Switches to gradient fill.
