@@ -64,8 +64,40 @@ def probe(path):
     return _probe_cache[path]
 
 
+BRAND_KEYS = ("meowijuana", "doggijuana", "kkz", "unassigned")     # canonical brand ids
+BRAND_LABEL = {"meowijuana": "Meowijuana", "doggijuana": "Doggijuana", "kkz": "Kitty Ka-Zoom", "unassigned": "Unassigned"}
+# Auto-defaults for known product folders. Anything not listed → "meowijuana" (most of the catalog).
+# Per-product overrides live in sources/youtube/_brands.json and beat these defaults.
+BRAND_AUTODEFAULTS = {"juananip": "doggijuana"}
+BRANDS_FILE = os.path.join(SRC_ROOT, "_brands.json")
+
+
+def load_brand_map():
+    try:
+        if os.path.exists(BRANDS_FILE):
+            return json.load(open(BRANDS_FILE, encoding="utf-8")) or {}
+    except Exception:
+        pass
+    return {}
+
+
+def save_brand_map(m):
+    os.makedirs(SRC_ROOT, exist_ok=True)
+    with open(BRANDS_FILE, "w", encoding="utf-8") as f:
+        json.dump(m, f, indent=2, sort_keys=True)
+
+
+def product_brand(product, brand_map=None):
+    bm = brand_map if brand_map is not None else load_brand_map()
+    v = bm.get(product)
+    if v in BRAND_KEYS:
+        return v
+    return BRAND_AUTODEFAULTS.get(product, "meowijuana")
+
+
 def scan_sources():
-    """Return list of clips: {id,label,product,url,dur,w,h}."""
+    """Return list of clips: {id,label,product,brand,url,dur,w,h}."""
+    bm = load_brand_map()
     clips = []
     for root, _dirs, files in os.walk(SRC_ROOT):
         for fn in files:
@@ -82,10 +114,12 @@ def scan_sources():
             if m:
                 label = fn[:m.start()].strip().strip("｜|").strip()
             label = re.sub(r"\s+", " ", label)[:60] or fn
-            clips.append({"id": cid, "label": label, "product": product,
+            clips.append({"id": cid, "label": label, "product": product, "brand": product_brand(product, bm),
                           "url": "/" + urllib.parse.quote(rel), "file": full,
                           "dur": round(dur, 2), "w": w, "h": h})
-    clips.sort(key=lambda c: (c["product"], c["label"]))
+    # sort by brand → product → label so the bin groups naturally
+    brand_ord = {b: i for i, b in enumerate(BRAND_KEYS)}
+    clips.sort(key=lambda c: (brand_ord.get(c["brand"], 99), c["product"], c["label"]))
     return clips
 
 
@@ -1355,6 +1389,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "log": repr(e)}, 500)
             _probe_cache.pop(src, None)
             return self._json({"ok": True, "category": cat})
+        if path == "/api/clip/setbrand":   # set the brand of a PRODUCT folder; all clips in it inherit
+            product = (data.get("product") or "").strip()
+            brand = (data.get("brand") or "").strip().lower()
+            if not product or brand not in BRAND_KEYS:
+                return self._json({"ok": False, "log": "product + valid brand required"}, 400)
+            bm = load_brand_map(); bm[product] = brand; save_brand_map(bm)
+            return self._json({"ok": True, "product": product, "brand": brand})
         if path == "/api/clip/delete":
             cid = (data.get("id") or "").strip()
             src = id_to_file().get(cid)
