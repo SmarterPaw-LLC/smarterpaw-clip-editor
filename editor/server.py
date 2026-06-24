@@ -900,12 +900,36 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     rex, gex, bex = "r(X,Y)", "g(X,Y)", "b(X,Y)"
                 aex = "alpha(X,Y)*(%s)" % amT if has_op else "alpha(X,Y)"
                 filt.append(f"geq=r='{rex}':g='{gex}':b='{bex}':a='{aex}'")
-            pop = next((a for a in (o.get("anims") or []) if a.get("type") == "popIn"), None)
-            if pop:                                                      # real scale-pop via time-varying scale (eval=frame, t = global)
-                d = max(0.01, float(pop.get("d", 0.45)))
-                kk = "((t-%g)/%g)" % (s, d); eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (kk, kk)
-                pops = "if(between(t,%g,%g),max(0.05,%s),1)" % (s, s + d, eb)
-                filt.append(f"scale=w='iw*({pops})':h='ih*({pops})':eval=frame")
+            # Combine ALL scale-related anims (popIn / scaleUp / scaleDown / scaleBeat) into one
+            # multiplied expression and emit a single scale=eval=frame filter. Each anim respects
+            # its own tStart/tEnd window; outside the window the factor is 1 (identity).
+            sc_factors = []
+            for a in (o.get("anims") or []):
+                ty = a.get("type")
+                if ty not in ("popIn", "scaleUp", "scaleDown", "scaleBeat"): continue
+                aS = s + max(0.0, float(a.get("tStart", 0) or 0))
+                aEv = a.get("tEnd"); aE = s + min(dur_o, float(aEv)) if (aEv is not None and float(aEv) > 0) else (s + dur_o)
+                if aE <= aS: continue
+                lt = "(t-%g)" % aS; dw = aE - aS
+                if ty == "popIn":
+                    d = max(0.01, float(a.get("d", 0.45)))
+                    kk = "(%s/%g)" % (lt, d); eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (kk, kk)
+                    sc_factors.append("if(between(t,%g,%g),max(0.05,%s),1)" % (aS, aS + d, eb))
+                elif ty == "scaleUp":
+                    d = max(0.01, float(a.get("d", 0.5))); fr = float(a.get("from", 0.3))
+                    kk = "(%s/%g)" % (lt, d); ease = "(1-pow(1-%s,3))" % kk
+                    sc_factors.append("if(between(t,%g,%g),%g+(1-%g)*%s,1)" % (aS, aS + d, fr, fr, ease))
+                elif ty == "scaleDown":
+                    d = max(0.01, float(a.get("d", 0.5))); to = float(a.get("to", 0))
+                    tail = aE - d
+                    kk = "((%g-t)/%g)" % (aE, d); ease = "(1-pow(1-%s,3))" % kk
+                    sc_factors.append("if(between(t,%g,%g),%g+(1-%g)*%s,1)" % (tail, aE, to, to, ease))
+                elif ty == "scaleBeat":
+                    amp = float(a.get("amp", 0.15)); sp = float(a.get("speed", 1.5))
+                    sc_factors.append("if(between(t,%g,%g),max(0.05,1+%g*sin(2*PI*%g*%s)),1)" % (aS, aE, amp, sp, lt))
+            if sc_factors:
+                combined = "*".join("(%s)" % x for x in sc_factors)
+                filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame" % (combined, combined))
             srot = float(o.get("rot", 0) or 0)                          # static rotation (degrees) + any anim rotation
             rot_terms = ([orot] if orot else []) + ([f"{math.radians(srot):.6f}"] if abs(srot) > 1e-6 else [])
             if rot_terms:
