@@ -222,7 +222,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.53.0</span>
+  <span class="ver" id="appVer">v1.53.1</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -274,7 +274,7 @@
       <button class="arbtn" data-ar="1x1">1:1</button>
       <button class="arbtn" data-ar="16x9">16:9</button>
       <span class="ardim" id="arDim"></span>
-      <span class="pzctl" title="Preview zoom — Ctrl+scroll on the canvas to zoom, Alt-drag or middle-drag to pan. Does not change the clip or render.">
+      <span class="pzctl" title="Preview INSPECT zoom (view-only, never affects the render). Use Ctrl+scroll on the canvas, or scroll outside it. Alt-drag or middle-drag to pan. Plain scroll on the canvas zooms the CLIP framing instead.">
         <button class="mini" id="pzOut">−</button><span id="pzLbl">100%</span><button class="mini" id="pzIn">+</button><button class="mini" id="pzFit">Fit</button>
       </span>
     </div>
@@ -976,7 +976,10 @@ $('#btnAddSel').onclick=()=>{ const id=$('#btnAddSel').dataset.id || (sel>=0&&ED
   });
   function endPan(){ if(!pan) return; pan=null; stage.classList.remove('panning'); renderTimeline(); histCommit(); }
   stage.addEventListener('pointerup', endPan); stage.addEventListener('pointercancel', endPan);
-  stage.addEventListener('wheel', e=>{ const s=curSeg(); if(!s||tlPlaying) return; e.preventDefault();
+  stage.addEventListener('wheel', e=>{   // wheel on the CANVAS = zoom the CLIP framing (affects the render)
+    if(e.ctrlKey||e.metaKey) return;     // Ctrl+wheel = view-zoom (inspect) — let it bubble to .center
+    const s=curSeg(); if(!s||tlPlaying) return;
+    e.preventDefault(); e.stopPropagation();    // claim this wheel tick so view-zoom doesn't also fire
     let z=(+s.zoom||1) - e.deltaY*0.0015; z=Math.min(4,Math.max(1, Math.round(z*100)/100));
     s.zoom=z; $('#inZoom').value=z; $('#inZoomR').value=z; applyFraming(s); histSchedule();
   }, {passive:false});
