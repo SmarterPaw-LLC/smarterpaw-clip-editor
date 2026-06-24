@@ -222,7 +222,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.53.2</span>
+  <span class="ver" id="appVer">v1.53.3</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1078,6 +1078,8 @@ const ANIM_DEFS={
 };
 // Deterministic [-1,1] hash for the reshuffle effect — identical math in JS (preview) and ffmpeg (render).
 function _rsHash(step, seed, salt){ const x=Math.sin(step*12.9898 + (seed||1)*78.233 + salt*45.13)*43758.5453; return (x-Math.floor(x))*2-1; }
+// Mulberry32 seeded PRNG → call returns () => [0,1) float (used by the arrow's hand-drawn wobble)
+function _mulberry(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15, 1|a); t=t+Math.imul(t^t>>>7, 61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
 // Deterministic sparkle scatter (golden-angle) + per-sparkle size/phase. Shared by preview + render.
 function sparkleField(a){ const n=Math.max(1,Math.round(a.count||6)), out=[];
   for(let i=0;i<n;i++){ const ang=i*2.39996, r=0.35+0.6*(((i+1)*0.618034)%1);
