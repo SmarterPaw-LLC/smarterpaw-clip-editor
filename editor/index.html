@@ -244,7 +244,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.58.0</span>
+  <span class="ver" id="appVer">v1.58.1</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1604,13 +1604,14 @@ function renderOverlays(time){
     if(!visible){ el.style.display='none'; return; }
     el.style.display='';
     if(ekey==='sticker'){
-      const key=[o.text,o.font,o.size,o.gradStart,o.gradEnd,o.gradType,o.gradAngle,o.bleed,o.kerning,o.lineGap,o.align,EDL.settings.canvas,(o.shadow&&o.shadow.on),(o.shadow&&o.shadow.color),(o.shadow&&o.shadow.opacity)].join('|');
+      const key=[o.text,o.font,o.size,o.gradStart,o.gradEnd,o.gradType,o.gradAngle,o.bleed,o.kerning,o.lineGap,o.align,o.opacity,EDL.settings.canvas,(o.shadow&&o.shadow.on),(o.shadow&&o.shadow.color),(o.shadow&&o.shadow.opacity)].join('|');
       if(el._stkey!==key){ const r=buildStickerCanvas(o); el.src=r.canvas.toDataURL('image/png'); el._cw=r.cw; el._ew=r.exportW; el._stkey=key; }   // re-bake only when props change
       el.style.width=(el._cw/el._ew*100)+'%'; el.style.height='auto'; }
     else if(o.type==='image'){ const u=o.src?('/'+encodeURI(o.src)):'';
       if(el.getAttribute('src')!==u){ el.setAttribute('src',u); el.onload=()=>{ try{renderOverlays(playhead);}catch(e){} }; }   // re-render once dims are known
       const w=(o.scale||0.3)*W, ar=(el.naturalWidth&&el.naturalHeight)?(el.naturalHeight/el.naturalWidth):1;
-      el.style.width=w+'px'; el.style.height=(w*ar)+'px'; }   // explicit height so the rotation pivot is the true center, not the top
+      el.style.width=w+'px'; el.style.height=(w*ar)+'px';
+      el.style.opacity=(o.opacity!=null?o.opacity:1); }   // explicit height so the rotation pivot is the true center, not the top
     else if(o.type==='shape'){   // baked canvas image (rect/round/circle/polygon/star…)
       const px=CANVAS_PX[EDL.settings.canvas]||[1080,1920];
       const key=[o.shape,o.fill,o.fillType,o.gradStart,o.gradEnd,o.gradType,o.gradAngle,o.opacity,o.w,o.h,o.radius,o.strokeW,o.stroke,EDL.settings.canvas].join('|');
@@ -1631,6 +1632,7 @@ function renderOverlays(time){
       el.style.width=(el._scw/px[0]*100)+'%'; el.style.height=(el._sch/px[1]*100)+'%'; }
     else { el.textContent=o.text||''; el.style.fontFamily=FONTS[o.font]||FONTS.cooper; el.style.fontWeight='800'; el.style.lineHeight='1';
       el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.whiteSpace='nowrap'; el.style.color=o.color||'#fff';
+      el.style.opacity=(o.opacity!=null?o.opacity:1);
       if(o.button){ el.style.background=o.bg||'#f07830'; const p=(o.size||0.06)*W; el.style.padding=(p*0.38)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.3)+'px'; el.style.textShadow='none'; }
       else { el.style.background='none'; el.style.padding='0'; el.style.borderRadius='0'; el.style.textShadow='0 2px 6px rgba(0,0,0,.6)'; } }
     const A=animState(o, time-o.start, +o.dur||0, W);   // overlay animations (offset + opacity)
@@ -1640,7 +1642,7 @@ function renderOverlays(time){
     el.style.transform='translate(-50%,-50%) translate('+A.dx.toFixed(2)+'px,'+A.dy.toFixed(2)+'px) rotate('+rotDeg.toFixed(2)+'deg) scale('+(A.sc!=null?A.sc:1).toFixed(3)+')';
     const sh=o.shadow||{};   // sticker bakes its own shadow into the canvas, so no extra CSS filter for it
     el.style.filter = (ekey!=='sticker' && sh.on) ? `drop-shadow(${(sh.dx!=null?sh.dx:0.004)*W}px ${(sh.dy!=null?sh.dy:0.006)*W}px ${(sh.blur!=null?sh.blur:0.01)*W}px ${hexA(sh.color||'#000000', sh.opacity!=null?sh.opacity:0.5)})` : 'none';
-    el.style.opacity=active?A.op:0;
+    el.style.opacity=active?(A.op*(o.opacity!=null?o.opacity:1)):0;   // static overlay opacity × anim opacity
     if(ovEdit){ el.style.pointerEvents='auto'; el.style.cursor='move'; el.style.outline=(o.id===ovSel)?'2px dashed #5b8cff':'none'; el.style.outlineOffset='3px'; dragify(el,o); }
     else { el.style.pointerEvents='none'; el.style.outline='none'; }
     renderSparkles(o, time, layer);
@@ -1742,7 +1744,8 @@ function buildOvEditor(){
       <div id="ovStickRow2"><label>Outline <input type="range" id="ovStBleed" min="0.06" max="0.5" step="0.02" value="${o.bleed!=null?o.bleed:0.22}"></label>
         <label>Kerning <input type="range" id="ovStKern" min="-0.05" max="0.4" step="0.01" value="${o.kerning!=null?o.kerning:0}"></label></div>
       <div id="ovStickRow3"><label>Line spacing <input type="range" id="ovStGap" min="-0.3" max="0.6" step="0.02" value="${o.lineGap!=null?o.lineGap:0.08}"></label></div>
-      <div><label>Size <input type="range" id="ovSize" min="0.02" max="0.18" step="0.005" value="${o.size}"></label></div>`;
+      <div><label>Size <input type="range" id="ovSize" min="0.02" max="0.18" step="0.005" value="${o.size}"></label>
+        <label>Opacity <input type="range" id="ovTxtOp" min="0" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label></div>`;
   } else if(o.type==='shape'){
     h+=`<div class="sec">Shape</div>
       <div><label>Type <select id="ovShape">${SHAPE_TYPES.map(s=>`<option value="${s[0]}" ${(o.shape||'roundrect')===s[0]?'selected':''}>${s[1]}</option>`).join('')}</select></label></div>
@@ -1808,6 +1811,7 @@ function buildOvEditor(){
       <div><button class="mini" id="ovArSeed">🎲 Re-draw</button></div>`;
   } else {
     h+=`<div class="sec">Image</div><div><label>Size <input type="range" id="ovScale" min="0.05" max="1" step="0.01" value="${o.scale}"></label>
+      <label>Opacity <input type="range" id="ovImgOp" min="0" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label>
       <button class="mini" id="ovReplace">Replace…</button></div>`;
   }
   h+=`<div class="sec">Transform</div>
@@ -1839,6 +1843,7 @@ function buildOvEditor(){
     if($('#ovRot')){ o.rot=parseFloat($('#ovRot').value)||0; if($('#ovRotV')) $('#ovRotV').textContent=(o.rot||0)+'°'; }
     const s2=o.shadow||(o.shadow={}); s2.on=$('#ovShOn').checked; s2.color=$('#ovShColor').value; s2.blur=parseFloat($('#ovShBlur').value)||0; s2.opacity=parseFloat($('#ovShOp').value); s2.dx=parseFloat($('#ovShX').value)||0; s2.dy=parseFloat($('#ovShY').value)||0;
     if(o.type==='text'){ o.text=$('#ovText').value; o.font=$('#ovFont').value; o.size=parseFloat($('#ovSize').value)||0.06; o.style=$('#ovStyle').value;
+      if($('#ovTxtOp')) o.opacity=parseFloat($('#ovTxtOp').value);
       if(o.style==='sticker'){ o.gradStart=$('#ovStFrom').value; o.gradEnd=$('#ovStTo').value; o.gradType=$('#ovStType').value; o.gradAngle=parseFloat($('#ovStAngle').value);
         o.bleed=parseFloat($('#ovStBleed').value); o.kerning=parseFloat($('#ovStKern').value); o.lineGap=parseFloat($('#ovStGap').value);
         if($('#ovStAngV')) $('#ovStAngV').textContent=(o.gradAngle||0)+'°'; }
@@ -1870,7 +1875,7 @@ function buildOvEditor(){
       if($('#ovArRound')) o.roundEnds=$('#ovArRound').checked;
       if($('#ovArGrad')){ const g=o.fillType==='gradient'; $('#ovArGrad').style.display=g?'':'none'; $('#ovArSolid').style.display=g?'none':''; }
       if($('#ovArArchRow')) $('#ovArArchRow').style.display=(o.subtype==='arrow')?'':'none'; }
-    else o.scale=parseFloat($('#ovScale').value)||0.3;
+    else { o.scale=parseFloat($('#ovScale').value)||0.3; if($('#ovImgOp')) o.opacity=parseFloat($('#ovImgOp').value); }
     if(o.type==='sprinkle') updSpWarn();   // live-refresh per-piece hints on toggle/count change
     renderOverlays(playhead); renderOvList(); };
   box.querySelectorAll('input,select,textarea').forEach(el=>{ el.oninput=upd; el.onchange=upd; });

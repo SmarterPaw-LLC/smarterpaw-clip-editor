@@ -887,6 +887,9 @@ def apply_overlays(silent, overlays, W, H, tmp):
             if scale_w:
                 filt.append(f"scale={scale_w}:-1")
             filt.append("format=rgba")
+            static_op = float(o.get("opacity", 1) or 1)   # image overlay's static opacity (text-sticker / shape / sprinkle / arrow bake it into the PNG; only image needs this here)
+            if static_op < 0.999:
+                filt.append("colorchannelmixer=aa=%g" % max(0, min(1, static_op)))
             shim = next((a for a in (o.get("anims") or []) if a.get("type") == "shimmer"), None)
             if has_op or shim:                                          # per-frame alpha (opacity) and/or shimmer sheen via geq (T = timeline t)
                 if shim:
