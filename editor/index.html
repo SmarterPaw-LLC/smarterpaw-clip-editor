@@ -224,7 +224,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.55.0</span>
+  <span class="ver" id="appVer">v1.55.1</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -2291,8 +2291,11 @@ async function doUploadClips(files, cat, toTl){
   let ok=0; const newIds=[];
   for(let i=0;i<files.length;i++){ const f=files[i];
     $('#status').textContent=`Uploading ${i+1}/${files.length}: ${f.name}… (converting if needed)`;
-    try{ const data=await fileToB64(f);
-      const r=await api('/api/upload-clip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:f.name,category:cat,data})});
+    try{   // stream the file as raw bytes — base64+JSON used to copy a 30MB clip ~4× in memory and OOM the tab
+      const resp=await fetch('/api/upload-clip-raw',{method:'POST',
+        headers:{'Content-Type':'application/octet-stream','X-Filename':encodeURIComponent(f.name),'X-Category':cat},
+        body:f});
+      const r=await resp.json().catch(()=>null);
       if(r&&r.ok){ ok++; if(r.id) newIds.push(r.id); } else toast('Failed: '+f.name+(r&&r.log?(' — '+r.log):''));
     }catch(err){ toast('Failed: '+f.name); }
   }

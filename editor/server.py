@@ -1351,6 +1351,18 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?", 1)[0]
         ln = int(self.headers.get("Content-Length", 0))
+        # Streaming raw-bytes upload: avoids the ~4× memory blow-up of base64+JSON for large video files.
+        if path == "/api/upload-clip-raw":
+            try:
+                raw = self.rfile.read(ln) if ln else b""
+                if not raw:
+                    return self._json({"ok": False, "log": "empty file"}, 400)
+                name = urllib.parse.unquote(self.headers.get("X-Filename", "clip.mp4"))
+                cat = self.headers.get("X-Category", "uploads")
+                rel, cat, cid = ingest_upload(raw, name, cat)
+                return self._json({"ok": True, "category": cat, "file": rel, "id": cid})
+            except Exception as e:
+                return self._json({"ok": False, "log": repr(e)}, 500)
         body = self.rfile.read(ln) if ln else b"{}"
         try:
             data = json.loads(body or b"{}")
