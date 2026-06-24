@@ -917,11 +917,12 @@ def apply_overlays(silent, overlays, W, H, tmp):
             fc.append(f"[{ii}:v]" + ",".join(filt) + f"[oi{k}]")
             fc.append(f"[{last}][oi{k}]overlay=x='W*{ox}-w/2+({odx})':y='H*{oy}-h/2+({ody})':{en}[v{k}]")
             last = f"v{k}"; ii += 1
-        # sparkle: composite twinkling copies of an emoji or image around the overlay center
-        spk = next((a for a in (o.get("anims") or []) if a.get("type") == "sparkle" and ((a.get("emoji") or "").strip() or a.get("src"))), None)
-        if spk:
+        # sparkle: composite twinkling copies of an emoji or image around the overlay center.
+        # Iterate ALL sparkle anims (not just the first) so stacked sparkles all render.
+        sparkles = [a for a in (o.get("anims") or []) if a.get("type") == "sparkle" and ((a.get("emoji") or "").strip() or a.get("src"))]
+        for ai, spk in enumerate(sparkles):
             if (spk.get("emoji") or "").strip():
-                psp = os.path.join(tmp, f"emoji_{k}.png")
+                psp = os.path.join(tmp, f"emoji_{k}_{ai}.png")
                 try:
                     _emoji_png(spk["emoji"], psp)
                 except Exception:
@@ -930,15 +931,15 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 psp = os.path.join(PROJ, *spk["src"].split("/"))
                 if not os.path.exists(psp):
                     psp = None
-            if psp:
-                spread = float(spk.get("spread", 0.12)) * W; ssize = float(spk.get("size", 0.06)) * W; sspeed = float(spk.get("speed", 1.2))
-                for i, f in enumerate(_sparkle_field(spk)):
-                    sw = max(2, int(ssize * f["sc"])); offx = f["cx"] * spread; offy = f["cy"] * spread
-                    twk = "pow(max(0,sin(2*PI*%g*(T-%g)+%g)),3)" % (sspeed, s, f["ph"])
-                    inputs += ["-loop", "1", "-t", str(e), "-i", psp]
-                    fc.append(f"[{ii}:v]scale={sw}:-1,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({twk})'[sp{k}_{i}]")
-                    fc.append(f"[{last}][sp{k}_{i}]overlay=x='W*{ox}-w/2+({offx})':y='H*{oy}-h/2+({offy})':{en}[vs{k}_{i}]")
-                    last = f"vs{k}_{i}"; ii += 1
+            if not psp: continue
+            spread = float(spk.get("spread", 0.12)) * W; ssize = float(spk.get("size", 0.06)) * W; sspeed = float(spk.get("speed", 1.2))
+            for i, f in enumerate(_sparkle_field(spk)):
+                sw = max(2, int(ssize * f["sc"])); offx = f["cx"] * spread; offy = f["cy"] * spread
+                twk = "pow(max(0,sin(2*PI*%g*(T-%g)+%g)),3)" % (sspeed, s, f["ph"])
+                inputs += ["-loop", "1", "-t", str(e), "-i", psp]
+                fc.append(f"[{ii}:v]scale={sw}:-1,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({twk})'[sp{k}_{ai}_{i}]")
+                fc.append(f"[{last}][sp{k}_{ai}_{i}]overlay=x='W*{ox}-w/2+({offx})':y='H*{oy}-h/2+({offy})':{en}[vs{k}_{ai}_{i}]")
+                last = f"vs{k}_{ai}_{i}"; ii += 1
     if not fc:
         return silent, None
     out = os.path.join(tmp, "overlaid.mp4")

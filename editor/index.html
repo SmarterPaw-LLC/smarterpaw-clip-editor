@@ -244,7 +244,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.57.4</span>
+  <span class="ver" id="appVer">v1.57.5</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1533,24 +1533,31 @@ function renderSprinklePieces(o, time, layer, baseZ){
     el.style.opacity=active?A.op:0;
   });
 }
-const ovSpark={}; // sparkle nodes (div) per overlay id
+const ovSpark={}; // ovSpark[overlay.id] = [arrPerAnim0, arrPerAnim1, …] — supports multiple stacked sparkle anims
 function renderSparkles(o, time, layer){
-  const sp=(o.anims||[]).find(a=>a.type==='sparkle' && ((a.emoji&&a.emoji.trim())||a.src));
-  let arr=ovSpark[o.id]||[];
-  if(!sp){ if(arr.length){ arr.forEach(el=>el.remove()); delete ovSpark[o.id]; } return; }
+  const sps=(o.anims||[]).filter(a=>a.type==='sparkle' && ((a.emoji&&a.emoji.trim())||a.src));
+  let perAnim=ovSpark[o.id]||[];
+  // shrink any stale anim slots
+  while(perAnim.length>sps.length){ const old=perAnim.pop(); if(old) old.forEach(el=>el.remove()); }
+  if(!sps.length){ if(perAnim.length===0) delete ovSpark[o.id]; else ovSpark[o.id]=perAnim; return; }
   const W=$('#stageWrap').clientWidth||360, Hs=$('#stageWrap').clientHeight||640;
-  const field=sparkleField(sp), n=field.length;
-  while(arr.length<n){ const d=document.createElement('div'); d.style.position='absolute'; d.style.pointerEvents='none'; d.style.lineHeight='1'; d.style.textAlign='center'; d.style.backgroundRepeat='no-repeat'; d.style.backgroundPosition='center'; d.style.backgroundSize='contain'; layer.appendChild(d); arr.push(d); }
-  while(arr.length>n){ arr.pop().remove(); }
-  ovSpark[o.id]=arr;
-  const useEmoji=!!(sp.emoji&&sp.emoji.trim()), url=sp.src?('/'+encodeURI(sp.src)):'';
   const lt=time-o.start, active=time>=o.start && time<o.start+(+o.dur||0);
-  const cxp=(o.x||0.5)*W, cyp=(o.y||0.5)*Hs, spread=(sp.spread||0.12)*W, ssize=(sp.size||0.06)*W, speed=sp.speed||1.2, z=(+o.ch||0)*1000+9999;
-  field.forEach((f,i)=>{ const el=arr[i]; const w=ssize*f.sc;
-    if(useEmoji){ if(el.textContent!==sp.emoji) el.textContent=sp.emoji; el.style.backgroundImage='none'; el.style.fontSize=w+'px'; el.style.width='auto'; el.style.height='auto'; }
-    else { el.textContent=''; const bg='url("'+url+'")'; if(el.style.backgroundImage!==bg) el.style.backgroundImage=bg; el.style.width=w+'px'; el.style.height=w+'px'; el.style.fontSize=''; }
-    el.style.zIndex=z; el.style.left=(cxp+f.cx*spread-w/2)+'px'; el.style.top=(cyp+f.cy*spread-w/2)+'px';
-    el.style.opacity=active?sparkleOp(lt,f.ph,speed):0; });
+  const cxp=(o.x||0.5)*W, cyp=(o.y||0.5)*Hs, z=(+o.ch||0)*1000+9999;
+  sps.forEach((sp, ai)=>{
+    let arr=perAnim[ai]||[];
+    const field=sparkleField(sp), n=field.length;
+    while(arr.length<n){ const d=document.createElement('div'); d.style.position='absolute'; d.style.pointerEvents='none'; d.style.lineHeight='1'; d.style.textAlign='center'; d.style.backgroundRepeat='no-repeat'; d.style.backgroundPosition='center'; d.style.backgroundSize='contain'; layer.appendChild(d); arr.push(d); }
+    while(arr.length>n){ arr.pop().remove(); }
+    perAnim[ai]=arr;
+    const useEmoji=!!(sp.emoji&&sp.emoji.trim()), url=sp.src?('/'+encodeURI(sp.src)):'';
+    const spread=(sp.spread||0.12)*W, ssize=(sp.size||0.06)*W, speed=sp.speed||1.2;
+    field.forEach((f,i)=>{ const el=arr[i]; const w=ssize*f.sc;
+      if(useEmoji){ if(el.textContent!==sp.emoji) el.textContent=sp.emoji; el.style.backgroundImage='none'; el.style.fontSize=w+'px'; el.style.width='auto'; el.style.height='auto'; }
+      else { el.textContent=''; const bg='url("'+url+'")'; if(el.style.backgroundImage!==bg) el.style.backgroundImage=bg; el.style.width=w+'px'; el.style.height=w+'px'; el.style.fontSize=''; }
+      el.style.zIndex=z; el.style.left=(cxp+f.cx*spread-w/2)+'px'; el.style.top=(cyp+f.cy*spread-w/2)+'px';
+      el.style.opacity=active?sparkleOp(lt,f.ph,speed):0; });
+  });
+  ovSpark[o.id]=perAnim;
 }
 const ovShine={}; // shimmer sheen div per overlay id
 function renderShine(o, time, layer){
@@ -1573,7 +1580,7 @@ function renderOverlays(time){
   const W=$('#stageWrap').clientWidth||360;
   const ids=new Set((EDL.overlays||[]).map(o=>o.id));
   for(const id in ovEls){ if(!ids.has(id)){ ovEls[id].remove(); delete ovEls[id]; } }
-  for(const id in ovSpark){ if(!ids.has(id)){ ovSpark[id].forEach(el=>el.remove()); delete ovSpark[id]; } }
+  for(const id in ovSpark){ if(!ids.has(id)){ (ovSpark[id]||[]).forEach(arr=>arr&&arr.forEach(el=>el.remove())); delete ovSpark[id]; } }
   for(const id in ovPieces){ if(!ids.has(id)){ removeSprinklePieces(id); } }
   for(const id in ovShine){ if(!ids.has(id)){ ovShine[id].remove(); delete ovShine[id]; } }
   (EDL.overlays||[]).forEach((o,idx)=>{
