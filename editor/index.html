@@ -244,7 +244,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.58.1</span>
+  <span class="ver" id="appVer">v1.58.2</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1601,7 +1601,13 @@ function renderOverlays(time){
     if(el && (el.dataset.t!==ekey || (wantImg?el.tagName!=='IMG':el.tagName!=='DIV'))){ el.remove(); el=null; }
     if(!el){ el = wantImg?document.createElement('img'):document.createElement('div'); el.dataset.t=ekey; el.style.position='absolute'; ovEls[o.id]=el; layer.appendChild(el); }
     el.style.zIndex=(+o.ch||0)*1000+idx;   // higher channel on top; array order breaks ties within a channel
-    if(!visible){ el.style.display='none'; return; }
+    if(!visible){ el.style.display='none';
+      // hide child effect nodes too — sparkle / shimmer / per-piece sprinkle live on the overlay LAYER,
+      // not as children of el, so they don't inherit el's display:none and would stick around at last opacity
+      (ovSpark[o.id]||[]).forEach(arr=>arr&&arr.forEach(s=>s.style.opacity=0));
+      if(ovShine[o.id]) ovShine[o.id].style.display='none';
+      (ovPieces[o.id]||[]).forEach(p=>p.style.opacity=0);
+      return; }
     el.style.display='';
     if(ekey==='sticker'){
       const key=[o.text,o.font,o.size,o.gradStart,o.gradEnd,o.gradType,o.gradAngle,o.bleed,o.kerning,o.lineGap,o.align,o.opacity,EDL.settings.canvas,(o.shadow&&o.shadow.on),(o.shadow&&o.shadow.color),(o.shadow&&o.shadow.opacity)].join('|');
