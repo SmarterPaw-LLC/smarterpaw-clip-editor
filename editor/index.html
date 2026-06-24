@@ -222,7 +222,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.53.3</span>
+  <span class="ver" id="appVer">v1.54.0</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1279,23 +1279,110 @@ const ARROW_TYPES=[['arrow','Arrow'],['circle','Circle'],['underline','Underline
 function _strokePts(c,pts){ if(!pts.length)return; c.beginPath(); c.moveTo(pts[0].x,pts[0].y); for(let i=1;i<pts.length;i++)c.lineTo(pts[i].x,pts[i].y); c.stroke(); }
 function _markStroke(x1,y1,x2,y2,arch,wob,rnd,n){ n=n||14; const pts=[],dx=x2-x1,dy=y2-y1,len=Math.hypot(dx,dy)||1,nx=-dy/len,ny=dx/len;
   for(let i=0;i<=n;i++){ const t=i/n; const bow=Math.sin(t*Math.PI)*arch, w=(rnd()*2-1)*wob; pts.push({x:x1+dx*t+nx*(bow+w), y:y1+dy*t+ny*(bow+w)}); } return pts; }
+// ---- Marker-style arrow stroke (ported from SmarterImage social tool: bezier+wobble curve, tapered marker thickness, halo+color two-pass paint) ----
+function _genArrowStroke(x1,y1,x2,y2,arch,wobble,seed){
+  const dx=x2-x1, dy=y2-y1, len=Math.hypot(dx,dy)||1;
+  const perpX=-dy/len, perpY=dx/len, archMag=(arch/100)*len*0.3;
+  const cx=(x1+x2)/2+perpX*archMag, cy=(y1+y2)/2+perpY*archMag;
+  const n=28, pts=new Array(n+1), s=seed*0.0137;
+  for(let i=0;i<=n;i++){ const t=i/n, u=1-t;
+    const bx=u*u*x1+2*u*t*cx+t*t*x2, by=u*u*y1+2*u*t*cy+t*t*y2;
+    const ttx=2*u*(cx-x1)+2*t*(x2-cx), tty=2*u*(cy-y1)+2*t*(y2-cy);
+    const tlen=Math.hypot(ttx,tty)||1, pwx=-tty/tlen, pwy=ttx/tlen;
+    const fade=Math.sin(t*Math.PI), noise=Math.sin(t*2.4+s)*0.7+Math.sin(t*4.3+s*1.7)*0.3;
+    const wMag=noise*wobble*len*0.05*fade;
+    pts[i]=[bx+pwx*wMag, by+pwy*wMag];
+  } return pts;
+}
+function _capProfileFromTaper(distFromCap, slider){   // 0..1 slider → cap thickness profile (splay→round→soft→mild point)
+  if(slider==null) return 1;
+  let m; if(slider<0.3) m=1.5+(1.0-1.5)*(slider/0.3);
+  else if(slider<0.5) m=1.0+(0.5-1.0)*((slider-0.3)/0.2);
+  else m=0.5+(0.3-0.5)*((slider-0.5)/0.5);
+  if(Math.abs(m-1)<0.001) return 1;
+  const eff=0.20; if(distFromCap>eff) return 1;
+  return m+(1-m)*(distFromCap/eff);
+}
+function _markerThickAt(t, base, varn, seed, startT, endT){
+  const s=seed*0.0137;
+  const low=Math.sin(t*Math.PI*1.4+s)*0.5+Math.sin(t*Math.PI*2.7+s*1.7)*0.25;
+  const sf=startT?_capProfileFromTaper(t,startT):1, ef=endT?_capProfileFromTaper(1-t,endT):1;
+  return Math.max(1, base*(1+varn*low*0.35)*sf*ef);
+}
+function _paintMarkerHalo(ctx, pts, halo, haloPad, base, varn, seed, startT, endT){
+  ctx.lineCap='round'; ctx.lineJoin='round'; ctx.strokeStyle=halo; const nL=pts.length-1;
+  for(let i=1;i<pts.length;i++){ const t=i/nL; const w=_markerThickAt(t,base,varn,seed,startT,endT);
+    ctx.lineWidth=w+haloPad*2; ctx.beginPath(); ctx.moveTo(pts[i-1][0],pts[i-1][1]); ctx.lineTo(pts[i][0],pts[i][1]); ctx.stroke(); }
+}
+function _paintMarkerColor(ctx, pts, color, base, varn, seed, startT, endT){
+  ctx.lineCap='round'; ctx.lineJoin='round'; ctx.strokeStyle=color; const nL=pts.length-1;
+  for(let i=1;i<pts.length;i++){ const t=i/nL; const w=_markerThickAt(t,base,varn,seed,startT,endT);
+    ctx.lineWidth=w; ctx.beginPath(); ctx.moveTo(pts[i-1][0],pts[i-1][1]); ctx.lineTo(pts[i][0],pts[i][1]); ctx.stroke(); }
+}
 function buildArrowCanvas(o){
   const px=CANVAS_PX[EDL.settings.canvas]||[1080,1920], W=px[0], H=px[1];
   const innerW=Math.max(8,(o.w||0.5)*W), innerH=Math.max(8,(o.h||0.2)*H);
-  const lw=Math.max(2,(o.thickness!=null?o.thickness:0.012)*W), pad=Math.ceil(lw*2.5+12);
+  const lw=Math.max(2,(o.thickness!=null?o.thickness:0.012)*W);
+  // Extra pad so the halo and the wings/wobble don't get clipped at the canvas edge
+  const halo=o.halo||'#ffffff', haloPad=Math.max(4, lw*0.4);
+  const headPad=Math.max(innerW*0.18, lw*4);
+  const pad=Math.ceil(lw*2.5 + haloPad*2 + headPad + 16);
   const cw=Math.ceil(innerW+pad*2), ch=Math.ceil(innerH+pad*2);
   const cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; const c=cv.getContext('2d');
-  let stroke=o.color||'#f07830';
-  if(o.fillType==='gradient'){ const g=c.createLinearGradient(pad,pad,pad+innerW,pad+innerH); g.addColorStop(0,o.gradStart||'#f5e020'); g.addColorStop(1,o.gradEnd||'#e87820'); stroke=g; }
-  c.strokeStyle=stroke; c.fillStyle=stroke; c.globalAlpha=(o.opacity!=null?o.opacity:1); c.lineCap='round'; c.lineJoin='round'; c.lineWidth=lw;
-  const rnd=_mulberry((o.seed||1)>>>0), wob=lw*0.45, sub=o.subtype||'arrow';
-  if(sub==='underline'){ const y=pad+innerH*0.62; _strokePts(c,_markStroke(pad,y,pad+innerW,y,innerH*0.14,wob,rnd,16)); }
-  else if(sub==='circle'){ const cx=pad+innerW/2, cy=pad+innerH/2, rx=innerW/2, ry=innerH/2, a0=-0.35*Math.PI, a1=1.78*Math.PI, n=44, pts=[];
-    for(let i=0;i<=n;i++){ const a=a0+(a1-a0)*i/n, w=(rnd()*2-1)*wob*0.6; pts.push({x:cx+Math.cos(a)*(rx+w), y:cy+Math.sin(a)*(ry+w)}); } _strokePts(c,pts); }
-  else { let x1=pad, x2=pad+innerW; if(o.flipH){ const t=x1;x1=x2;x2=t; } const y=pad+innerH/2, arch=(o.arch!=null?o.arch:0)*innerH;
-    const body=_markStroke(x1,y,x2,y,arch,wob,rnd,16); _strokePts(c,body);
-    const tip=body[body.length-1], prev=body[Math.max(0,body.length-4)], ang=Math.atan2(tip.y-prev.y,tip.x-prev.x), hl=Math.max(lw*3, innerW*0.13);
-    [0.5,-0.5].forEach(s=>{ const wa=ang+Math.PI-s; _strokePts(c,[tip,{x:tip.x+Math.cos(wa)*hl,y:tip.y+Math.sin(wa)*hl}]); }); }
+  c.globalAlpha=(o.opacity!=null?o.opacity:1);
+  const sub=o.subtype||'arrow';
+  // Stroke color (solid or linear gradient over the layer bbox)
+  function makeStroke(target){
+    if(o.fillType!=='gradient') return o.color||'#f07830';
+    const ang=((o.gradAngle==null?0:o.gradAngle))*Math.PI/180;
+    const mx=pad+innerW/2, my=pad+innerH/2, hl=Math.hypot(innerW,innerH)/2;
+    const g=target.createLinearGradient(mx-Math.cos(ang)*hl, my-Math.sin(ang)*hl, mx+Math.cos(ang)*hl, my+Math.sin(ang)*hl);
+    g.addColorStop(0, o.gradStart||'#f5e020'); g.addColorStop(1, o.gradEnd||'#e87820');
+    return g;
+  }
+  const seed=(o.seed||1), varn=(o.thicknessVar!=null?o.thicknessVar:35)/100, wobble=(o.wobble!=null?o.wobble:0.7);
+  if(sub==='underline'){ const y=pad+innerH*0.62, pts=_genArrowStroke(pad,y,pad+innerW,y,(o.arch!=null?o.arch*15:0),wobble*0.6,seed);
+    const ss=makeStroke(c); _paintMarkerHalo(c,pts,halo,haloPad,lw,varn,seed,0.5,0.5); _paintMarkerColor(c,pts,ss,lw,varn,seed,0.5,0.5);
+    return {canvas:cv, cw, ch, exportW:W}; }
+  if(sub==='circle'){ const cx=pad+innerW/2, cy=pad+innerH/2, rx=innerW/2, ry=innerH/2, a0=-0.35*Math.PI, a1=1.78*Math.PI, n=64, pts=[];
+    const s=seed*0.0137; for(let i=0;i<=n;i++){ const t=i/n, a=a0+(a1-a0)*t, fade=Math.sin(t*Math.PI);
+      const w=wobble*((Math.sin(t*5.4+s)*0.7+Math.sin(t*9.3+s*1.7)*0.3))*((rx+ry)/2)*0.04*fade;
+      pts.push([cx+Math.cos(a)*(rx+w), cy+Math.sin(a)*(ry+w)]); }
+    const ss=makeStroke(c); _paintMarkerHalo(c,pts,halo,haloPad,lw,varn,seed,0.5,0.5); _paintMarkerColor(c,pts,ss,lw,varn,seed,0.5,0.5);
+    return {canvas:cv, cw, ch, exportW:W}; }
+  // ARROW: body + 2 wings (head). Wing length/curve, head angle, and per-cap tapers all individually controllable.
+  let x1=pad, x2=pad+innerW; if(o.flipH){ const t=x1;x1=x2;x2=t; }
+  const y1=pad+innerH/2, y2=pad+innerH/2;
+  const arch=(o.arch!=null?o.arch*60:0);   // editor's -1..1 arch → -60..60 social arch (sane visual range)
+  const bodyPts=_genArrowStroke(x1,y1,x2,y2,arch,wobble,seed);
+  // Wings: explicit per-side overrides, else fall back to legacy single fields
+  const aAng=(o.aheadAngle!=null?o.aheadAngle:48);
+  const aLen1=(o.aheadLen1!=null?o.aheadLen1:(o.aheadLen!=null?o.aheadLen:lw*4.5));
+  const aLen2=(o.aheadLen2!=null?o.aheadLen2:(o.aheadLen!=null?o.aheadLen:lw*4.5));
+  const aCurve1=(o.aheadCurve1!=null?o.aheadCurve1:(o.aheadCurve!=null?o.aheadCurve:-25));
+  const aCurve2=(o.aheadCurve2!=null?o.aheadCurve2:(o.aheadCurve!=null?o.aheadCurve:-25));
+  function wing(tip, prev, side, len, curve, wseed){
+    const ax=tip[0]-prev[0], ay=tip[1]-prev[1], al=Math.hypot(ax,ay)||1, ux=ax/al, uy=ay/al;
+    const ha=aAng*Math.PI/180, co=Math.cos(ha), si=Math.sin(ha)*side;
+    const wx=-ux*co+uy*si, wy=-uy*co-ux*si;
+    const we=[tip[0]+wx*len, tip[1]+wy*len];
+    return _genArrowStroke(tip[0],tip[1],we[0],we[1], curve*side, wobble*0.7, wseed);
+  }
+  const allStrokes=[];
+  const bodyT=(o.bodyStartTaper!=null?o.bodyStartTaper:50)/100;
+  const w1T=(o.wing1EndTaper!=null?o.wing1EndTaper:50)/100;
+  const w2T=(o.wing2EndTaper!=null?o.wing2EndTaper:50)/100;
+  const round=!!o.roundEnds;
+  allStrokes.push({pts:bodyPts, seed:seed, startT:round?0:bodyT, endT:0});
+  if(o.arrowheadEnd!==false){ const tipE=bodyPts[bodyPts.length-1], prevE=bodyPts[Math.max(0,bodyPts.length-5)];
+    allStrokes.push({pts:wing(tipE,prevE,+1,aLen1,aCurve1,seed*1.317), seed:seed*1.317, startT:0, endT:round?0:w1T});
+    allStrokes.push({pts:wing(tipE,prevE,-1,aLen2,aCurve2,seed*1.713), seed:seed*1.713, startT:0, endT:round?0:w2T}); }
+  if(o.arrowheadStart){ const tipS=bodyPts[0], prevS=bodyPts[Math.min(bodyPts.length-1,4)];
+    allStrokes.push({pts:wing(tipS,prevS,+1,aLen1,aCurve1,seed*2.119), seed:seed*2.119, startT:0, endT:round?0:w1T});
+    allStrokes.push({pts:wing(tipS,prevS,-1,aLen2,aCurve2,seed*2.531), seed:seed*2.531, startT:0, endT:round?0:w2T}); }
+  const ss=makeStroke(c);
+  allStrokes.forEach(s=>_paintMarkerHalo(c, s.pts, halo, haloPad, lw, varn, s.seed, s.startT, s.endT));
+  allStrokes.forEach(s=>_paintMarkerColor(c, s.pts, ss,   lw, varn, s.seed, s.startT, s.endT));
   return {canvas:cv, cw, ch, exportW:W};
 }
 // For render: bake each sticker-text overlay to a PNG (same canvas as preview), upload it,
@@ -1447,7 +1534,7 @@ function renderOverlays(time){
       el.style.width=(el._scw/px[0]*100)+'%'; el.style.height=(el._sch/px[1]*100)+'%'; }
     else if(o.type==='arrow'){   // baked marker (arrow/circle/underline)
       const px=CANVAS_PX[EDL.settings.canvas]||[1080,1920];
-      const key=[o.subtype,o.color,o.fillType,o.gradStart,o.gradEnd,o.thickness,o.arch,o.flipH,o.seed,o.opacity,o.w,o.h,EDL.settings.canvas].join('|');
+      const key=[o.subtype,o.color,o.fillType,o.gradStart,o.gradEnd,o.gradAngle,o.thickness,o.thicknessVar,o.wobble,o.arch,o.flipH,o.seed,o.opacity,o.w,o.h,o.halo,o.aheadAngle,o.aheadLen1,o.aheadLen2,o.aheadCurve1,o.aheadCurve2,o.arrowheadStart,o.arrowheadEnd,o.bodyStartTaper,o.wing1EndTaper,o.wing2EndTaper,o.roundEnds,EDL.settings.canvas].join('|');
       if(el._arkey!==key){ const r=buildArrowCanvas(o); el.src=r.canvas.toDataURL('image/png'); el._scw=r.cw; el._sch=r.ch; el._arkey=key; }
       el.style.width=(el._scw/px[0]*100)+'%'; el.style.height=(el._sch/px[1]*100)+'%'; }
     else { el.textContent=o.text||''; el.style.fontFamily=FONTS[o.font]||FONTS.cooper; el.style.fontWeight='800'; el.style.lineHeight='1';
@@ -1575,12 +1662,28 @@ function buildOvEditor(){
       <div id="ovArSolid"><label>Color <input type="color" id="ovArColor" value="${o.color||'#f07830'}"></label></div>
       <div id="ovArGrad"><label>From <input type="color" id="ovArFrom" value="${o.gradStart||'#f5e020'}"></label>
         <label>To <input type="color" id="ovArTo" value="${o.gradEnd||'#e87820'}"></label></div>
-      <div><label>Thickness <input type="range" id="ovArThick" min="0.004" max="0.05" step="0.002" value="${o.thickness!=null?o.thickness:0.012}"></label>
+      <div><label>Thickness <input type="range" id="ovArThick" min="0.004" max="0.05" step="0.002" value="${o.thickness!=null?o.thickness:0.018}"></label>
+        <label>Thickness variation <input type="range" id="ovArThickVar" min="0" max="100" step="1" value="${o.thicknessVar!=null?o.thicknessVar:35}"></label></div>
+      <div><label>Wobble <input type="range" id="ovArWob" min="0" max="2" step="0.05" value="${o.wobble!=null?o.wobble:0.7}"></label>
         <label>Opacity <input type="range" id="ovArOp" min="0.1" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label></div>
       <div id="ovArArchRow"><label>Curve <input type="range" id="ovArArch" min="-0.4" max="0.4" step="0.02" value="${o.arch!=null?o.arch:0}"></label>
         <label class="ck"><input type="checkbox" id="ovArFlip" ${o.flipH?'checked':''}> flip</label></div>
       <div><label>Length <input type="range" id="ovArW" min="0.1" max="1" step="0.02" value="${o.w||0.5}"></label>
         <label>Height <input type="range" id="ovArH" min="0.05" max="1" step="0.02" value="${o.h||0.25}"></label></div>
+      <div><label>Halo <input type="color" id="ovArHalo" value="${o.halo||'#ffffff'}"></label></div>
+      <div class="sec">Arrowhead</div>
+      <div><label>Wing angle <input type="range" id="ovArAng" min="20" max="80" step="1" value="${o.aheadAngle!=null?o.aheadAngle:48}"></label></div>
+      <div><label>Wing 1 length <input type="range" id="ovArL1" min="4" max="240" step="1" value="${o.aheadLen1!=null?o.aheadLen1:Math.round((o.thickness||0.018)*((CANVAS_PX[EDL.settings.canvas]||[1080,1920])[0])*4.5)}"></label>
+        <label>curve <input type="range" id="ovArC1" min="-100" max="100" step="1" value="${o.aheadCurve1!=null?o.aheadCurve1:-25}"></label></div>
+      <div><label>Wing 2 length <input type="range" id="ovArL2" min="4" max="240" step="1" value="${o.aheadLen2!=null?o.aheadLen2:Math.round((o.thickness||0.018)*((CANVAS_PX[EDL.settings.canvas]||[1080,1920])[0])*4.5)}"></label>
+        <label>curve <input type="range" id="ovArC2" min="-100" max="100" step="1" value="${o.aheadCurve2!=null?o.aheadCurve2:-25}"></label></div>
+      <div><label class="ck"><input type="checkbox" id="ovArHeadE" ${o.arrowheadEnd!==false?'checked':''}> Arrowhead at end</label>
+        <label class="ck"><input type="checkbox" id="ovArHeadS" ${o.arrowheadStart?'checked':''}> at start</label></div>
+      <div class="sec">Tips / caps</div>
+      <div><label>Body start <input type="range" id="ovArBST" min="0" max="100" step="1" value="${o.bodyStartTaper!=null?o.bodyStartTaper:50}"></label></div>
+      <div><label>Wing 1 tip <input type="range" id="ovArW1T" min="0" max="100" step="1" value="${o.wing1EndTaper!=null?o.wing1EndTaper:50}"></label>
+        <label>Wing 2 tip <input type="range" id="ovArW2T" min="0" max="100" step="1" value="${o.wing2EndTaper!=null?o.wing2EndTaper:50}"></label></div>
+      <div><label class="ck"><input type="checkbox" id="ovArRound" ${o.roundEnds?'checked':''}> Rounded ends (overrides tapers)</label></div>
       <div><button class="mini" id="ovArSeed">🎲 Re-draw</button></div>`;
   } else {
     h+=`<div class="sec">Image</div><div><label>Size <input type="range" id="ovScale" min="0.05" max="1" step="0.01" value="${o.scale}"></label>
@@ -1630,6 +1733,20 @@ function buildOvEditor(){
     else if(o.type==='arrow'){ o.subtype=$('#ovArSub').value; o.fillType=$('#ovArFill').value; o.color=$('#ovArColor').value;
       o.gradStart=$('#ovArFrom').value; o.gradEnd=$('#ovArTo').value; o.thickness=parseFloat($('#ovArThick').value); o.opacity=parseFloat($('#ovArOp').value);
       o.arch=parseFloat($('#ovArArch').value); o.flipH=$('#ovArFlip').checked; o.w=parseFloat($('#ovArW').value)||0.5; o.h=parseFloat($('#ovArH').value)||0.25;
+      if($('#ovArThickVar')) o.thicknessVar=parseFloat($('#ovArThickVar').value);
+      if($('#ovArWob')) o.wobble=parseFloat($('#ovArWob').value);
+      if($('#ovArHalo')) o.halo=$('#ovArHalo').value;
+      if($('#ovArAng')) o.aheadAngle=parseFloat($('#ovArAng').value);
+      if($('#ovArL1')) o.aheadLen1=parseFloat($('#ovArL1').value);
+      if($('#ovArL2')) o.aheadLen2=parseFloat($('#ovArL2').value);
+      if($('#ovArC1')) o.aheadCurve1=parseFloat($('#ovArC1').value);
+      if($('#ovArC2')) o.aheadCurve2=parseFloat($('#ovArC2').value);
+      if($('#ovArHeadE')) o.arrowheadEnd=$('#ovArHeadE').checked;
+      if($('#ovArHeadS')) o.arrowheadStart=$('#ovArHeadS').checked;
+      if($('#ovArBST')) o.bodyStartTaper=parseFloat($('#ovArBST').value);
+      if($('#ovArW1T')) o.wing1EndTaper=parseFloat($('#ovArW1T').value);
+      if($('#ovArW2T')) o.wing2EndTaper=parseFloat($('#ovArW2T').value);
+      if($('#ovArRound')) o.roundEnds=$('#ovArRound').checked;
       if($('#ovArGrad')){ const g=o.fillType==='gradient'; $('#ovArGrad').style.display=g?'':'none'; $('#ovArSolid').style.display=g?'none':''; }
       if($('#ovArArchRow')) $('#ovArArchRow').style.display=(o.subtype==='arrow')?'':'none'; }
     else o.scale=parseFloat($('#ovScale').value)||0.3;
@@ -1699,7 +1816,7 @@ function addSprinkleOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[];
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead);
   openLibrary(src=>{ o.src=src; renderOvList(); buildOvEditor(); renderOverlays(playhead); });   // immediately pick the piece image
 }
-function addArrowOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'arrow',subtype:'arrow',color:'#f07830',fillType:'solid',thickness:0.012,arch:0,flipH:false,seed:Math.floor(Math.random()*1e6),w:0.5,h:0.25,opacity:1,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
+function addArrowOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'arrow',subtype:'arrow',color:'#f07830',fillType:'solid',thickness:0.018,thicknessVar:35,wobble:0.7,arch:0,flipH:false,seed:Math.floor(Math.random()*1e6),w:0.5,h:0.25,opacity:1,halo:'#ffffff',aheadAngle:48,aheadLen1:null,aheadLen2:null,aheadCurve1:-25,aheadCurve2:-25,arrowheadEnd:true,arrowheadStart:false,bodyStartTaper:50,wing1EndTaper:50,wing2EndTaper:50,roundEnds:false,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 function addShapeOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'shape',shape:'roundrect',w:0.6,h:0.18,fill:'#000000',opacity:0.45,radius:0.04,stroke:'#ffffff',strokeW:0,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
