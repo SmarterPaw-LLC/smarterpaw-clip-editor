@@ -244,7 +244,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.57.3</span>
+  <span class="ver" id="appVer">v1.57.4</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -454,7 +454,13 @@
             <button class="mini" id="ovImgClip">🎨 Clip art…</button>
             <button class="mini" id="ovImgLib">📚 Library…</button>
           </div></span>
-        <button class="mini" id="ovAddSprinkle">✨ Sprinkle</button> <button class="mini" id="ovAddArrow">➴ Arrow</button>
+        <span class="ovdrop"><button class="mini" id="ovAddSprinkle">✨ Sprinkle ▾</button>
+          <div class="ovmenu" id="ovSpkMenu">
+            <button class="mini" id="ovSpkUpload">🖼 Upload image…</button>
+            <button class="mini" id="ovSpkClip">🎨 Clip art…</button>
+            <button class="mini" id="ovSpkLib">📚 Library…</button>
+          </div></span>
+        <button class="mini" id="ovAddArrow">➴ Arrow</button>
         <input type="file" id="ovFile" accept="image/*" style="display:none"></div>
       <div style="font-size:11px;color:var(--mut)">Tip: scrub the timeline to where an element should appear, then drag it on the preview to position it.</div>
       <hr>
@@ -1915,10 +1921,13 @@ function addTextOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const g=
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 function addImageOverlay(){ pickImage(src=>{ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'image',src,scale:0.3,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }); }
-function addSprinkleOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[];
+function addSprinkleOverlay(kind){ histCommit(); EDL.overlays=EDL.overlays||[];
   const o={id:uid(),type:'sprinkle',src:'',w:0.7,h:0.7,count:18,size:0.08,jitter:0.4,rotJitter:20,seed:Math.floor(Math.random()*1e6),opacity:1,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead);
-  openLibrary(src=>{ o.src=src; renderOvList(); buildOvEditor(); renderOverlays(playhead); });   // immediately pick the piece image
+  const pick=src=>{ o.src=src; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
+  if(kind==='clip') openClipPicker(pick);
+  else if(kind==='upload') pickImage(pick);
+  else openLibrary(pick);   // default: library
 }
 function addArrowOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const g=brandGrad();
   const o={id:uid(),type:'arrow',subtype:'arrow',color:g.solid,fillType:'gradient',gradStart:g.from,gradEnd:g.to,gradAngle:0,thickness:0.018,thicknessVar:35,wobble:0.7,arch:0,flipH:false,seed:Math.floor(Math.random()*1e6),w:0.5,h:0.25,opacity:1,halo:'#ffffff',aheadAngle:48,aheadLen1:null,aheadLen2:null,aheadCurve1:-25,aheadCurve2:-25,arrowheadEnd:true,arrowheadStart:false,bodyStartTaper:50,wing1EndTaper:50,wing2EndTaper:50,roundEnds:false,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
@@ -1927,14 +1936,20 @@ function addShapeOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const g
   const o={id:uid(),type:'shape',shape:'roundrect',w:0.6,h:0.18,fill:g.solid,fillType:'gradient',gradStart:g.from,gradEnd:g.to,gradType:'linear',gradAngle:0,opacity:0.9,radius:0.04,stroke:'#ffffff',strokeW:0,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 $('#btnOverlays').onclick=openOvModal; $('#ovClose').onclick=closeOvModal;
-$('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay; $('#ovAddSprinkle').onclick=addSprinkleOverlay; $('#ovAddArrow').onclick=addArrowOverlay;
-// + Image dropdown: Upload / Clip art / Library
+$('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay; $('#ovAddArrow').onclick=addArrowOverlay;
+// + Image / ✨ Sprinkle dropdowns: Upload / Clip art / Library
 function closeImgMenu(){ $('#ovImgMenu').classList.remove('open'); }
+function closeSpkMenu(){ $('#ovSpkMenu').classList.remove('open'); }
+$('#ovAddSprinkle').onclick=e=>{ e.stopPropagation(); closeImgMenu(); $('#ovSpkMenu').classList.toggle('open'); };
+$('#ovSpkUpload').onclick=()=>{ closeSpkMenu(); addSprinkleOverlay('upload'); };
+$('#ovSpkClip').onclick=()=>{ closeSpkMenu(); addSprinkleOverlay('clip'); };
+$('#ovSpkLib').onclick=()=>{ closeSpkMenu(); addSprinkleOverlay('library'); };
 $('#ovAddImage').onclick=e=>{ e.stopPropagation(); $('#ovImgMenu').classList.toggle('open'); };
 $('#ovImgUpload').onclick=()=>{ closeImgMenu(); addImageOverlay(); };
 $('#ovImgClip').onclick=()=>{ closeImgMenu(); openClipPicker(); };
 $('#ovImgLib').onclick=()=>{ closeImgMenu(); openLibrary(); };
-document.addEventListener('click', e=>{ if(!e.target.closest('.ovdrop')) closeImgMenu(); });
+document.addEventListener('click', e=>{ if(!e.target.closest('.ovdrop')){ closeImgMenu(); closeSpkMenu(); } });
+$('#ovAddImage').addEventListener('click', closeSpkMenu);   // opening Image dropdown closes Sprinkle (and vice versa)
 
 /* ---------- clip art (Iconify icons + emoji → image overlay) ---------- */
 const ICONIFY='https://api.iconify.design';
