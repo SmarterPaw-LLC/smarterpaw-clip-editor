@@ -229,7 +229,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.56.1</span>
+  <span class="ver" id="appVer">v1.56.2</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1817,6 +1817,7 @@ function buildOvEditor(){
   if($('#ovSpSeed')) $('#ovSpSeed').onclick=()=>{ histCommit(); o.seed=Math.floor(Math.random()*1e6); renderOverlays(playhead); };
   if($('#ovArFill')){ $('#ovArFill').value=(o.fillType==='gradient')?'gradient':'solid'; const g=o.fillType==='gradient'; $('#ovArGrad').style.display=g?'':'none'; $('#ovArSolid').style.display=g?'none':''; if($('#ovArArchRow')) $('#ovArArchRow').style.display=((o.subtype||'arrow')==='arrow')?'':'none'; }
   if($('#ovArSeed')) $('#ovArSeed').onclick=()=>{ histCommit(); o.seed=Math.floor(Math.random()*1e6); renderOverlays(playhead); };
+  box.querySelectorAll('.ovBrandBtn').forEach(b=>{ b.onclick=()=>applyBrandToOverlay(o); });   // 🎨 Brand → reapply project brand gradient
   function animCtrl(ai,a,c){ const key=c[0],label=c[1],kind=c[2],v=a[key];
     if(kind==='text'){ return `<label>${label} <input type="text" class="anc" data-ai="${ai}" data-k="${key}" value="${(v||'').replace(/"/g,'&quot;')}" style="width:46px;text-align:center"></label>`; }
     if(kind==='img'){ const fn=(v||'').split('/').pop()||'none'; return `<label>${label} <button class="mini anpick" data-ai="${ai}" data-k="${key}">${v?'Replace':'Choose'}…</button> <span style="font-size:10px;color:var(--mut)">${fn}</span></label>`; }
