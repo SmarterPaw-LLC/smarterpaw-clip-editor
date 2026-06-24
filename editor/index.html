@@ -199,6 +199,10 @@
   .modal-body input[type=range] { vertical-align:middle; }
   input.rngnum { width:52px; margin-left:6px; font-size:11px; padding:2px 4px; background:var(--panel2,#222);
     color:var(--txt); border:1px solid var(--line); border-radius:5px; vertical-align:middle; }
+  .cpreset { display:inline-flex; align-items:center; gap:2px; margin-left:5px; vertical-align:middle; }
+  .cpreset .cpres { width:14px; height:14px; border:1px solid var(--line); border-radius:3px; padding:0; cursor:pointer; transition:transform .08s; }
+  .cpreset .cpres:hover { transform:scale(1.25); border-color:#fff; }
+  .cpreset .cpsep { width:1px; height:14px; background:var(--line); margin:0 3px; }
   .cmodal { position:fixed; inset:0; background:#000a; z-index:1100; display:flex; align-items:center; justify-content:center; }
   .cmodal .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; width:540px; max-width:94vw; }
   .cmodal .hd { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); font-weight:700; }
@@ -229,7 +233,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.56.3</span>
+  <span class="ver" id="appVer">v1.57.0</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1078,6 +1082,7 @@ function buildLineEditors(ec){
     d.querySelectorAll('input,select').forEach(el=>{ el.oninput=upd; el.onchange=upd; });
     box.appendChild(d);
   });
+  addColorPresets(box);   // brand swatches on each end-card line's color pickers
 }
 function openEcModal(){ const ec=normEndcard(EDL.settings); stop();
   $('#ecEnabled').checked=ec.enabled; $('#ecDur').value=ec.dur; $('#ecBgMode').value=ec.bg.mode;
@@ -1085,7 +1090,9 @@ function openEcModal(){ const ec=normEndcard(EDL.settings); stop();
   $('#ecGradStart').value=ec.bg.start; $('#ecGradEnd').value=ec.bg.end; $('#ecGradAngle').value=ec.bg.angle||170; $('#ecBgColor').value=ec.bg.color||'#111111';
   $('#ecLogoShow').checked=ec.logo.show; $('#ecLogoScale').value=ec.logo.scale; $('#ecLogoX').value=ec.logo.x; $('#ecLogoY').value=ec.logo.y;
   buildLineEditors(ec); ecBgModeUI();
-  $('#ecModal').style.display='flex'; $('#endcard').style.display='flex'; buildEndcard(ec); }
+  $('#ecModal').style.display='flex'; $('#endcard').style.display='flex'; buildEndcard(ec);
+  addColorPresets($('#ecModal'));   // brand swatches on every end-card color picker
+}
 function closeEcModal(){ $('#ecModal').style.display='none'; $('#endcard').style.display='none'; renderTimeline(); }
 $('#btnEndcard').onclick=openEcModal;
 $('#ecClose').onclick=closeEcModal;
@@ -1642,6 +1649,32 @@ function renderOvList(){
   const sr=box.querySelector('.ovselrow'); if(sr) sr.scrollIntoView({block:'nearest'});   // keep the selected overlay visible in the list
   renderTracks();
 }
+// Decorate every <input type=color> in `scope` with a brand-palette swatch strip. Click a swatch → sets the input
+// + dispatches input/change so existing onchange handlers fire. Project brand goes first; other brands follow.
+const BRAND_PALETTES={
+  meowijuana:['#f07830','#f6ae40','#76b753','#257741','#5d539e'],
+  doggijuana:['#8ab81d','#3c8e14','#52a045','#2c4223','#f07830','#f6ae40'],
+  kkz:['#81c568','#00a76b','#2f6e3b','#183f20','#f4ea11','#eca223']
+};
+function addColorPresets(scope){
+  if(!scope) return; const pb=projectBrand();
+  // Project brand swatches inline, then a separator + the other brands' palettes
+  const order=[pb].concat(Object.keys(BRAND_PALETTES).filter(b=>b!==pb));
+  scope.querySelectorAll('input[type=color]').forEach(inp=>{
+    if(inp._presets) return; inp._presets=true;
+    const strip=document.createElement('span'); strip.className='cpreset';
+    order.forEach((b,bi)=>{
+      if(bi>0){ const sep=document.createElement('span'); sep.className='cpsep'; sep.title=BRAND_LABELS[b]||b; strip.appendChild(sep); }
+      (BRAND_PALETTES[b]||[]).forEach(hex=>{ const s=document.createElement('button'); s.type='button'; s.className='cpres'; s.style.background=hex; s.title=(BRAND_LABELS[b]||b)+' · '+hex;
+        s.onclick=ev=>{ ev.preventDefault(); inp.value=hex; inp.dispatchEvent(new Event('input',{bubbles:true})); inp.dispatchEvent(new Event('change',{bubbles:true})); };
+        strip.appendChild(s); });
+    });
+    // utility swatches
+    ['#ffffff','#000000'].forEach(hex=>{ const s=document.createElement('button'); s.type='button'; s.className='cpres'; s.style.background=hex; s.title=hex;
+      s.onclick=ev=>{ ev.preventDefault(); inp.value=hex; inp.dispatchEvent(new Event('input',{bubbles:true})); inp.dispatchEvent(new Event('change',{bubbles:true})); }; strip.appendChild(s); });
+    inp.insertAdjacentElement('afterend', strip);
+  });
+}
 // Pair every range slider in `scope` with a synced number box (native up/down steppers), two-way bound.
 function addSliderNumbers(scope){
   if(!scope) return;
@@ -1810,6 +1843,7 @@ function buildOvEditor(){
     renderOverlays(playhead); renderOvList(); };
   box.querySelectorAll('input,select,textarea').forEach(el=>{ el.oninput=upd; el.onchange=upd; });
   addSliderNumbers(box);   // pair every slider with a number box + up/down steppers
+  addColorPresets(box);    // brand-palette swatches next to every color input
   if($('#ovRot0')) $('#ovRot0').onclick=()=>{ $('#ovRot').value=0; upd(); };
   const spSet=src=>{ o.src=src; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
   if($('#ovSpLib')) $('#ovSpLib').onclick=()=>openLibrary(spSet);
