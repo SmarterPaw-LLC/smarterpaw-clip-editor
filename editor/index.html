@@ -223,6 +223,17 @@
   .aigrid .grphd { grid-column:1/-1; display:flex; align-items:center; gap:8px; font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--mut); padding:7px 2px 3px; border-bottom:1px solid var(--line); }
   .aigrid .grphd b { color:var(--txt); text-transform:none; letter-spacing:0; font-size:12px; }
   .aigrid .grphd button { font-size:10px; padding:1px 7px; margin-left:auto; }
+  /* the outer #aiGrid is now a scrolling block; the cell-grid lives on each .aiprodbody.aigrid */
+  #aiGrid { display:block; grid-template-columns:none; gap:0; padding:6px; }
+  .aibrand { border-top:1px solid var(--line); margin-top:6px; }
+  .aibrand:first-child { border-top:none; margin-top:0; }
+  .aibrandhd { cursor:pointer; user-select:none; padding:8px 4px 4px; }
+  .aibrandhd:hover, .aiprodhd:hover { background:#ffffff08; }
+  .aiprodhd { cursor:pointer; user-select:none; padding:6px 4px; }
+  .aibrand.collapsed > .aibrandbody, .aiprod.collapsed > .aiprodbody { display:none; }
+  .aibrand .cr, .aiprod .cr { display:inline-block; width:12px; transition:transform .15s; opacity:.7; font-size:10px; }
+  .aibrand.collapsed > .aibrandhd .cr, .aiprod.collapsed > .aiprodhd .cr { transform:rotate(-90deg); }
+  .aiprodbody { max-height:none !important; border:none !important; padding:4px 0 0 !important; background:transparent !important; }
   .ecline { display:flex; flex-wrap:wrap; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:8px; }
   .ecline.ovselrow { border-color:var(--acc2); box-shadow:0 0 0 1px var(--acc2); background:#1c2b33; }
   .ecline input.ecl-text { flex:1; min-width:120px; }
@@ -233,7 +244,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.57.1</span>
+  <span class="ver" id="appVer">v1.57.2</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -2556,24 +2567,44 @@ function openAiBuild(){ stop(); aiSel=[]; $('#aiName').value=''; $('#aiBrief').v
     +BRAND_ORDER.map(b=>{ const opts=cats.filter(p=>(MAN.clips.find(c=>c.product===p)||{}).brand===b); return opts.length?`<optgroup label="${BRAND_LABELS[b]||b}">`+opts.map(p=>`<option value="${p}">${p}</option>`).join('')+`</optgroup>`:''; }).join('');
   $('#aiFilter').value='';
   renderAiGrid(); $('#aiModal').style.display='flex'; }
+// Collapsed brand/product groups in the AI picker — own localStorage so it doesn't fight the Source bin's state.
+const AI_COLLAPSE_KEY='scl_ai_collapsed';
+function _aiCollapsed(){ try{ return new Set(JSON.parse(localStorage.getItem(AI_COLLAPSE_KEY)||'[]')); }catch(_){ return new Set(); } }
+function _aiSaveCollapsed(s){ try{ localStorage.setItem(AI_COLLAPSE_KEY, JSON.stringify([...s])); }catch(_){} }
+function _aiToggle(key, el){ const s=_aiCollapsed(); if(s.has(key)){ s.delete(key); el.classList.remove('collapsed'); } else { s.add(key); el.classList.add('collapsed'); } _aiSaveCollapsed(s); }
 function renderAiGrid(){ const g=$('#aiGrid'); const sc=g.scrollTop; g.innerHTML='';
   const q=($('#aiFilter').value||'').trim().toLowerCase(), cat=$('#aiCat').value;
   const list=MAN.clips.filter(c=>(!cat||c.product===cat) && (!q||((c.label||'')+' '+c.product+' '+c.id).toLowerCase().includes(q)));
   if(!list.length){ g.innerHTML='<div style="grid-column:1/-1;color:var(--mut);font-size:12px;padding:8px">No clips match.</div>'; return; }
-  let curBrand='', curProd=null;
-  list.forEach(c=>{ const br=clipBrand(c);
-    if(br!==curBrand){ curBrand=br; const bh=document.createElement('div'); bh.className='grphd'; bh.style.gridColumn='1/-1'; bh.style.borderTop='1px solid var(--line)'; bh.style.marginTop='6px';
-      bh.innerHTML=`<b style="font-size:13px">${BRAND_LABELS[br]||br}</b>`; g.appendChild(bh); curProd=null; }
-    if(c.product!==curProd){ curProd=c.product; const inCat=list.filter(x=>x.product===curProd); const allSel=inCat.every(x=>aiSel.includes(x.id));
-      const hd=document.createElement('div'); hd.className='grphd'; hd.innerHTML=`<b>${curProd}</b> <span>${inCat.length} clip${inCat.length>1?'s':''}</span>`;
+  const collapsed=_aiCollapsed(), filterActive=!!q;   // a search forces everything expanded so matches stay visible
+  const byBrand={}; list.forEach(c=>{ const br=clipBrand(c); (byBrand[br]=byBrand[br]||{}); (byBrand[br][c.product]=byBrand[br][c.product]||[]).push(c); });
+  BRAND_ORDER.concat(Object.keys(byBrand).filter(b=>!BRAND_ORDER.includes(b))).forEach(br=>{
+    const prods=byBrand[br]; if(!prods) return;
+    const bk='ab:'+br, brandCount=Object.values(prods).reduce((a,b)=>a+b.length,0);
+    const brandBox=document.createElement('div'); brandBox.className='aibrand'+((!filterActive&&collapsed.has(bk))?' collapsed':'');
+    const bh=document.createElement('div'); bh.className='grphd aibrandhd'; bh.innerHTML=`<span class="cr">▾</span><b style="font-size:13px">${BRAND_LABELS[br]||br}</b><span style="color:var(--mut);font-size:11px">${brandCount} clip${brandCount>1?'s':''}</span>`;
+    bh.onclick=()=>{ if(!filterActive) _aiToggle(bk, brandBox); }; brandBox.appendChild(bh);
+    const bbody=document.createElement('div'); bbody.className='aibrandbody'; brandBox.appendChild(bbody);
+    Object.keys(prods).sort().forEach(prod=>{
+      const pk='ab:'+br+'/p:'+prod, items=prods[prod], allSel=items.every(x=>aiSel.includes(x.id));
+      const prodBox=document.createElement('div'); prodBox.className='aiprod'+((!filterActive&&collapsed.has(pk))?' collapsed':'');
+      const hd=document.createElement('div'); hd.className='grphd aiprodhd'; hd.innerHTML=`<span class="cr">▾</span><b>${prod}</b><span style="color:var(--mut);font-size:11px">${items.length} clip${items.length>1?'s':''}</span>`;
+      hd.onclick=ev=>{ if(ev.target.tagName==='BUTTON') return; if(!filterActive) _aiToggle(pk, prodBox); };
       const btn=document.createElement('button'); btn.className='mini'; btn.textContent=allSel?'Clear':'Select all';
-      btn.onclick=()=>{ const ids=inCat.map(x=>x.id); if(allSel) aiSel=aiSel.filter(id=>!ids.includes(id)); else ids.forEach(id=>{ if(!aiSel.includes(id)) aiSel.push(id); }); renderAiGrid(); };
-      hd.appendChild(btn); g.appendChild(hd); }
-    const cell=document.createElement('div'); cell.className='aicell'; cell.dataset.id=c.id;
-    cell.title=c.product+' · '+c.id+' · '+fmt(c.dur)+'s';
-    cell.innerHTML=`<span class="ord"></span><span class="pick">＋</span><img src="${c.thumb}" loading="lazy"><div class="cap">${c.label} · ${fmt(c.dur)}s</div>`;
-    cell.onclick=()=>{ const i=aiSel.indexOf(c.id); if(i>=0) aiSel.splice(i,1); else aiSel.push(c.id); renderAiGrid(); };
-    g.appendChild(cell); });
+      btn.onclick=ev=>{ ev.stopPropagation(); const ids=items.map(x=>x.id); if(allSel) aiSel=aiSel.filter(id=>!ids.includes(id)); else ids.forEach(id=>{ if(!aiSel.includes(id)) aiSel.push(id); }); renderAiGrid(); };
+      hd.appendChild(btn); prodBox.appendChild(hd);
+      const cells=document.createElement('div'); cells.className='aigrid aiprodbody'; prodBox.appendChild(cells);
+      items.forEach(c=>{
+        const cell=document.createElement('div'); cell.className='aicell'; cell.dataset.id=c.id;
+        cell.title=c.product+' · '+c.id+' · '+fmt(c.dur)+'s';
+        cell.innerHTML=`<span class="ord"></span><span class="pick">＋</span><img src="${c.thumb}" loading="lazy"><div class="cap">${c.label} · ${fmt(c.dur)}s</div>`;
+        cell.onclick=()=>{ const i=aiSel.indexOf(c.id); if(i>=0) aiSel.splice(i,1); else aiSel.push(c.id); renderAiGrid(); };
+        cells.appendChild(cell);
+      });
+      bbody.appendChild(prodBox);
+    });
+    g.appendChild(brandBox);
+  });
   refreshAiSel(); g.scrollTop=sc; }
 function refreshAiSel(){ $('#aiCount').textContent=aiSel.length+' selected';
   document.querySelectorAll('#aiGrid .aicell').forEach(cell=>{ const i=aiSel.indexOf(cell.dataset.id);
