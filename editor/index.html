@@ -244,7 +244,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.57.2</span>
+  <span class="ver" id="appVer">v1.57.3</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1884,7 +1884,8 @@ function buildOvEditor(){
     }).join('') : '<div style="color:var(--mut);font-size:11px">No animations yet.</div>';
     const have=new Set(anims.map(a=>a.type));
     const png=(o.type==='image'||o.type==='shape'||o.type==='sprinkle'||o.type==='arrow'||(o.type==='text'&&o.style==='sticker'));   // rotation effects need a pixel layer
-    $('#ovAnimAdd').innerHTML='<option value="">＋ Add animation…</option>'+Object.keys(ANIM_DEFS).filter(t=>!have.has(t)&&(!ANIM_DEFS[t].png||png)).map(t=>`<option value="${t}">${ANIM_DEFS[t].label}</option>`).join('');
+    // Duplicates allowed — staggered "Plays from/to" windows make multiple instances useful (two floats, two fades, etc.)
+    $('#ovAnimAdd').innerHTML='<option value="">＋ Add animation…</option>'+Object.keys(ANIM_DEFS).filter(t=>!ANIM_DEFS[t].png||png).map(t=>`<option value="${t}">${ANIM_DEFS[t].label}${have.has(t)?' (add another)':''}</option>`).join('');
     L.querySelectorAll('.anc').forEach(el=>{ el.oninput=el.onchange=()=>{ let v=el.value; if(el.type==='number'||el.type==='range') v=parseFloat(v); o.anims[+el.dataset.ai][el.dataset.k]=v; renderOverlays(playhead); }; });
     L.querySelectorAll('.ancb').forEach(el=>{ el.onchange=()=>{ o.anims[+el.dataset.ai][el.dataset.k]=el.checked; renderOverlays(playhead); }; });
     L.querySelectorAll('.anseed').forEach(b=>{ b.onclick=()=>{ histCommit(); o.anims[+b.dataset.ai].seed=Math.floor(Math.random()*1e6); renderOverlays(playhead); }; });
