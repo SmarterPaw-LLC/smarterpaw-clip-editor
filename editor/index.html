@@ -229,7 +229,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.55.2</span>
+  <span class="ver" id="appVer">v1.56.0</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -253,6 +253,13 @@
   <button class="mini" id="btnProjNew">New</button>
   <button class="mini" id="btnAiBuild" title="New AI-assisted build — pick clips + a brief, then tell Claude to assemble">✨ AI build…</button>
   <button class="mini" id="btnProjDel" title="Delete this project">Delete</button>
+  <span class="sp"></span>
+  <span class="lbl">Brand</span>
+  <select id="setProjBrand" title="Project brand — new overlays default to this brand's gradient">
+    <option value="meowijuana">🌿 Meowijuana</option>
+    <option value="doggijuana">🐶 Doggijuana</option>
+    <option value="kkz">⚡ Kitty Ka-Zoom</option>
+  </select>
   <span class="sp"></span>
   <span class="cur" id="projCur">—</span>
   <span class="sp"></span>
@@ -666,6 +673,13 @@ function addClipToTimeline(id, atIdx){ const c=MAN.byId[id]; if(!c) return toast
 const BRAND_LABELS={meowijuana:'🌿 Meowijuana',doggijuana:'🐶 Doggijuana',kkz:'⚡ Kitty Ka-Zoom',unassigned:'⚠ Unassigned'};
 const BRAND_ORDER=['meowijuana','doggijuana','kkz','unassigned'];
 function clipBrand(c){ return BRAND_LABELS[c.brand]?c.brand:'unassigned'; }
+// Per-brand 2-color gradients (yellow→orange Meowi, light→dark green Doggi, purple→orange KK).
+// Used as defaults for newly added overlays (text-sticker / shape / arrow). Existing overlays unchanged.
+const BRAND_GRADIENTS={meowijuana:{from:'#f5e020',to:'#e87820',solid:'#f07830'},
+                      doggijuana:{from:'#76b753',to:'#257741',solid:'#257741'},
+                      kkz:{from:'#5d539e',to:'#f07830',solid:'#5d539e'}};
+function projectBrand(){ const b=EDL&&EDL.settings&&EDL.settings.brand; return BRAND_GRADIENTS[b]?b:'meowijuana'; }
+function brandGrad(){ return BRAND_GRADIENTS[projectBrand()]; }
 // Collapsed brand/product groups persist in localStorage so the bin stays the way Jason left it across reloads.
 const BIN_COLLAPSE_KEY='scl_bin_collapsed';
 function _binCollapsed(){ try{ return new Set(JSON.parse(localStorage.getItem(BIN_COLLAPSE_KEY)||'[]')); }catch(_){ return new Set(); } }
@@ -1022,6 +1036,7 @@ function chooseCanvas(c){ EDL.settings.canvas=c; if($('#setCanvas')) $('#setCanv
   const px=CANVAS_PX[c]||[1080,1920]; if($('#arDim')) $('#arDim').textContent=px[0]+'×'+px[1];
   sizeStage(); updateTotal(); if(sel>=0&&EDL.segments[sel]) applyFraming(EDL.segments[sel]); renderOverlays(playhead); renderTracks(); }
 $('#setCanvas').onchange=e=>chooseCanvas(e.target.value);
+if($('#setProjBrand')) $('#setProjBrand').onchange=e=>{ histCommit(); EDL.settings.brand=e.target.value; toast('Brand: '+(BRAND_LABELS[e.target.value]||e.target.value)+'. New overlays use this brand’s gradient.'); };
 document.querySelectorAll('.arbtn').forEach(b=>b.onclick=()=>chooseCanvas(b.dataset.ar));
 $('#setMusic').onchange=e=>{ EDL.settings.music=e.target.value; renderTracks(); };
 function musicVol(){ return EDL.settings.musicVol!=null ? EDL.settings.musicVol : 0.5; }
@@ -1837,7 +1852,8 @@ function ovPlace(o){ const p=placeAtPlayhead(+o.dur||3, 0); o.start=p.t0; o.ch=p
 function pickImage(cb){ const f=$('#ovFile'); f.onchange=()=>{ const file=f.files[0]; if(!file) return; const r=new FileReader();
   r.onload=async()=>{ try{ const res=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:file.name,data:r.result})}); if(res.ok) cb(res.src); else toast('Upload failed'); }catch(e){ toast('Upload failed'); } f.value=''; };
   r.readAsDataURL(file); }; f.click(); }
-function addTextOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'text',text:'New text',font:'cooper',color:'#ffffff',size:0.07,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3,button:false,bg:'#f07830'};
+function addTextOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const g=brandGrad();
+  const o={id:uid(),type:'text',style:'sticker',text:'New text',font:'cooper',color:'#ffffff',fillType:'gradient',gradStart:g.from,gradEnd:g.to,gradType:'linear',gradAngle:0,size:0.07,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3,button:false,bg:g.solid};
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 function addImageOverlay(){ pickImage(src=>{ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'image',src,scale:0.3,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }); }
@@ -1846,9 +1862,11 @@ function addSprinkleOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[];
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead);
   openLibrary(src=>{ o.src=src; renderOvList(); buildOvEditor(); renderOverlays(playhead); });   // immediately pick the piece image
 }
-function addArrowOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'arrow',subtype:'arrow',color:'#f07830',fillType:'solid',thickness:0.018,thicknessVar:35,wobble:0.7,arch:0,flipH:false,seed:Math.floor(Math.random()*1e6),w:0.5,h:0.25,opacity:1,halo:'#ffffff',aheadAngle:48,aheadLen1:null,aheadLen2:null,aheadCurve1:-25,aheadCurve2:-25,arrowheadEnd:true,arrowheadStart:false,bodyStartTaper:50,wing1EndTaper:50,wing2EndTaper:50,roundEnds:false,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
+function addArrowOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const g=brandGrad();
+  const o={id:uid(),type:'arrow',subtype:'arrow',color:g.solid,fillType:'gradient',gradStart:g.from,gradEnd:g.to,gradAngle:0,thickness:0.018,thicknessVar:35,wobble:0.7,arch:0,flipH:false,seed:Math.floor(Math.random()*1e6),w:0.5,h:0.25,opacity:1,halo:'#ffffff',aheadAngle:48,aheadLen1:null,aheadLen2:null,aheadCurve1:-25,aheadCurve2:-25,arrowheadEnd:true,arrowheadStart:false,bodyStartTaper:50,wing1EndTaper:50,wing2EndTaper:50,roundEnds:false,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
-function addShapeOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'shape',shape:'roundrect',w:0.6,h:0.18,fill:'#000000',opacity:0.45,radius:0.04,stroke:'#ffffff',strokeW:0,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
+function addShapeOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const g=brandGrad();
+  const o={id:uid(),type:'shape',shape:'roundrect',w:0.6,h:0.18,fill:g.solid,fillType:'gradient',gradStart:g.from,gradEnd:g.to,gradType:'linear',gradAngle:0,opacity:0.9,radius:0.04,stroke:'#ffffff',strokeW:0,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 $('#btnOverlays').onclick=openOvModal; $('#ovClose').onclick=closeOvModal;
 $('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay; $('#ovAddSprinkle').onclick=addSprinkleOverlay; $('#ovAddArrow').onclick=addArrowOverlay;
@@ -2431,6 +2449,8 @@ function applyEDL(edl){
   if(!MAN.music.includes(s.music)) s.music=MAN.music[0]||'';
   if(s.musicVol==null) s.musicVol=0.5;
   $('#setMusic').value=s.music; $('#setCanvas').value=s.canvas;
+  if(!BRAND_GRADIENTS[s.brand]) s.brand='meowijuana';
+  if($('#setProjBrand')) $('#setProjBrand').value=s.brand;
   if($('#setMusicVol')){ $('#setMusicVol').value=s.musicVol; $('#setMusicVolV').textContent=Math.round(s.musicVol*100)+'%'; }
   document.querySelectorAll('.arbtn').forEach(b=>b.classList.toggle('on', b.dataset.ar===s.canvas));
   const _px=CANVAS_PX[s.canvas]||[1080,1920]; if($('#arDim')) $('#arDim').textContent=_px[0]+'×'+_px[1];
