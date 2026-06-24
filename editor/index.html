@@ -229,7 +229,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.56.0</span>
+  <span class="ver" id="appVer">v1.56.1</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -675,11 +675,18 @@ const BRAND_ORDER=['meowijuana','doggijuana','kkz','unassigned'];
 function clipBrand(c){ return BRAND_LABELS[c.brand]?c.brand:'unassigned'; }
 // Per-brand 2-color gradients (yellow→orange Meowi, light→dark green Doggi, purple→orange KK).
 // Used as defaults for newly added overlays (text-sticker / shape / arrow). Existing overlays unchanged.
-const BRAND_GRADIENTS={meowijuana:{from:'#f5e020',to:'#e87820',solid:'#f07830'},
+const BRAND_GRADIENTS={meowijuana:{from:'#f07830',to:'#257741',solid:'#f07830'},   // orange → dark green (brand palette)
                       doggijuana:{from:'#76b753',to:'#257741',solid:'#257741'},
                       kkz:{from:'#5d539e',to:'#f07830',solid:'#5d539e'}};
 function projectBrand(){ const b=EDL&&EDL.settings&&EDL.settings.brand; return BRAND_GRADIENTS[b]?b:'meowijuana'; }
 function brandGrad(){ return BRAND_GRADIENTS[projectBrand()]; }
+// Re-apply the project brand's gradient colors to ANY existing overlay (text-sticker / shape / arrow). Switches to gradient fill.
+function applyBrandToOverlay(o){ if(!o) return; const g=brandGrad();
+  o.fillType='gradient'; o.gradStart=g.from; o.gradEnd=g.to;
+  if(o.type==='arrow') o.color=g.solid;
+  if(o.type==='shape') o.fill=g.solid;
+  if(o.type==='text' && o.button) o.bg=g.solid;
+  histCommit(); buildOvEditor(); renderOverlays(playhead); renderTracks(); toast('Brand colors applied ('+(BRAND_LABELS[projectBrand()]||projectBrand())+')'); }
 // Collapsed brand/product groups persist in localStorage so the bin stays the way Jason left it across reloads.
 const BIN_COLLAPSE_KEY='scl_bin_collapsed';
 function _binCollapsed(){ try{ return new Set(JSON.parse(localStorage.getItem(BIN_COLLAPSE_KEY)||'[]')); }catch(_){ return new Set(); } }
@@ -1663,6 +1670,7 @@ function buildOvEditor(){
         <label class="ck"><input type="checkbox" id="ovBtn" ${o.button?'checked':''}> button</label> <input type="color" id="ovBg" value="${o.bg||'#f07830'}" title="button color"></div>
       <div id="ovStickRow"><label>From <input type="color" id="ovStFrom" value="${o.gradStart||'#8ab81d'}"></label>
         <label>To <input type="color" id="ovStTo" value="${o.gradEnd||'#3c8e14'}"></label>
+        <button class="mini ovBrandBtn" type="button" title="Use the project brand's gradient">🎨 Brand</button>
         <label>Style <select id="ovStType"><option value="linear">Linear</option><option value="radial">Radial</option></select></label></div>
       <div id="ovStAngRow"><label>Direction <input type="range" id="ovStAngle" min="0" max="360" step="5" value="${o.gradAngle!=null?o.gradAngle:180}"></label> <span id="ovStAngV" style="font-size:11px;color:var(--mut)">${o.gradAngle!=null?o.gradAngle:180}°</span></div>
       <div id="ovStickRow2"><label>Outline <input type="range" id="ovStBleed" min="0.06" max="0.5" step="0.02" value="${o.bleed!=null?o.bleed:0.22}"></label>
@@ -1677,6 +1685,7 @@ function buildOvEditor(){
       <div id="ovSolidRow"><label>Color <input type="color" id="ovFill" value="${o.fill}"></label></div>
       <div id="ovGradRow"><label>From <input type="color" id="ovGradStart" value="${o.gradStart||o.fill||'#000000'}"></label>
         <label>To <input type="color" id="ovGradEnd" value="${o.gradEnd||'#ffffff'}"></label>
+        <button class="mini ovBrandBtn" type="button" title="Use the project brand's gradient">🎨 Brand</button>
         <label>Style <select id="ovGradType"><option value="linear">Linear</option><option value="radial">Radial</option></select></label></div>
       <div id="ovGradAngRow"><label>Direction <input type="range" id="ovGradAngle" min="0" max="360" step="5" value="${o.gradAngle!=null?o.gradAngle:180}"></label> <span id="ovGradAngV" style="font-size:11px;color:var(--mut)">${o.gradAngle!=null?o.gradAngle:180}°</span></div>
       <div><label>Width <input type="range" id="ovW" min="0.05" max="1" step="0.01" value="${o.w}"></label>
@@ -1706,7 +1715,8 @@ function buildOvEditor(){
         <label>Fill <select id="ovArFill"><option value="solid">Solid</option><option value="gradient">Gradient</option></select></label></div>
       <div id="ovArSolid"><label>Color <input type="color" id="ovArColor" value="${o.color||'#f07830'}"></label></div>
       <div id="ovArGrad"><label>From <input type="color" id="ovArFrom" value="${o.gradStart||'#f5e020'}"></label>
-        <label>To <input type="color" id="ovArTo" value="${o.gradEnd||'#e87820'}"></label></div>
+        <label>To <input type="color" id="ovArTo" value="${o.gradEnd||'#e87820'}"></label>
+        <button class="mini ovBrandBtn" type="button" title="Use the project brand's gradient">🎨 Brand</button></div>
       <div><label>Thickness <input type="range" id="ovArThick" min="0.004" max="0.05" step="0.002" value="${o.thickness!=null?o.thickness:0.018}"></label>
         <label>Thickness variation <input type="range" id="ovArThickVar" min="0" max="100" step="1" value="${o.thicknessVar!=null?o.thicknessVar:35}"></label></div>
       <div><label>Wobble <input type="range" id="ovArWob" min="0" max="2" step="0.05" value="${o.wobble!=null?o.wobble:0.7}"></label>
