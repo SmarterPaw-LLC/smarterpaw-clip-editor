@@ -301,7 +301,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.63.1</span>
+  <span class="ver" id="appVer">v1.63.2</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1545,6 +1545,7 @@ const ANIM_DEFS={
   bounceIn:{label:'Bounce in',     def:{d:0.6,amp:0.12},   ctrls:[['d','Seconds','num',0.2,2,0.1],['amp','Height','range',0.02,0.3,0.02]]},
   dropIn:  {label:'Drop in',       def:{d:0.6,dist:0.5},   ctrls:[['d','Seconds','num',0.2,2,0.1],['dist','Height','range',0.1,1,0.05]]},
   popIn:   {label:'Pop in',        def:{d:0.45},           ctrls:[['d','Seconds','num',0.15,1.5,0.05]]},
+  bubbleUp:{label:'Bubble up',     png:true, def:{d:0.7,dist:0.15,sway:0.02}, ctrls:[['d','Seconds','num',0.2,3,0.1],['dist','Rise','range',0,0.5,0.02],['sway','Sway','range',0,0.1,0.005]]},
   scaleUp: {label:'Scale up (in)',           png:true, def:{d:0.5,from:0.3},  ctrls:[['d','Seconds','num',0.1,3,0.1],['from','Start size','range',0,1,0.05]]},
   scaleDown:{label:'Scale down (out)',       png:true, def:{d:0.5,to:0},      ctrls:[['d','Seconds','num',0.1,3,0.1],['to','End size','range',0,1,0.05]]},
   scaleBeat:{label:'Scale pulse (up & down)',png:true, def:{amp:0.15,speed:1.5}, ctrls:[['amp','Amount','range',0.02,0.6,0.02],['speed','Speed','range',0.2,5,0.1]]},
@@ -1598,6 +1599,13 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg
     case 'bounceIn': { const d=Math.max(0.01,a.d||0.6), amp=(a.amp!=null?a.amp:0.12)*W; if(T<d){ const k=T/d; dy+=-amp*Math.exp(-3*k)*Math.cos(2*Math.PI*1.6*k)*(1-k); } break; }
     case 'dropIn': { const d=Math.max(0.01,a.d||0.6), dist=(a.dist!=null?a.dist:0.5)*W; if(T<d){ const k=T/d; dy-=dist*(1-_easeOutBack(k)); } break; }
     case 'popIn': { const d=Math.max(0.01,a.d||0.45); if(T<d){ const k=T/d; sc*=Math.max(0,_easeOutBack(k)); op*=Math.min(1,k/0.3); } break; }
+    case 'bubbleUp': { const d=Math.max(0.01,a.d||0.7), dist=(a.dist!=null?a.dist:0.15)*W, sway=(a.sway!=null?a.sway:0.02)*W;
+      if(T<d){ const k=T/d, ease=1-Math.pow(1-k,3);
+        dy += dist*(1-ease);                       // start +dist below, rise to 0 with ease-out cubic
+        sc *= Math.max(0, _easeOutBack(k));         // scale 0 → 1 with slight overshoot (bubble pop)
+        op *= Math.min(1, k/0.3);                   // fade in over first 30%
+        dx += sway*Math.sin(k*Math.PI*2);           // gentle horizontal sway during the rise
+      } break; }
     case 'scaleUp': { const d=Math.max(0.01,a.d||0.5), from=(a.from!=null?a.from:0.3);
       if(T<d){ const k=T/d, ease=1-Math.pow(1-k,3); sc *= from + (1-from)*ease; } break; }
     case 'scaleDown': { const d=Math.max(0.01,a.d||0.5), to=(a.to!=null?a.to:0), tail=dw-T;

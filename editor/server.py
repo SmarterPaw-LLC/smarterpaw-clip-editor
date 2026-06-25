@@ -792,6 +792,13 @@ def _anim_exprs(o, s, dur, W, tv="t"):
         elif ty == "popIn":
             d = max(0.01, float(a.get("d", 0.45)))   # scale isn't animatable on an ffmpeg overlay → render as a quick fade-in
             add_amul("min(1,max(0,(%s)/%g))" % (lt, d * 0.5))
+        elif ty == "bubbleUp":
+            d = max(0.01, float(a.get("d", 0.7)))
+            dist = float(a.get("dist", 0.15)) * W
+            sway = float(a.get("sway", 0.02)) * W
+            add_dy("if(lt(%s,%g),%g*pow(1-%s/%g,3),0)" % (lt, d, dist, lt, d))           # rise (+dist → 0, cubic ease-out)
+            add_dx("if(lt(%s,%g),%g*sin(2*PI*%s/%g),0)" % (lt, d, sway, lt, d))          # gentle horizontal sway
+            add_amul("min(1,max(0,(%s)/%g))" % (lt, d * 0.3))                            # fade in over first 30%
         elif ty == "reshuffle":   # seeded per-step randomization; same hash math as _rsHash() in the UI
             freq = max(0.2, float(a.get("freq", 2))); amt = float(a.get("amt", 0.15)); rseed = float(a.get("seed", 1))
             def _H(salt):
@@ -1145,7 +1152,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
             sc_factors = []
             for a in (o.get("anims") or []):
                 ty = a.get("type")
-                if ty not in ("popIn", "scaleUp", "scaleDown", "scaleBeat"): continue
+                if ty not in ("popIn", "scaleUp", "scaleDown", "scaleBeat", "bubbleUp"): continue
                 aS = s + max(0.0, float(a.get("tStart", 0) or 0))
                 aEv = a.get("tEnd"); aE = s + min(dur_o, float(aEv)) if (aEv is not None and float(aEv) > 0) else (s + dur_o)
                 if aE <= aS: continue
@@ -1166,6 +1173,11 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 elif ty == "scaleBeat":
                     amp = float(a.get("amp", 0.15)); sp = float(a.get("speed", 1.5))
                     sc_factors.append("if(between(t,%g,%g),max(0.05,1+%g*sin(2*PI*%g*%s)),1)" % (aS, aE, amp, sp, lt))
+                elif ty == "bubbleUp":
+                    # scale 0 → 1 with ease-out-back (same overshoot curve as popIn — the bubble "pops" in as it rises)
+                    d = max(0.01, float(a.get("d", 0.7)))
+                    kk = "(%s/%g)" % (lt, d); eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (kk, kk)
+                    sc_factors.append("if(between(t,%g,%g),max(0.05,%s),1)" % (aS, aS + d, eb))
             if sc_factors:
                 combined = "*".join("(%s)" % x for x in sc_factors)
                 filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame" % (combined, combined))
