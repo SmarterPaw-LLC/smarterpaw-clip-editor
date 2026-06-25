@@ -301,7 +301,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.63.0</span>
+  <span class="ver" id="appVer">v1.63.1</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -515,6 +515,7 @@
           </div></span>
         <span class="ovdrop"><button class="mini" id="ovAddSprinkle">✨ Sprinkle ▾</button>
           <div class="ovmenu" id="ovSpkMenu">
+            <button class="mini" id="ovSpkEmoji">😀 Emoji / symbol…</button>
             <button class="mini" id="ovSpkUpload">🖼 Upload image…</button>
             <button class="mini" id="ovSpkClip">🎨 Clip art…</button>
             <button class="mini" id="ovSpkLib">📚 Library…</button>
@@ -2403,12 +2404,46 @@ function addTextOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const g=
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 function addImageOverlay(){ pickImage(src=>{ histCommit(); EDL.overlays=EDL.overlays||[]; const o={id:uid(),type:'image',src,scale:0.3,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }); }
-function addSprinkleOverlay(kind){ histCommit(); EDL.overlays=EDL.overlays||[];
+// Rasterize an emoji / symbol string to a transparent PNG using the browser's font fallback chain
+// (covers ✨ ✸ 🐾 𔓘 etc. — same priority order the sparkle preview uses). Trims to glyph bbox,
+// uploads via /api/upload, returns the resulting src path.
+async function bakeEmojiAsPng(emoji){
+  const PX = 256;
+  const cv = document.createElement('canvas'); cv.width = PX; cv.height = PX;
+  const c = cv.getContext('2d');
+  c.font = `${Math.round(PX*0.7)}px "Segoe UI Emoji","Segoe UI Symbol","Segoe UI Historic","Lucida Sans Unicode","Cambria Math","Segoe UI",Arial,sans-serif`;
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(emoji, PX/2, PX/2);
+  // Find the non-transparent bbox so we can trim — avoids huge PNGs with a tiny glyph in the middle.
+  const img = c.getImageData(0, 0, PX, PX); const px = img.data;
+  let minX=PX, minY=PX, maxX=0, maxY=0;
+  for(let y=0; y<PX; y++) for(let x=0; x<PX; x++){
+    if(px[(y*PX+x)*4+3] > 5){
+      if(x<minX) minX=x; if(x>maxX) maxX=x;
+      if(y<minY) minY=y; if(y>maxY) maxY=y;
+    }
+  }
+  if(minX>maxX){ toast('That character didn\'t render in any installed font.'); return null; }
+  const w = maxX-minX+1, h = maxY-minY+1;
+  const out = document.createElement('canvas'); out.width = w; out.height = h;
+  out.getContext('2d').putImageData(c.getImageData(minX, minY, w, h), 0, 0);
+  const dataUri = out.toDataURL('image/png');
+  const safeName = 'emoji_' + Array.from(emoji).map(ch => 'u'+ch.codePointAt(0).toString(16)).join('').slice(0,80) + '.png';
+  const res = await api('/api/upload', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: safeName, data: dataUri})});
+  return (res && res.ok) ? res.src : null;
+}
+async function addSprinkleOverlay(kind){ histCommit(); EDL.overlays=EDL.overlays||[];
   const o={id:uid(),type:'sprinkle',src:'',w:0.7,h:0.7,count:18,size:0.08,jitter:0.4,rotJitter:20,seed:Math.floor(Math.random()*1e6),opacity:1,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead);
   const pick=src=>{ o.src=src; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
   if(kind==='clip') openClipPicker(pick);
   else if(kind==='upload') pickImage(pick);
+  else if(kind==='emoji'){
+    const e = (prompt('Sprinkle emoji / symbol(s):', '✨')||'').trim();
+    if(!e) return;
+    const src = await bakeEmojiAsPng(e);
+    if(src){ o.emoji = e; pick(src); }   // remember the source emoji on the overlay so editor can show what was used
+  }
   else openLibrary(pick);   // default: library
 }
 function addArrowOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const g=brandGrad();
@@ -2425,6 +2460,7 @@ $('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay
 function closeImgMenu(){ $('#ovImgMenu').classList.remove('open'); }
 function closeSpkMenu(){ $('#ovSpkMenu').classList.remove('open'); }
 $('#ovAddSprinkle').onclick=e=>{ e.stopPropagation(); closeImgMenu(); $('#ovSpkMenu').classList.toggle('open'); };
+$('#ovSpkEmoji').onclick=()=>{ closeSpkMenu(); addSprinkleOverlay('emoji'); };
 $('#ovSpkUpload').onclick=()=>{ closeSpkMenu(); addSprinkleOverlay('upload'); };
 $('#ovSpkClip').onclick=()=>{ closeSpkMenu(); addSprinkleOverlay('clip'); };
 $('#ovSpkLib').onclick=()=>{ closeSpkMenu(); addSprinkleOverlay('library'); };
