@@ -849,7 +849,7 @@ def prerender_piececlip(o, W, H, tmp, k):
 def apply_overlays(silent, overlays, W, H, tmp):
     """Composite free-floating text/image/shape overlays over the full timeline (global time),
     preserving list order as z-order (later = on top)."""
-    overlays = [o for o in (overlays or []) if isinstance(o, dict) and o.get("type") in ("text", "image", "shape", "piececlip")]
+    overlays = [o for o in (overlays or []) if isinstance(o, dict) and o.get("type") in ("text", "image", "shape", "piececlip") and not o.get("hidden")]
     if not overlays:
         return silent, None
     overlays = sorted(overlays, key=lambda o: int(o.get("ch", 0) or 0))   # higher channel composited later = on top (stable within a channel)
@@ -954,6 +954,15 @@ def apply_overlays(silent, overlays, W, H, tmp):
             if scale_w:
                 filt.append(f"scale={scale_w}:-1")
             filt.append("format=rgba")
+            # Cycle-hue animation — apply ffmpeg hue=h=<expr> for each cycleHue anim, respecting its tStart/tEnd window
+            for a in (o.get("anims") or []):
+                if a.get("type") != "cycleHue": continue
+                aS = s + max(0.0, float(a.get("tStart", 0) or 0))
+                aEv = a.get("tEnd"); aE = s + min(dur_o, float(aEv)) if (aEv is not None and float(aEv) > 0) else (s + dur_o)
+                if aE <= aS: continue
+                sp = float(a.get("speed", 0.5)); off = float(a.get("offset", 0))
+                expr = "if(between(t,%g,%g),%g+%g*(t-%g),0)" % (aS, aE, off, sp * 360.0, aS)
+                filt.append("hue=h='%s'" % expr)
             static_op = float(o.get("opacity", 1) or 1)   # image overlay's static opacity (text-sticker / shape / sprinkle / arrow bake it into the PNG; only image needs this here)
             if static_op < 0.999:
                 filt.append("colorchannelmixer=aa=%g" % max(0, min(1, static_op)))

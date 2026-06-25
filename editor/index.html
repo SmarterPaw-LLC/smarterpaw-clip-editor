@@ -244,7 +244,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.58.5</span>
+  <span class="ver" id="appVer">v1.59.0</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1147,6 +1147,7 @@ const ANIM_DEFS={
   scaleUp: {label:'Scale up (in)',           png:true, def:{d:0.5,from:0.3},  ctrls:[['d','Seconds','num',0.1,3,0.1],['from','Start size','range',0,1,0.05]]},
   scaleDown:{label:'Scale down (out)',       png:true, def:{d:0.5,to:0},      ctrls:[['d','Seconds','num',0.1,3,0.1],['to','End size','range',0,1,0.05]]},
   scaleBeat:{label:'Scale pulse (up & down)',png:true, def:{amp:0.15,speed:1.5}, ctrls:[['amp','Amount','range',0.02,0.6,0.02],['speed','Speed','range',0.2,5,0.1]]},
+  cycleHue: {label:'Cycle hue',              png:true, def:{speed:0.5,offset:0}, ctrls:[['speed','Rotations / sec','range',0.05,3,0.05],['offset','Start hue','range',0,360,5]]},
   blink:   {label:'Blink',         def:{speed:2},          ctrls:[['speed','Speed','range',0.5,8,0.5]]},
   wiggle:  {label:'Wiggle (rotate)',png:true,def:{amp:8,speed:2},ctrls:[['amp','Degrees','range',1,30,1],['speed','Speed','range',0.2,6,0.2]]},
   gifwobble:{label:'GIF sticker wobble',png:true,def:{fps:8,amp:0.6,speed:2},ctrls:[['fps','Frame rate','range',3,15,1],['amp','Amount','range',0.1,1.5,0.05],['speed','Wobble speed','range',0.5,4,0.1]]},
@@ -1167,7 +1168,7 @@ function sparkleField(a){ const n=Math.max(1,Math.round(a.count||6)), out=[];
 function sparkleOp(t, ph, speed){ return Math.pow(Math.max(0,Math.sin(2*Math.PI*speed*t+ph)),3); }   // sharp twinkle pop
 function _easeOutBack(k){ const c1=1.70158,c3=c1+1; return 1+c3*Math.pow(k-1,3)+c1*Math.pow(k-1,2); }
 // Returns {dx,dy (px in W units), op (0..1), rot (deg), sc (scale)} for overlay o at local time lt.
-function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1; const Tg=Math.max(0,lt);
+function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg=Math.max(0,lt);
   (o.anims||[]).forEach(a=>{
     // Per-animation "plays from / to" window within the overlay; defaults play for the whole overlay.
     const aS=Math.max(0, +a.tStart||0);
@@ -1200,11 +1201,12 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1; const Tg=Math.
     case 'scaleDown': { const d=Math.max(0.01,a.d||0.5), to=(a.to!=null?a.to:0), tail=dw-T;
       if(tail<d){ const k=Math.max(0,tail)/d, ease=1-Math.pow(1-k,3); sc *= to + (1-to)*ease; } break; }
     case 'scaleBeat': { const amp=(a.amp!=null?a.amp:0.15), sp=a.speed||1.5; sc *= 1 + amp*Math.sin(2*Math.PI*sp*T); break; }
+    case 'cycleHue': { const sp=a.speed||0.5, off=a.offset||0; hue += off + sp*360*T; break; }
     case 'reshuffle': { const freq=Math.max(0.2,a.freq||2), amt=(a.amt!=null?a.amt:0.15), st=Math.floor(T*freq), sd=a.seed||1;
       if(a.posX) dx+=_rsHash(st,sd,1.1)*amt*W; if(a.posY) dy+=_rsHash(st,sd,2.3)*amt*W;
       if(a.rot) rot+=_rsHash(st,sd,3.7)*amt*180; if(a.opacity) op*=Math.max(0,1-(_rsHash(st,sd,6.1)*0.5+0.5)*amt*1.4); break; }
   }});
-  return {dx,dy,op:Math.max(0,Math.min(1,op)),rot,sc}; }
+  return {dx,dy,op:Math.max(0,Math.min(1,op)),rot,sc,hue}; }
 function migrateAnims(o){ if(o.anims) return; o.anims=[];   // legacy fadeIn/fadeOut → animation entries
   if(+o.fadeIn>0) o.anims.push({type:'fadeIn',d:+o.fadeIn}); if(+o.fadeOut>0) o.anims.push({type:'fadeOut',d:+o.fadeOut}); }
 // Bubble-sticker text → canvas (ported from the social image tool: offscreen white-stroke shadow,
@@ -1600,8 +1602,8 @@ function renderOverlays(time){
   for(const id in ovShine){ if(!ids.has(id)){ ovShine[id].remove(); delete ovShine[id]; } }
   (EDL.overlays||[]).forEach((o,idx)=>{
     migrateAnims(o);
-    const active = time>=o.start && time < o.start+(+o.dur||0);
-    const visible = active || (ovEdit && o.id===ovSel);
+    const active = !o.hidden && time>=o.start && time < o.start+(+o.dur||0);   // hidden overlays never render
+    const visible = active || (ovEdit && o.id===ovSel && !o.hidden);
     const ekey=(o.type==='text'&&o.style==='sticker')?'sticker':o.type;   // sticker text renders as a baked canvas image
     const wantImg=(ekey==='image'||ekey==='sticker'||ekey==='shape'||ekey==='sprinkle'||ekey==='arrow');     // baked-canvas overlays are <img>; text is <div>
     let el=ovEls[o.id];
@@ -1654,7 +1656,9 @@ function renderOverlays(time){
     el.style.transformOrigin='50% 50%';    // always rotate/scale around the element's own center
     el.style.transform='translate(-50%,-50%) translate('+A.dx.toFixed(2)+'px,'+A.dy.toFixed(2)+'px) rotate('+rotDeg.toFixed(2)+'deg) scale('+(A.sc!=null?A.sc:1).toFixed(3)+')';
     const sh=o.shadow||{};   // sticker bakes its own shadow into the canvas, so no extra CSS filter for it
-    el.style.filter = (ekey!=='sticker' && sh.on) ? `drop-shadow(${(sh.dx!=null?sh.dx:0.004)*W}px ${(sh.dy!=null?sh.dy:0.006)*W}px ${(sh.blur!=null?sh.blur:0.01)*W}px ${hexA(sh.color||'#000000', sh.opacity!=null?sh.opacity:0.5)})` : 'none';
+    const _shFilt = (ekey!=='sticker' && sh.on) ? `drop-shadow(${(sh.dx!=null?sh.dx:0.004)*W}px ${(sh.dy!=null?sh.dy:0.006)*W}px ${(sh.blur!=null?sh.blur:0.01)*W}px ${hexA(sh.color||'#000000', sh.opacity!=null?sh.opacity:0.5)})` : '';
+    const _hueFilt = (A.hue && A.hue!==0) ? `hue-rotate(${A.hue.toFixed(1)}deg)` : '';
+    el.style.filter = [_shFilt,_hueFilt].filter(Boolean).join(' ') || 'none';
     el.style.opacity=active?(A.op*(o.opacity!=null?o.opacity:1)):0;   // static overlay opacity × anim opacity
     if(ovEdit){ el.style.pointerEvents='auto'; el.style.cursor='move'; el.style.outline=(o.id===ovSel)?'2px dashed #5b8cff':'none'; el.style.outlineOffset='3px'; dragify(el,o); }
     else { el.style.pointerEvents='none'; el.style.outline='none'; }
@@ -1663,7 +1667,8 @@ function renderOverlays(time){
   });
   histSchedule();
 }
-function dragify(el,o){ el.onpointerdown=ev=>{ ev.preventDefault(); if(document.activeElement&&document.activeElement.blur)document.activeElement.blur(); histCommit(); ovSel=o.id; _lastPick='ov'; renderOvList(); buildOvEditor();
+function dragify(el,o){ el.onpointerdown=ev=>{ if(o.locked){ ev.stopPropagation(); return; }   // locked: no preview-canvas reposition
+  ev.preventDefault(); if(document.activeElement&&document.activeElement.blur)document.activeElement.blur(); histCommit(); ovSel=o.id; _lastPick='ov'; renderOvList(); buildOvEditor();
   const wrap=$('#stageWrap').getBoundingClientRect(); const TH=0.012;   // center-snap threshold (≈1.2%)
   const move=e=>{ let nx=(e.clientX-wrap.left)/wrap.width, ny=(e.clientY-wrap.top)/wrap.height;
     const sx=Math.abs(nx-0.5)<TH, sy=Math.abs(ny-0.5)<TH; if(sx) nx=0.5; if(sy) ny=0.5;   // snap to center
@@ -2162,11 +2167,31 @@ function renderTracks(){
   positionPlayhead(); histSchedule();
 }
 // Build one overlay bar element on its channel lane (drag to move/retime/change channel).
-function buildOverlayBar(o,total){ const b=document.createElement('div'); b.className='blk ov-'+o.type+(o.id===ovSel?' sel':'')+(_msel.includes(o)?' msel':'');
+function buildOverlayBar(o,total){ const b=document.createElement('div'); b.className='blk ov-'+o.type+(o.id===ovSel?' sel':'')+(_msel.includes(o)?' msel':'')+(o.hidden?' clhidden':'')+(o.locked?' cllocked':'');
   b.style.left=((+o.start||0)/total*100)+'%'; b.style.width=((+o.dur||0)/total*100)+'%';
   b.appendChild(document.createTextNode(o.type==='image'?'🖼 image':(o.type==='shape'?'▭ shape':(o.type==='sprinkle'?'✨ sprinkle':(o.type==='arrow'?('➴ '+(o.subtype||'arrow')):('🅣 '+(o.text||'text')))))));
   const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR'; b.appendChild(hL); b.appendChild(hR);
+  // hide / lock / split icons (same UX as clip blocks)
+  const ic=document.createElement('div'); ic.className='clipicons';
+  const mk=(txt,title,fn)=>{ const el=document.createElement('span'); el.className='cic'; el.textContent=txt; el.title=title;
+    el.onpointerdown=ev=>ev.stopPropagation(); el.onclick=ev=>{ ev.stopPropagation(); fn(); }; return el; };
+  ic.appendChild(mk('⎇','Split this overlay at the playhead', ()=>splitOverlayAtPlayhead(o)));
+  ic.appendChild(mk(o.hidden?'🚫':'👁', o.hidden?'Hidden — click to show':'Click to hide (skips in preview + render)',
+    ()=>{ histCommit(); o.hidden=!o.hidden; renderTimeline(); renderOverlays(playhead); }));
+  ic.appendChild(mk(o.locked?'🔒':'🔓', o.locked?'Locked — click to unlock':'Click to lock (prevents drag/resize)',
+    ()=>{ histCommit(); o.locked=!o.locked; renderTimeline(); }));
+  b.appendChild(ic);
   ovBarInteract(b,hL,hR,o,total); return b; }
+// Split an overlay at the playhead into two overlays (same model as splitAtPlayhead for clips).
+function splitOverlayAtPlayhead(o){
+  if(!o) return; if(o.locked){ toast('Unlock the overlay first (🔒)'); return; }
+  const s=+o.start||0, d=+o.dur||0, ph=playhead||0, eps=0.06;
+  if(ph<=s+eps || ph>=s+d-eps){ toast('Move the playhead inside this overlay, then split'); return; }
+  histCommit();
+  const second=JSON.parse(JSON.stringify(o)); second.id=uid(); second.start=ph; second.dur=(s+d)-ph;
+  o.dur=ph-s;
+  EDL.overlays.push(second); ovSel=o.id; renderTimeline(); renderOvList(); buildOvEditor(); renderOverlays(playhead); toast('Overlay split at playhead');
+}
 // Build one clip block element for a layout entry `o` (handles base vs upper-channel behavior).
 function buildClipBlock(o,total){ const i=o.idx, sg=o.seg;
   const b=document.createElement('div'); b.className='blk clip'+(i===sel?' sel':'')+(_msel.includes(sg)?' msel':'')+(o.ch===0&&sg.editMode==='free'?' free':'')+(sg.hidden?' clhidden':'')+(sg.locked?' cllocked':'');
@@ -2337,7 +2362,8 @@ function ovBarInteract(b,hL,hR,o,total){
       const upg=()=>{ window.removeEventListener('pointermove',mvg); window.removeEventListener('pointerup',upg); if(ovEdit){ renderOvList(); buildOvEditor(); } };
       window.addEventListener('pointermove',mvg); window.addEventListener('pointerup',upg); }
   }, true);   // capture so it runs before the move-drag handler
-  const drag=mode=>ev=>{ if(ev.shiftKey||ev.ctrlKey||ev.metaKey||(_msel.includes(o)&&_msel.length>1&&mode==='move')) return;   // handled above
+  const drag=mode=>ev=>{ if(o.locked){ ev.stopPropagation(); return; }   // locked overlays don't move/resize
+    if(ev.shiftKey||ev.ctrlKey||ev.metaKey||(_msel.includes(o)&&_msel.length>1&&mode==='move')) return;   // handled above
     ev.stopPropagation(); ev.preventDefault(); histCommit(); ovSel=o.id; _lastPick='ov'; const x0=ev.clientX, y0=ev.clientY, s0=o.start, d0=+o.dur||0, w=areaW();
     const th=Math.max(0.12, total*0.012); let moved=false;   // snap threshold; moved guards accidental nudges on a click
     const mv=e=>{ if(mode==='move' && !moved && Math.abs(e.clientX-x0)<4 && Math.abs(e.clientY-y0)<4) return; moved=true;
