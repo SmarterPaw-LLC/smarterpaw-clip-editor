@@ -1253,6 +1253,8 @@ def flatten_segments(edl):
     for i, s in enumerate(segs):
         if int(s.get("ch", 0) or 0) != 0:
             continue
+        if s.get("hidden"):                # hidden ch0 clips don't occupy time — timeline compacts (consistent with overlay/audio hidden)
+            continue
         g = max(0.0, float(s.get("gap", 0) or 0))
         d = _tl(s)
         base.append({"i": i, "s": s, "ch": 0, "start": acc + g, "end": acc + g + d})
@@ -1261,6 +1263,8 @@ def flatten_segments(edl):
     for i, s in enumerate(segs):
         ch = int(s.get("ch", 0) or 0)
         if ch == 0:
+            continue
+        if s.get("hidden"):                # hidden upper-channel clips don't enter the per-time ranking at all
             continue
         t0 = max(0.0, float(s.get("t0", 0) or 0))
         d = _tl(s)

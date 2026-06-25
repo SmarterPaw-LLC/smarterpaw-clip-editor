@@ -301,7 +301,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.63.2</span>
+  <span class="ver" id="appVer">v1.63.3</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1888,6 +1888,7 @@ function buildArrowCanvas(o){
 async function bakeStickersForRender(edl){
   const out=[];
   for(const o of (edl.overlays||[])){
+    if(o.hidden) continue;   // hidden overlays never render — skip baking too (preview already hides them)
     if(o.type==='text' && o.style==='sticker' && (o.text||'').trim()){
       try{ const r=buildStickerCanvas(o); const data=r.canvas.toDataURL('image/png');
         const up=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'sticker_'+o.id+'.png',data})});
