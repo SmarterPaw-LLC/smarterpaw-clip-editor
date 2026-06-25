@@ -34,7 +34,57 @@ ENC = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv4
 ENDCARD_DUR = 2.6
 ID_RE = re.compile(r"\[([A-Za-z0-9_-]{11})\]")
 
-_probe_cache = {}
+_probe_cache = {}                                  # in-memory: {path: (dur,w,h)}
+_probe_disk = {}                                   # disk-mirrored: {path: {mtime,size,dur,w,h}}
+_probe_dirty = False
+_probe_cache_lock = threading.Lock()
+PROBE_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_probe_cache.json")
+def _probe_cache_load():
+    try:
+        if os.path.exists(PROBE_CACHE_FILE):
+            with open(PROBE_CACHE_FILE, encoding="utf-8") as f:
+                d = json.load(f) or {}
+            if isinstance(d, dict):
+                _probe_disk.update(d)
+    except Exception:
+        pass
+def _probe_cache_save():
+    global _probe_dirty
+    if not _probe_dirty: return
+    try:
+        tmp = PROBE_CACHE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_probe_disk, f)
+        os.replace(tmp, PROBE_CACHE_FILE)
+        _probe_dirty = False
+    except Exception:
+        pass
+_probe_cache_load()
+
+# --- Clip tags (free-form, comma-separated, persisted in editor/clip_tags.json) ---
+CLIP_TAGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clip_tags.json")
+_clip_tags_cache = None
+def load_clip_tags():
+    global _clip_tags_cache
+    if _clip_tags_cache is not None: return _clip_tags_cache
+    try:
+        if os.path.exists(CLIP_TAGS_FILE):
+            d = json.load(open(CLIP_TAGS_FILE, encoding="utf-8")) or {}
+            if isinstance(d, dict):
+                _clip_tags_cache = {k: [str(t) for t in (v or []) if t] for k, v in d.items()}
+                return _clip_tags_cache
+    except Exception: pass
+    _clip_tags_cache = {}
+    return _clip_tags_cache
+def save_clip_tags(d):
+    global _clip_tags_cache
+    _clip_tags_cache = {k: sorted(set(str(t).strip() for t in (v or []) if str(t).strip())) for k, v in (d or {}).items()}
+    _clip_tags_cache = {k: v for k, v in _clip_tags_cache.items() if v}   # drop empty
+    tmp = CLIP_TAGS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(_clip_tags_cache, f, indent=2, sort_keys=True)
+    os.replace(tmp, CLIP_TAGS_FILE)
+
 _manifest_lock = threading.Lock()
 _render_jobs = {}            # job_id -> {stage, pct, done, result}
 _render_lock = threading.Lock()
@@ -46,8 +96,20 @@ def run(cmd):
 
 
 def probe(path):
+    global _probe_dirty
     if path in _probe_cache:
         return _probe_cache[path]
+    # Disk cache hit if (mtime,size) match — survives server restarts. Cold startup of a project
+    # with many clips used to be one ffprobe per file (slow); now it's all O(1) reads after first run.
+    try:
+        st = os.stat(path)
+        ent = _probe_disk.get(path)
+        if ent and ent.get("mtime") == int(st.st_mtime) and ent.get("size") == st.st_size:
+            t = (float(ent["dur"]), int(ent["w"]), int(ent["h"]))
+            _probe_cache[path] = t
+            return t
+    except OSError:
+        st = None
     r = run([FFPROBE, "-v", "error", "-show_entries", "format=duration:stream=codec_type,width,height",
              "-of", "json", path])
     dur, w, h = 0.0, 0, 0
@@ -61,6 +123,11 @@ def probe(path):
     except Exception:
         pass
     _probe_cache[path] = (dur, w, h)
+    if st is not None:
+        with _probe_cache_lock:
+            _probe_disk[path] = {"mtime": int(st.st_mtime), "size": st.st_size,
+                                 "dur": dur, "w": w, "h": h}
+            _probe_dirty = True
     return _probe_cache[path]
 
 
@@ -96,8 +163,9 @@ def product_brand(product, brand_map=None):
 
 
 def scan_sources():
-    """Return list of clips: {id,label,product,brand,url,dur,w,h}."""
+    """Return list of clips: {id,label,product,brand,url,dur,w,h,tags}."""
     bm = load_brand_map()
+    tags_map = load_clip_tags()
     clips = []
     for root, _dirs, files in os.walk(SRC_ROOT):
         for fn in files:
@@ -116,10 +184,12 @@ def scan_sources():
             label = re.sub(r"\s+", " ", label)[:60] or fn
             clips.append({"id": cid, "label": label, "product": product, "brand": product_brand(product, bm),
                           "url": "/" + urllib.parse.quote(rel), "file": full,
-                          "dur": round(dur, 2), "w": w, "h": h})
+                          "dur": round(dur, 2), "w": w, "h": h,
+                          "tags": tags_map.get(cid, [])})
     # sort by brand → product → label so the bin groups naturally
     brand_ord = {b: i for i, b in enumerate(BRAND_KEYS)}
     clips.sort(key=lambda c: (brand_ord.get(c["brand"], 99), c["product"], c["label"]))
+    _probe_cache_save()                            # persist any new probes from this scan
     return clips
 
 
@@ -288,7 +358,8 @@ def create_ai_build(name, clip_ids, canvas, length, brief):
             continue
         chosen.append({"id": c["id"], "label": c["label"], "product": c["product"],
                        "source": os.path.relpath(c["file"], PROJ).replace("\\", "/"),
-                       "url": c["url"], "dur": c["dur"], "w": c["w"], "h": c["h"]})
+                       "url": c["url"], "dur": c["dur"], "w": c["w"], "h": c["h"],
+                       "tags": c.get("tags") or []})
     if not chosen:
         return {"ok": False, "log": "None of the selected clips were found."}
     now = datetime.datetime.now()
@@ -1541,6 +1612,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "log": repr(e)}, 500)
             _probe_cache.pop(src, None)
             return self._json({"ok": True, "category": cat})
+        if path == "/api/clip/tags":      # set the tag list for ONE clip (replaces existing tags)
+            cid = (data.get("id") or "").strip()
+            tags = data.get("tags") or []
+            if not cid:
+                return self._json({"ok": False, "log": "id required"}, 400)
+            tm = dict(load_clip_tags())
+            tm[cid] = [str(t).strip() for t in tags if str(t).strip()]
+            if not tm[cid]:
+                tm.pop(cid, None)
+            save_clip_tags(tm)
+            return self._json({"ok": True, "id": cid, "tags": load_clip_tags().get(cid, [])})
         if path == "/api/clip/setbrand":   # set the brand of a PRODUCT folder; all clips in it inherit
             product = (data.get("product") or "").strip()
             brand = (data.get("brand") or "").strip().lower()
