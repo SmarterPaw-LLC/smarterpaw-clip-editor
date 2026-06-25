@@ -707,21 +707,38 @@ def _sparkle_field(a):
 
 
 _FONT_CMAP_CACHE = {}
+_FONT_TOOLS_OK = None   # None = untested, True = importable, False = missing
 def _font_has_char(font_path, codepoint):
-    """True iff the font's cmap actually has a glyph for this codepoint (not just .notdef tofu)."""
+    """True iff the font's cmap actually maps this codepoint to a real glyph (not .notdef).
+    Handles .ttc collections (opens face #0) and is conservative: if a font file can't be
+    parsed, we treat it as having NOTHING (skip it) so we don't pick it and render tofu."""
+    global _FONT_TOOLS_OK
+    if _FONT_TOOLS_OK is None:
+        try:
+            import fontTools.ttLib   # noqa: F401
+            _FONT_TOOLS_OK = True
+        except Exception:
+            _FONT_TOOLS_OK = False
+    if not _FONT_TOOLS_OK:
+        return True                              # no way to check → preserve old assume-yes behavior
     cm = _FONT_CMAP_CACHE.get(font_path)
     if cm is None:
         cm = set()
         try:
-            from fontTools.ttLib import TTFont
-            tt = TTFont(font_path, lazy=True)
+            from fontTools.ttLib import TTFont, TTLibFileIsCollectionError
+            try:
+                tt = TTFont(font_path, lazy=True)
+            except TTLibFileIsCollectionError:   # .ttc → open the first face explicitly
+                tt = TTFont(font_path, lazy=True, fontNumber=0)
             for table in tt["cmap"].tables:
-                cm.update(table.cmap.keys())
+                for cp, glyph_name in table.cmap.items():
+                    if glyph_name and glyph_name != ".notdef":
+                        cm.add(cp)
             tt.close()
         except Exception:
-            cm = None                              # fontTools missing → assume the font has everything
+            cm = set()                           # unreadable → skip this font (don't false-positive)
         _FONT_CMAP_CACHE[font_path] = cm
-    return True if cm is None else (codepoint in cm)
+    return codepoint in cm
 
 
 def _emoji_png(emoji, out, px=256):
