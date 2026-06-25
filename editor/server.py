@@ -731,13 +731,15 @@ def _emoji_png(emoji, out, px=256):
     So "˗ˏˋ ✸ ˎˊ˗" renders the modifier marks via Lucida/Cambria and the star via emoji font."""
     from PIL import Image, ImageDraw, ImageFont
     candidates = [
-        ("C:/Windows/Fonts/seguiemj.ttf",      True),    # color emoji (✨ 🎉 ⭐)
-        ("C:/Windows/Fonts/seguisym.ttf",      False),   # Segoe UI Symbol (✸ ✶ ⋆ ★)
-        ("C:/Windows/Fonts/l_10646.ttf",       False),   # Lucida Sans Unicode (modifier letters ˗ˏˋ)
-        ("C:/Windows/Fonts/lucon.ttf",         False),   # Lucida Console (broad coverage fallback)
-        ("C:/Windows/Fonts/cambria.ttc",       False),   # Cambria (broad symbol coverage)
-        ("C:/Windows/Fonts/segoeui.ttf",       False),
-        ("C:/Windows/Fonts/arial.ttf",         False),
+        ("C:/Windows/Fonts/seguiemj.ttf",         True),    # color emoji (✨ 🎉 ⭐)
+        ("C:/Windows/Fonts/seguisym.ttf",         False),   # Segoe UI Symbol (✸ ✶ ⋆ ★)
+        ("C:/Windows/Fonts/seguihis.ttf",         False),   # Segoe UI Historic (many ancient scripts)
+        ("C:/Windows/Fonts/l_10646.ttf",          False),   # Lucida Sans Unicode (modifier letters ˗ˏˋ)
+        ("C:/Windows/Fonts/lucon.ttf",            False),   # Lucida Console (broad coverage fallback)
+        ("C:/Windows/Fonts/cambria.ttc",          False),   # Cambria (broad symbol coverage)
+        ("C:/Windows/Fonts/SansSerifCollection.ttf", False), # Win11 sans-serif COLLECTION — catch-all for rare planes (Anatolian Hieroglyphs etc.)
+        ("C:/Windows/Fonts/segoeui.ttf",          False),
+        ("C:/Windows/Fonts/arial.ttf",            False),
     ]
     fonts = []
     for path, is_color in candidates:
