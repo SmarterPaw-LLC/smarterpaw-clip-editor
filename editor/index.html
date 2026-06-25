@@ -301,7 +301,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.62.9</span>
+  <span class="ver" id="appVer">v1.63.0</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -801,6 +801,11 @@ const BIN_COLLAPSE_KEY='scl_bin_collapsed';
 function _binCollapsed(){ try{ return new Set(JSON.parse(localStorage.getItem(BIN_COLLAPSE_KEY)||'[]')); }catch(_){ return new Set(); } }
 function _binSaveCollapsed(s){ try{ localStorage.setItem(BIN_COLLAPSE_KEY, JSON.stringify([...s])); }catch(_){} }
 function _binToggle(key, el){ const s=_binCollapsed(); if(s.has(key)){ s.delete(key); el.classList.remove('collapsed'); } else { s.add(key); el.classList.add('collapsed'); } _binSaveCollapsed(s); }
+// Clip-manager collapse state (separate from bin so the two views can be folded independently)
+const MGR_COLLAPSE_KEY='scl_mgr_collapsed';
+function _mgrCollapsed(){ try{ return new Set(JSON.parse(localStorage.getItem(MGR_COLLAPSE_KEY)||'[]')); }catch(_){ return new Set(); } }
+function _mgrSaveCollapsed(s){ try{ localStorage.setItem(MGR_COLLAPSE_KEY, JSON.stringify([...s])); }catch(_){} }
+function _mgrToggle(key, el){ const s=_mgrCollapsed(); if(s.has(key)){ s.delete(key); el.classList.remove('collapsed'); } else { s.add(key); el.classList.add('collapsed'); } _mgrSaveCollapsed(s); }
 // Collect the union of every tag currently in use across all clips (for the autocomplete popover).
 function allKnownTags(){ const s=new Set(); (MAN.clips||[]).forEach(c=>(c.tags||[]).forEach(t=>s.add(t))); return [...s].sort(); }
 // Tag picker popover: shown when user clicks "+ tag". Lets them pick from existing tags OR type a new one.
@@ -2958,70 +2963,101 @@ function renderClipMgr(){
   const list=MAN.clips.filter(c=>_clipMatchesQuery(c, q));
   $('#mgrCount').textContent=list.length+' / '+MAN.clips.length;
   box.innerHTML='';
-  // group by brand → product so the Manage view matches the bin layout
-  let curBrand='', curProd='';
-  list.forEach(c=>{ const br=clipBrand(c);
-    if(br!==curBrand){ curBrand=br; curProd=''; const bh=document.createElement('div'); bh.className='brandgrp'; bh.style.padding='10px 0 2px'; bh.textContent=BRAND_LABELS[br]||br; box.appendChild(bh); }
-    if(c.product!==curProd){ curProd=c.product;   // product header with per-product brand dropdown (changes all clips in this folder)
-      // Compute whether this product's folder is already at the expected path (sources/clips/<brand>/<product>/)
-      // so we can flag "out of place" with an orange highlight on the Update folder button.
-      const expectedPrefix = '/sources/clips/'+br+'/'+c.product+'/';
-      const inPlace = (c.url||'').indexOf(expectedPrefix) === 0;
-      const ph=document.createElement('div'); ph.style.cssText='display:flex;align-items:center;gap:8px;padding:6px 4px;font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.4px';
-      ph.innerHTML=`<span style="color:var(--acc)">${c.product}</span><button class="mini" data-act="rename-cat" title="Rename this category (renames the folder)">✏</button><span style="flex:1"></span><span>brand:</span>`;
-      ph.querySelector('[data-act="rename-cat"]').onclick=async()=>{
-        const old=c.product;
-        const nw=(prompt('Rename category "'+old+'" to:', old)||'').trim().toLowerCase().replace(/[^a-z0-9_-]/g,'');
+  const collapsed = _mgrCollapsed(), filterActive = !!q;   // active search forces everything open so matches stay visible
+  // Pre-group by brand → product → clips so headers can show counts
+  const byBrand = {};
+  list.forEach(c=>{ const br=clipBrand(c); (byBrand[br]=byBrand[br]||{}); (byBrand[br][c.product]=byBrand[br][c.product]||[]).push(c); });
+  const brandOrder = BRAND_ORDER.concat(Object.keys(byBrand).filter(b=>!BRAND_ORDER.includes(b)));
+  brandOrder.forEach(br=>{
+    const prods = byBrand[br]; if(!prods) return;
+    const bk = 'mb:'+br, brandCount = Object.values(prods).reduce((a,b)=>a+b.length, 0);
+    const brandBox = document.createElement('div'); brandBox.className = 'brandbox'+((!filterActive && collapsed.has(bk))?' collapsed':'');
+    const brandHd  = document.createElement('div'); brandHd.className = 'brandgrp'; brandHd.style.cursor = 'pointer';
+    brandHd.innerHTML = `<span class="cr">▾</span><span>${BRAND_LABELS[br]||br}</span><span class="ct">${brandCount}</span>`;
+    brandHd.onclick = () => _mgrToggle(bk, brandBox);
+    brandBox.appendChild(brandHd);
+    const brandBody = document.createElement('div'); brandBody.className = 'grpbody'; brandBox.appendChild(brandBody);
+    Object.keys(prods).sort().forEach(prod=>{
+      const arr = prods[prod]; const c0 = arr[0];   // representative clip for product-level metadata
+      const pk = 'mb:'+br+'/p:'+prod;
+      const prodBox = document.createElement('div'); prodBox.className = 'prodbox'+((!filterActive && collapsed.has(pk))?' collapsed':'');
+      // Product header: collapsible chevron + name + ✏ rename + brand dropdown + 📁 update folder + count
+      const expectedPrefix = '/sources/clips/'+br+'/'+prod+'/';
+      const inPlace = (c0.url||'').indexOf(expectedPrefix) === 0;
+      const prodHd = document.createElement('div'); prodHd.className = 'grp'; prodHd.style.cursor = 'pointer';
+      prodHd.style.cssText += ';display:flex;align-items:center;gap:8px;padding:6px 4px;font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.4px';
+      prodHd.innerHTML = `<span class="cr">▾</span><span style="color:var(--acc)">${prod}</span><span class="ct" style="margin-left:auto;background:var(--panel2);padding:0 6px;border-radius:8px">${arr.length}</span>`;
+      prodHd.onclick = () => _mgrToggle(pk, prodBox);
+      // Rename + brand + update-folder controls (each stops propagation so it doesn't trigger collapse)
+      const stop = el => { el.onpointerdown = e => e.stopPropagation(); el.addEventListener('click', e => e.stopPropagation()); return el; };
+      const renameBtn = document.createElement('button'); renameBtn.className='mini'; renameBtn.textContent='✏'; renameBtn.title='Rename this category (renames the folder)';
+      stop(renameBtn);
+      renameBtn.onclick = async () => {
+        const old = prod;
+        const nw = (prompt('Rename category "'+old+'" to:', old)||'').trim().toLowerCase().replace(/[^a-z0-9_-]/g,'');
         if(!nw || nw===old) return;
-        $('#mgrStatus').textContent='Renaming category…';
-        const r=await api('/api/clip/rename-category',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({old, new:nw})});
-        if(r&&r.ok){ await boot(true); renderClipMgr(); const msg = r.renamed===false?('Already named '+nw):('Renamed "'+old+'" → "'+nw+'"'); $('#mgrStatus').textContent=msg; toast(msg); }
-        else { const msg='Rename failed: '+((r&&r.log)||'error'); $('#mgrStatus').textContent=msg; toast(msg); }
+        $('#mgrStatus').textContent = 'Renaming category…';
+        const r = await api('/api/clip/rename-category',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({old, new:nw})});
+        if(r&&r.ok){ await boot(true); renderClipMgr(); const msg = r.renamed===false ? ('Already named '+nw) : ('Renamed "'+old+'" → "'+nw+'"'); $('#mgrStatus').textContent = msg; toast(msg); }
+        else { const msg = 'Rename failed: '+((r&&r.log)||'error'); $('#mgrStatus').textContent = msg; toast(msg); }
       };
-      const bsel=document.createElement('select'); bsel.title='Set brand for ALL clips in this product folder';
+      prodHd.appendChild(renameBtn);
+      const brandLbl = document.createElement('span'); brandLbl.textContent = 'brand:'; brandLbl.style.marginLeft = '6px'; prodHd.appendChild(brandLbl);
+      const bsel = document.createElement('select'); bsel.title='Set brand for ALL clips in this product folder';
       BRAND_ORDER.forEach(b=>{ const o=document.createElement('option'); o.value=b; o.textContent=BRAND_LABELS[b]||b; if(b===br)o.selected=true; bsel.appendChild(o); });
-      bsel.onchange=()=>{ $('#mgrStatus').textContent='Updating brand for '+c.product+'…'; setProductBrand(c.product, bsel.value); };
-      ph.appendChild(bsel);
-      // 📁 Update folder — force-syncs the on-disk folder to <brand>/<product>/ even when the brand
-      // dropdown wouldn't have fired (re-selecting the same value doesn't trigger onchange). Highlighted
-      // orange when the folder isn't already where it should be.
-      const upd=document.createElement('button'); upd.className='mini'; upd.textContent='📁 Update folder';
-      upd.title = inPlace ? 'Already at sources/clips/'+br+'/'+c.product+'/' : 'Move this folder to sources/clips/'+br+'/'+c.product+'/';
+      bsel.onchange = () => { $('#mgrStatus').textContent = 'Updating brand for '+prod+'…'; setProductBrand(prod, bsel.value); };
+      stop(bsel); prodHd.appendChild(bsel);
+      const upd = document.createElement('button'); upd.className='mini'; upd.textContent='📁 Update folder';
+      upd.title = inPlace ? 'Already at sources/clips/'+br+'/'+prod+'/' : 'Move this folder to sources/clips/'+br+'/'+prod+'/';
       if(!inPlace){ upd.style.background='var(--acc, #f0a830)'; upd.style.color='#1b1d22'; upd.style.fontWeight='600'; }
-      upd.onclick=()=>{ $('#mgrStatus').textContent='Updating folder for '+c.product+'…'; setProductBrand(c.product, br); };
-      ph.appendChild(upd);
-      box.appendChild(ph); }
-    const row=document.createElement('div'); row.className='mgrrow';
-    const tagsHtml = (c.tags||[]).map(t=>`<span class="tag" data-t="${t.replace(/"/g,'&quot;')}" title="Click to remove">${t}</span>`).join('');
-    row.innerHTML=`<span class="thumbwrap"><img src="${c.thumb}" loading="lazy"></span><div class="meta"><b>${(c.label||c.id).replace(/</g,'&lt;')}</b><span>${c.product} · ${fmt(c.dur)}s · ${c.w}×${c.h}</span>
-      <div class="tags">${tagsHtml}<span class="tagadd" title="Add tag">+ tag</span></div></div>`;
-    wirePreviewableThumb(row.querySelector('.thumbwrap'), c);
-    row.querySelectorAll('.tag').forEach(chip=>{ chip.onclick=ev=>{ ev.stopPropagation(); const tag=chip.dataset.t; saveClipTags(c.id, (c.tags||[]).filter(t=>t!==tag)); }; });
-    const addBtn=row.querySelector('.tagadd'); if(addBtn) addBtn.onclick=ev=>{ ev.stopPropagation(); openTagPicker(addBtn, c); };
-    const sel=document.createElement('select'); sel.className='mgrcat'; sel.title='Category (moves the file)';
-    cats.forEach(cat=>{ const o=document.createElement('option'); o.value=cat; o.textContent=cat; if(cat===c.product)o.selected=true; sel.appendChild(o); });
-    const nw=document.createElement('option'); nw.value='__new__'; nw.textContent='➕ New category…'; sel.appendChild(nw);
-    sel.onchange=async()=>{ let cat=sel.value;
-      if(cat==='__new__'){ cat=(prompt('New category name:','')||'').trim().toLowerCase().replace(/[^a-z0-9_-]/g,''); if(!cat){ renderClipMgr(); return; } }
-      if(cat===c.product){ return; }
-      $('#mgrStatus').textContent='Moving “'+(c.label||c.id)+'” → '+cat+'…';
-      const r=await api('/api/clip/recat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:c.id,category:cat})});
-      if(r&&r.ok){ await boot(true); renderClipMgr();
-        const path = 'sources/clips/'+(r.brand||'?')+'/'+(r.category||cat)+'/';
-        $('#mgrStatus').textContent='Moved to ' + path;
-        toast('Moved to '+path); }
-      else { $('#mgrStatus').textContent='Move failed: '+((r&&r.log)||'error'); renderClipMgr(); }
-    };
-    row.appendChild(sel);
-    const del=document.createElement('button'); del.className='mini'; del.textContent='🗑'; del.title='Delete clip (permanent)';
-    del.onclick=async()=>{ if(!confirm('Delete “'+(c.label||c.id)+'” permanently? This removes the file from disk.')) return;
-      $('#mgrStatus').textContent='Deleting…';
-      const r=await api('/api/clip/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:c.id})});
-      if(r&&r.ok){ await boot(true); renderClipMgr(); $('#mgrStatus').textContent='Deleted.'; }
-      else { $('#mgrStatus').textContent='Delete failed: '+((r&&r.log)||'error'); }
-    };
-    row.appendChild(del); box.appendChild(row);
+      upd.onclick = () => { $('#mgrStatus').textContent = 'Updating folder for '+prod+'…'; setProductBrand(prod, br); };
+      stop(upd); prodHd.appendChild(upd);
+      prodBox.appendChild(prodHd);
+      const prodBody = document.createElement('div'); prodBody.className = 'grpbody'; prodBox.appendChild(prodBody);
+      // Render each clip row into the collapsible body
+      arr.forEach(c => prodBody.appendChild(_buildMgrRow(c, cats)));
+      brandBody.appendChild(prodBox);
+    });
+    box.appendChild(brandBox);
   });
+}
+// One mgrrow per clip — extracted so the new collapsible structure stays readable.
+function _buildMgrRow(c, cats){
+  const row = document.createElement('div'); row.className = 'mgrrow';
+  const tagsHtml = (c.tags||[]).map(t=>`<span class="tag" data-t="${t.replace(/"/g,'&quot;')}" title="Click to remove">${t}</span>`).join('');
+  row.innerHTML = `<span class="thumbwrap"><img src="${c.thumb}" loading="lazy"></span><div class="meta"><b>${(c.label||c.id).replace(/</g,'&lt;')}</b><span>${c.product} · ${fmt(c.dur)}s · ${c.w}×${c.h}</span>
+    <div class="tags">${tagsHtml}<span class="tagadd" title="Add tag">+ tag</span></div></div>`;
+  wirePreviewableThumb(row.querySelector('.thumbwrap'), c);
+  row.querySelectorAll('.tag').forEach(chip=>{ chip.onclick=ev=>{ ev.stopPropagation(); const tag=chip.dataset.t; saveClipTags(c.id, (c.tags||[]).filter(t=>t!==tag)); }; });
+  const addBtn = row.querySelector('.tagadd'); if(addBtn) addBtn.onclick = ev => { ev.stopPropagation(); openTagPicker(addBtn, c); };
+  return _appendMgrRowControls(row, c, cats);
+}
+function _appendMgrRowControls(row, c, cats){
+  // Per-row controls: category dropdown (= recat the clip's file) + delete.
+  const sel=document.createElement('select'); sel.className='mgrcat'; sel.title='Category (moves the file)';
+  cats.forEach(cat=>{ const o=document.createElement('option'); o.value=cat; o.textContent=cat; if(cat===c.product)o.selected=true; sel.appendChild(o); });
+  const nw=document.createElement('option'); nw.value='__new__'; nw.textContent='➕ New category…'; sel.appendChild(nw);
+  sel.onchange=async()=>{ let cat=sel.value;
+    if(cat==='__new__'){ cat=(prompt('New category name:','')||'').trim().toLowerCase().replace(/[^a-z0-9_-]/g,''); if(!cat){ renderClipMgr(); return; } }
+    if(cat===c.product){ return; }
+    $('#mgrStatus').textContent='Moving “'+(c.label||c.id)+'” → '+cat+'…';
+    const r=await api('/api/clip/recat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:c.id,category:cat})});
+    if(r&&r.ok){ await boot(true); renderClipMgr();
+      const path = 'sources/clips/'+(r.brand||'?')+'/'+(r.category||cat)+'/';
+      $('#mgrStatus').textContent='Moved to ' + path;
+      toast('Moved to '+path); }
+    else { $('#mgrStatus').textContent='Move failed: '+((r&&r.log)||'error'); renderClipMgr(); }
+  };
+  row.appendChild(sel);
+  const del=document.createElement('button'); del.className='mini'; del.textContent='🗑'; del.title='Delete clip (permanent)';
+  del.onclick=async()=>{ if(!confirm('Delete “'+(c.label||c.id)+'” permanently? This removes the file from disk.')) return;
+    $('#mgrStatus').textContent='Deleting…';
+    const r=await api('/api/clip/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:c.id})});
+    if(r&&r.ok){ await boot(true); renderClipMgr(); $('#mgrStatus').textContent='Deleted.'; }
+    else { $('#mgrStatus').textContent='Delete failed: '+((r&&r.log)||'error'); }
+  };
+  row.appendChild(del);
+  return row;
 }
 $('#btnMngClips').onclick=openClipMgr; $('#mgrClose').onclick=closeClipMgr;
 $('#mgrFilter').oninput=renderClipMgr;
