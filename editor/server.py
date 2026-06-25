@@ -594,12 +594,8 @@ def build_sticker_png(o, W, H, out):
     d.text((px, py), text, font=font, fill=(255, 255, 255, 255),
            stroke_width=outline, stroke_fill=(255, 255, 255, 255))   # white sticker outline + base
     grad = _gradient_rgba(cw, ch, g_from, g_to, float(o.get("gradAngle", 180)), o.get("gradType", "linear"), 255)
-    # mask = glyph + a thinner inner stroke so the gap between i-dot and stem (and other multi-part glyphs) gets gradient too,
-    # matching the canvas pass-4 stroke. Inner stroke is < the white outline so a visible white edge still remains.
-    inner = max(1, int(round(outline * 0.8)))
     mask = Image.new("L", (cw, ch), 0)
-    ImageDraw.Draw(mask).text((px, py), text, font=font, fill=255,
-                              stroke_width=inner, stroke_fill=255)
+    ImageDraw.Draw(mask).text((px, py), text, font=font, fill=255)   # glyph interior only (no stroke)
     img.paste(grad, (0, 0), mask)
     so = dict(o.get("shadow") or {})
     if not so.get("on"):                                  # default sticker pop shadow if none set
