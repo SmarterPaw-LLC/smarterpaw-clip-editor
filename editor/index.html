@@ -158,6 +158,10 @@
   .mgrrow .tag:hover { background:#4a3f1a; color:#fff; }
   .mgrrow .tagadd { background:transparent; color:var(--mut); border:1px dashed #3a3e48; padding:0 6px; border-radius:8px; font-size:10px; cursor:pointer; line-height:16px; }
   .mgrrow .tagadd:hover { color:#fff; border-color:var(--acc, #f0a830); }
+  #cpvMeta .tag { background:#2d3140; color:#cde; border:1px solid #3a3e48; padding:0 6px; border-radius:8px; font-size:10px; cursor:pointer; line-height:16px; }
+  #cpvMeta .tag:hover { background:#4a3f1a; color:#fff; }
+  #cpvMeta .tagadd { background:transparent; color:var(--mut); border:1px dashed #3a3e48; padding:0 6px; border-radius:8px; font-size:10px; cursor:pointer; line-height:16px; }
+  #cpvMeta .tagadd:hover { color:#fff; border-color:var(--acc, #f0a830); }
   .mgrrow .mgrcat { flex:none; max-width:140px; }
   .ovdrop { position:relative; display:inline-block; }
   .ovmenu { display:none; position:absolute; top:100%; left:0; z-index:20; margin-top:3px; background:var(--panel2,#222); border:1px solid var(--line); border-radius:8px; padding:4px; min-width:150px; box-shadow:0 6px 20px #0008; }
@@ -297,7 +301,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.62.8</span>
+  <span class="ver" id="appVer">v1.62.9</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -869,18 +873,30 @@ function wirePreviewableThumb(wrap, clip){
   btn.onclick = ev => { ev.stopPropagation(); openClipPreviewModal(clip); };
 }
 let _cpvAddId = null;
+// Re-render the modal's metadata row for a given clip. Called when the modal opens AND whenever
+// the open clip's tags change (so the chips stay in sync without the user having to close + reopen).
+function renderCpvMeta(clip){
+  const meta = document.getElementById('cpvMeta'); if(!meta) return;
+  const tagsHtml = (clip.tags||[]).map(t=>`<span class="tag" data-t="${t.replace(/"/g,'&quot;')}" title="Click to remove">${t}</span>`).join('');
+  meta.innerHTML = `<span><b style="color:#cde">brand:</b> ${BRAND_LABELS[clipBrand(clip)]||clipBrand(clip)}</span>
+    <span><b style="color:#cde">category:</b> ${clip.product}</span>
+    <span><b style="color:#cde">duration:</b> ${fmt(clip.dur)}s</span>
+    <span><b style="color:#cde">size:</b> ${clip.w}×${clip.h}</span>
+    <span style="display:flex;align-items:center;flex-wrap:wrap;gap:4px"><b style="color:#cde">tags:</b>
+      <span class="cpvtags" style="display:flex;flex-wrap:wrap;gap:3px">${tagsHtml}</span>
+      <span class="tagadd" title="Add tag (opens picker with existing tags)">+ tag</span></span>`;
+  // Re-bind chip click → remove tag; add button → open the standard tag picker popover
+  meta.querySelectorAll('.tag').forEach(chip=>{ chip.onclick=ev=>{ ev.stopPropagation(); const tag=chip.dataset.t;
+    saveClipTags(clip.id, (clip.tags||[]).filter(t=>t!==tag)); }; });
+  const addBtn = meta.querySelector('.tagadd');
+  if(addBtn) addBtn.onclick = ev => { ev.stopPropagation(); openTagPicker(addBtn, clip); };
+}
 function openClipPreviewModal(clip){
   const modal = document.getElementById('clipPreviewModal'); if(!modal) return;
   const v = document.getElementById('cpvVideo');
   v.src = clip.url; v.muted = true; v.currentTime = 0; v.play().catch(()=>{});
   document.getElementById('cpvTitle').textContent = (clip.label||clip.id) + ' · ' + clip.id;
-  const meta = document.getElementById('cpvMeta');
-  const tags = (clip.tags||[]).length ? '<b style="color:#cde">tags:</b> '+(clip.tags||[]).join(', ') : '<i>no tags</i>';
-  meta.innerHTML = `<span><b style="color:#cde">brand:</b> ${BRAND_LABELS[clipBrand(clip)]||clipBrand(clip)}</span>
-    <span><b style="color:#cde">category:</b> ${clip.product}</span>
-    <span><b style="color:#cde">duration:</b> ${fmt(clip.dur)}s</span>
-    <span><b style="color:#cde">size:</b> ${clip.w}×${clip.h}</span>
-    <span>${tags}</span>`;
+  renderCpvMeta(clip);
   document.getElementById('cpvMute').textContent = '🔇 Unmute';
   _cpvAddId = clip.id;
   modal.style.display = 'flex';
@@ -914,6 +930,9 @@ async function saveClipTags(cid, tags){
   }catch(e){}
   renderBin();
   if($('#clipMgrModal') && $('#clipMgrModal').style.display==='flex') renderClipMgr();   // keep both views in sync
+  // Keep the large clip-preview modal in sync if it's open on the same clip
+  const cpv = document.getElementById('clipPreviewModal');
+  if(cpv && cpv.style.display==='flex' && _cpvAddId===cid && local) renderCpvMeta(local);
 }
 function _clipMatchesQuery(c, q){
   if(!q) return true;
