@@ -109,6 +109,28 @@
   .clip { display:flex; gap:8px; padding:6px 10px; cursor:pointer; align-items:center; }
   .clip:hover { background:var(--panel2); }
   .clip img { width:54px; height:54px; object-fit:cover; border-radius:6px; background:#000; flex:none; }
+  /* Inline thumbnail preview (▶ button on hover, click → swap img with a muted looping <video>) */
+  .thumbwrap { position:relative; flex:none; }
+  .thumbwrap .thumbplay { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:22px; height:22px; border-radius:50%; background:rgba(0,0,0,0.7); color:#fff; font-size:10px;
+    display:none; align-items:center; justify-content:center; cursor:pointer; line-height:1; user-select:none; }
+  .thumbwrap:hover .thumbplay { display:flex; }
+  .thumbwrap.playing .thumbplay { display:flex; background:rgba(220,80,80,0.85); }
+  .clip .thumbvid, .mgrrow .thumbvid { object-fit:cover; background:#000; }
+  .clip .thumbvid { width:54px; height:54px; border-radius:6px; }
+  .mgrrow .thumbvid { width:44px; height:44px; border-radius:5px; }
+  /* Tag picker popover — opened by "+ tag", lists existing tags + free-text input */
+  #tagPickerPop { position:absolute; z-index:1000; background:#1b1d22; border:1px solid var(--line); border-radius:6px;
+    padding:6px; min-width:220px; max-width:320px; box-shadow:0 4px 16px rgba(0,0,0,0.5); display:none; }
+  #tagPickerPop input { width:100%; box-sizing:border-box; background:#262932; color:#eee; border:1px solid #3a3e48;
+    padding:4px 6px; border-radius:4px; font:inherit; font-size:12px; margin-bottom:4px; }
+  #tagPickerPop .tplist { max-height:180px; overflow-y:auto; display:flex; flex-wrap:wrap; gap:3px; padding:2px 0; }
+  #tagPickerPop .tplist .tpchip { background:#2d3140; color:#cde; border:1px solid #3a3e48; padding:2px 8px; border-radius:10px;
+    font-size:11px; cursor:pointer; line-height:1.3; }
+  #tagPickerPop .tplist .tpchip:hover { background:#4a3f1a; color:#fff; border-color:var(--acc, #f0a830); }
+  #tagPickerPop .tplist .tpchip.used { opacity:0.4; cursor:default; }
+  #tagPickerPop .tphint { font-size:10px; color:var(--mut); margin-top:4px; }
+  #tagPickerPop .tplist .tpnew { background:#1f3a2a; color:#cfd; border-color:#3fae7e88; }
   .clip .meta { flex:1; min-width:0; }
   .clip .meta b { display:block; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .clip .meta span { color:var(--mut); font-size:11px; }
@@ -272,7 +294,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.62.2</span>
+  <span class="ver" id="appVer">v1.62.3</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -760,6 +782,77 @@ const BIN_COLLAPSE_KEY='scl_bin_collapsed';
 function _binCollapsed(){ try{ return new Set(JSON.parse(localStorage.getItem(BIN_COLLAPSE_KEY)||'[]')); }catch(_){ return new Set(); } }
 function _binSaveCollapsed(s){ try{ localStorage.setItem(BIN_COLLAPSE_KEY, JSON.stringify([...s])); }catch(_){} }
 function _binToggle(key, el){ const s=_binCollapsed(); if(s.has(key)){ s.delete(key); el.classList.remove('collapsed'); } else { s.add(key); el.classList.add('collapsed'); } _binSaveCollapsed(s); }
+// Collect the union of every tag currently in use across all clips (for the autocomplete popover).
+function allKnownTags(){ const s=new Set(); (MAN.clips||[]).forEach(c=>(c.tags||[]).forEach(t=>s.add(t))); return [...s].sort(); }
+// Tag picker popover: shown when user clicks "+ tag". Lets them pick from existing tags OR type a new one.
+function openTagPicker(anchorEl, clip){
+  let pop = document.getElementById('tagPickerPop');
+  if(!pop){ pop = document.createElement('div'); pop.id='tagPickerPop'; document.body.appendChild(pop); }
+  pop.innerHTML = `<input type="text" id="tpInput" placeholder="filter or type new tag…" autocomplete="off" spellcheck="false">
+    <div class="tplist" id="tpList"></div>
+    <div class="tphint">Click a chip to add · Enter to add what you typed · Esc to close</div>`;
+  const r = anchorEl.getBoundingClientRect();
+  pop.style.left = (window.scrollX + r.left)+'px';
+  pop.style.top  = (window.scrollY + r.bottom + 4)+'px';
+  pop.style.display = 'block';
+  const input = document.getElementById('tpInput'), list = document.getElementById('tpList');
+  const used = new Set(clip.tags||[]);
+  const addTag = t => { t=(t||'').trim(); if(!t) return;
+    if(used.has(t)){ closePicker(); return; }
+    saveClipTags(clip.id, [...(clip.tags||[]), t]); closePicker(); };
+  function render(){
+    const q = input.value.trim().toLowerCase();
+    const known = allKnownTags();
+    list.innerHTML = '';
+    let shown = 0;
+    known.filter(t => !q || t.toLowerCase().includes(q)).forEach(t => {
+      const chip = document.createElement('span'); chip.className = 'tpchip'+(used.has(t)?' used':'');
+      chip.textContent = t; chip.title = used.has(t) ? 'Already on this clip' : 'Click to add';
+      if(!used.has(t)) chip.onclick = () => addTag(t);
+      list.appendChild(chip); shown++;
+    });
+    // If the typed value isn't in the known list, offer it as a "＋ new tag" option
+    if(q && !known.some(t => t.toLowerCase()===q)){
+      const chip = document.createElement('span'); chip.className = 'tpchip tpnew';
+      chip.textContent = '＋ '+input.value.trim();
+      chip.onclick = () => addTag(input.value.trim());
+      list.appendChild(chip); shown++;
+    }
+    if(!shown) list.innerHTML = '<span style="color:var(--mut);font-size:11px;padding:4px">No tags yet — type one and hit Enter.</span>';
+  }
+  input.oninput = render;
+  input.onkeydown = e => {
+    if(e.key === 'Enter'){ e.preventDefault(); addTag(input.value); }
+    else if(e.key === 'Escape'){ e.preventDefault(); closePicker(); }
+  };
+  function closePicker(){ pop.style.display='none'; document.removeEventListener('mousedown', outside, true); }
+  function outside(e){ if(!pop.contains(e.target) && e.target !== anchorEl) closePicker(); }
+  setTimeout(() => document.addEventListener('mousedown', outside, true), 0);
+  render(); input.focus();
+}
+// Wrap a clip's thumbnail in a play overlay → click swaps the <img> for a muted looping <video> preview.
+// Click ⏹ to revert. Existing thumb click (which selects the clip) is preserved by stopping propagation.
+function wirePreviewableThumb(wrap, clip){
+  const img = wrap.querySelector('img'); if(!img) return;
+  const btn = document.createElement('span'); btn.className = 'thumbplay'; btn.textContent = '▶'; btn.title = 'Preview clip (muted, loop)';
+  wrap.appendChild(btn);
+  btn.onclick = ev => {
+    ev.stopPropagation();
+    if(wrap.classList.contains('playing')){
+      wrap.classList.remove('playing');
+      const v = wrap.querySelector('video'); if(v){ try{v.pause();}catch(_){} v.remove(); }
+      img.style.display = ''; btn.textContent = '▶';
+    } else {
+      wrap.classList.add('playing');
+      img.style.display = 'none';
+      const v = document.createElement('video');
+      v.src = clip.url; v.muted = true; v.loop = true; v.autoplay = true; v.controls = true; v.className = 'thumbvid';
+      v.onclick = e => e.stopPropagation();
+      wrap.appendChild(v); btn.textContent = '⏹';
+      v.play().catch(()=>{});
+    }
+  };
+}
 async function saveClipTags(cid, tags){
   // Optimistic UI: update MAN.clips immediately, then persist. Drop the change if the server rejects.
   const local = MAN.clips.find(c=>c.id===cid); if(local) local.tags = tags.slice();
@@ -797,7 +890,7 @@ function renderBin(){
       const prodBody=document.createElement('div'); prodBody.className='grpbody'; prodBox.appendChild(prodBody);
       prods[prod].forEach(c=>{ const d=document.createElement('div'); d.className='clip'; d.draggable=true;
         const tagsHtml = (c.tags||[]).map(t=>`<span class="tag" data-t="${t.replace(/"/g,'&quot;')}" title="Click to remove">${t}</span>`).join('');
-        d.innerHTML=`<img src="${c.thumb}" loading="lazy"><div class="meta"><b>${c.label}</b>
+        d.innerHTML=`<span class="thumbwrap"><img src="${c.thumb}" loading="lazy"></span><div class="meta"><b>${c.label}</b>
           <span>${c.id} · ${fmt(c.dur)}s · ${c.w}×${c.h}</span>
           <div class="tags">${tagsHtml}<span class="tagadd" title="Add tag">+ tag</span></div></div>
           <button class="qadd" title="Add to timeline">＋</button>`;
@@ -805,12 +898,11 @@ function renderBin(){
           withClip(c.id, v=>{ if(!v) return; showVid(c.id); applyFraming({anchor:'center',zoom:1}, v); try{v.currentTime=0;}catch(e){} showCap(''); });
           $('#btnAddSel').dataset.id=c.id; };
         d.querySelector('.qadd').onclick=e=>{ e.stopPropagation(); addClipToTimeline(c.id); };
-        // Tag chip click → remove; "+ tag" → prompt to add. Don't bubble to the parent (which selects the clip).
+        // Inline preview button on the thumbnail (▶ on hover → swap to muted looping video)
+        wirePreviewableThumb(d.querySelector('.thumbwrap'), c);
+        // Tag chip click → remove; "+ tag" → open autocomplete picker. Don't bubble to the parent (which selects the clip).
         d.querySelectorAll('.tag').forEach(chip=>{ chip.onclick=e=>{ e.stopPropagation(); const tag=chip.dataset.t; saveClipTags(c.id, (c.tags||[]).filter(t=>t!==tag)); }; });
-        const addBtn=d.querySelector('.tagadd'); if(addBtn) addBtn.onclick=e=>{ e.stopPropagation();
-          const v=(prompt('Add tag(s) — comma-separated:', '')||'').trim(); if(!v) return;
-          const next=Array.from(new Set([...(c.tags||[]), ...v.split(',').map(t=>t.trim()).filter(Boolean)]));
-          saveClipTags(c.id, next); };
+        const addBtn=d.querySelector('.tagadd'); if(addBtn) addBtn.onclick=e=>{ e.stopPropagation(); openTagPicker(addBtn, c); };
         d.addEventListener('dragstart', e=>{ e.dataTransfer.setData('text/clip-id', c.id); e.dataTransfer.setData('text/plain', c.id); e.dataTransfer.effectAllowed='copy'; d.classList.add('dragging'); });
         d.addEventListener('dragend', ()=>d.classList.remove('dragging'));
         prodBody.appendChild(d); });
@@ -2804,13 +2896,11 @@ function renderClipMgr(){
       ph.appendChild(bsel); box.appendChild(ph); }
     const row=document.createElement('div'); row.className='mgrrow';
     const tagsHtml = (c.tags||[]).map(t=>`<span class="tag" data-t="${t.replace(/"/g,'&quot;')}" title="Click to remove">${t}</span>`).join('');
-    row.innerHTML=`<img src="${c.thumb}" loading="lazy"><div class="meta"><b>${(c.label||c.id).replace(/</g,'&lt;')}</b><span>${c.product} · ${fmt(c.dur)}s · ${c.w}×${c.h}</span>
+    row.innerHTML=`<span class="thumbwrap"><img src="${c.thumb}" loading="lazy"></span><div class="meta"><b>${(c.label||c.id).replace(/</g,'&lt;')}</b><span>${c.product} · ${fmt(c.dur)}s · ${c.w}×${c.h}</span>
       <div class="tags">${tagsHtml}<span class="tagadd" title="Add tag">+ tag</span></div></div>`;
+    wirePreviewableThumb(row.querySelector('.thumbwrap'), c);
     row.querySelectorAll('.tag').forEach(chip=>{ chip.onclick=ev=>{ ev.stopPropagation(); const tag=chip.dataset.t; saveClipTags(c.id, (c.tags||[]).filter(t=>t!==tag)); }; });
-    const addBtn=row.querySelector('.tagadd'); if(addBtn) addBtn.onclick=ev=>{ ev.stopPropagation();
-      const v=(prompt('Add tag(s) — comma-separated:', '')||'').trim(); if(!v) return;
-      const next=Array.from(new Set([...(c.tags||[]), ...v.split(',').map(t=>t.trim()).filter(Boolean)]));
-      saveClipTags(c.id, next); };
+    const addBtn=row.querySelector('.tagadd'); if(addBtn) addBtn.onclick=ev=>{ ev.stopPropagation(); openTagPicker(addBtn, c); };
     const sel=document.createElement('select'); sel.className='mgrcat'; sel.title='Category (moves the file)';
     cats.forEach(cat=>{ const o=document.createElement('option'); o.value=cat; o.textContent=cat; if(cat===c.product)o.selected=true; sel.appendChild(o); });
     const nw=document.createElement('option'); nw.value='__new__'; nw.textContent='➕ New category…'; sel.appendChild(nw);
