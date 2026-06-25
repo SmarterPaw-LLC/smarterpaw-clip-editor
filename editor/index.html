@@ -244,7 +244,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.60.0</span>
+  <span class="ver" id="appVer">v1.61.0</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -368,7 +368,7 @@
           <option value="4x5">4:5 Meta feed</option><option value="1x1">1:1 Square</option><option value="16x9">16:9 YouTube</option></select></div>
       <div class="row"><label>Music</label><select id="setMusic"></select></div>
       <div class="row"><label>Level</label><input type="range" id="setMusicVol" min="0" max="1" step="0.05" style="flex:1"> <span id="setMusicVolV" style="font-size:11px;color:var(--mut);min-width:32px">50%</span></div>
-      <div class="row"><label>End card</label><button class="mini" id="btnEndcard">🎬 Edit end card…</button></div>
+      <div class="row"><label>End card</label><button class="mini" id="btnEndcard" title="Opens the Overlays panel with the end card selected">🎬 Edit end card…</button></div>
     </div>
     <div class="status" id="status">Loading…</div>
   </div>
@@ -413,9 +413,9 @@
   </div>
 </div>
 
-<div id="ecModal" class="modal" style="display:none">
+<div id="ecModal" style="display:none">
   <div class="modal-card">
-    <div class="modal-hd"><b>🎬 End Card</b><button class="mini" id="ecClose">✕ Done</button></div>
+    <div class="modal-hd" style="display:none"><b>🎬 End Card</b><button class="mini" id="ecClose">✕ Done</button></div>
     <div class="modal-body">
       <div><label class="ck"><input type="checkbox" id="ecEnabled"> Show end card</label>
         <label>Hold <input type="number" id="ecDur" step="0.1" min="0.5" style="width:60px"> s</label></div>
@@ -1101,19 +1101,19 @@ function buildLineEditors(ec){
   });
   addColorPresets(box);   // brand swatches on each end-card line's color pickers
 }
-function openEcModal(){ const ec=normEndcard(EDL.settings); stop();
+const EC_SENTINEL='__endcard__';
+function populateEcEditor(){ const ec=normEndcard(EDL.settings);   // wire ecModal-body inputs (works whether body is inside ecModal or transplanted into ovEditor)
   $('#ecEnabled').checked=ec.enabled; $('#ecDur').value=ec.dur; $('#ecBgMode').value=ec.bg.mode;
   $('#ecGradPreset').innerHTML='<option value="">— preset —</option>'+GRADIENTS.map((g,i)=>`<option value="${i}">${g.n}</option>`).join('');
   $('#ecGradStart').value=ec.bg.start; $('#ecGradEnd').value=ec.bg.end; $('#ecGradAngle').value=ec.bg.angle||170; $('#ecBgColor').value=ec.bg.color||'#111111';
   $('#ecLogoShow').checked=ec.logo.show; $('#ecLogoScale').value=ec.logo.scale; $('#ecLogoX').value=ec.logo.x; $('#ecLogoY').value=ec.logo.y;
-  buildLineEditors(ec); ecBgModeUI();
-  $('#ecModal').style.display='flex'; $('#endcard').style.display='flex'; buildEndcard(ec);
-  addColorPresets($('#ecModal'));   // brand swatches on every end-card color picker
+  buildLineEditors(ec); ecBgModeUI(); buildEndcard(ec);
+  const parent=$('#ovEditor').querySelector('#ecLinesEditor')?$('#ovEditor'):$('#ecModal');
+  addColorPresets(parent);   // brand swatches on every end-card color picker, wherever the body lives
 }
-function closeEcModal(){ $('#ecModal').style.display='none'; $('#endcard').style.display='none'; renderTimeline(); }
+function openEcModal(){ stop(); if(!ovEdit){ ovEdit=true; $('#ovModal').style.display='flex'; }   // route to overlays panel with end-card selected
+  ovSel=EC_SENTINEL; _lastPick='ov'; renderOvList(); buildOvEditor(); $('#endcard').style.display='flex'; }
 $('#btnEndcard').onclick=openEcModal;
-$('#ecClose').onclick=closeEcModal;
-$('#ecModal').onclick=e=>{ if(e.target.id==='ecModal') closeEcModal(); };
 $('#ecEnabled').onchange=()=>{ normEndcard(EDL.settings).enabled=$('#ecEnabled').checked; updateTotal(); };
 $('#ecDur').oninput=()=>{ normEndcard(EDL.settings).dur=parseFloat($('#ecDur').value)||2.6; updateTotal(); };
 $('#ecBgMode').onchange=()=>{ normEndcard(EDL.settings).bg.mode=$('#ecBgMode').value; ecBgModeUI(); ecRefresh(); };
@@ -1255,7 +1255,9 @@ function buildStickerCanvas(o){
   ctx.save(); ctx.shadowColor=shadowColor; ctx.shadowBlur=shadow*2*spread; ctx.shadowOffsetX=sdx*spread; ctx.shadowOffsetY=sdy*spread; ctx.drawImage(off,0,0); ctx.restore();
   ctx.save(); ctxSet(ctx); ctx.strokeStyle='#fff'; ctx.lineWidth=outline*2.5; ctx.lineJoin='round'; ctx.lineCap='round'; ctx.fillStyle='#fff'; rowPos.forEach(rp=>{ctx.strokeText(rp.text,X,rp.y); ctx.fillText(rp.text,X,rp.y);}); ctx.restore();   // pass 2: white outline
   ctx.save(); ctxSet(ctx); ctx.fillStyle='#fff'; rowPos.forEach(rp=>ctx.fillText(rp.text,X,rp.y)); ctx.restore();   // pass 3: solidify
-  ctx.save(); ctxSet(ctx); ctx.fillStyle=grad(ctx); rowPos.forEach(rp=>ctx.fillText(rp.text,X,rp.y)); ctx.restore();   // pass 4: gradient
+  ctx.save(); ctxSet(ctx); const _g=grad(ctx); ctx.fillStyle=_g; ctx.strokeStyle=_g;   // pass 4: gradient (stroke at <white-outline width so gradient bridges multi-part glyphs like i/j — fills the dot↔stem gap that would otherwise show white outline color)
+    ctx.lineWidth=outline*1.6; ctx.lineJoin='round'; ctx.lineCap='round';
+    rowPos.forEach(rp=>{ctx.strokeText(rp.text,X,rp.y); ctx.fillText(rp.text,X,rp.y);}); ctx.restore();
   return {canvas:cv, cw, ch:totalH, exportW};
 }
 // Plain-text overlay → canvas matching the PREVIEW exactly (so render == preview: same soft shadow,
@@ -1680,11 +1682,27 @@ function dragify(el,o){ el.onpointerdown=ev=>{ if(o.locked){ ev.stopPropagation(
 function centerGuides(showV, showH){ const v=$('#guideV'), h=$('#guideH'); if(v) v.style.display=showV?'block':'none'; if(h) h.style.display=showH?'block':'none'; }
 function uid(){ return 'ov'+Date.now()+Math.floor(Math.random()*1000); }
 function openOvModal(){ stop(); ovEdit=true; $('#ovModal').style.display='flex'; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
-function closeOvModal(){ ovEdit=false; ovSel=null; $('#ovModal').style.display='none'; renderOverlays(playhead); }
+function closeOvModal(){
+  // park end-card body back in its modal shell before tearing down the editor pane
+  const ovBox=$('#ovEditor'), ecModalCard=$('#ecModal > .modal-card');
+  if(ovBox && ecModalCard){ const ecBody=ovBox.querySelector('.modal-body'); if(ecBody) ecModalCard.appendChild(ecBody); }
+  ovEdit=false; ovSel=null; $('#ovModal').style.display='none'; $('#endcard').style.display='none'; renderOverlays(playhead); renderTimeline();
+}
+function appendEcRow(box){   // permanent end-card entry below the regular overlay list
+  const ec=normEndcard(EDL.settings);
+  const row=document.createElement('div'); row.className='ecline'+(ovSel===EC_SENTINEL?' ovselrow':'');
+  row.style.borderTop='1px solid var(--line)'; row.style.paddingTop='6px'; row.style.marginTop='4px';
+  row.innerHTML=`<span class="ovsel" style="flex:1;cursor:pointer;display:flex;align-items:center;gap:6px;min-width:0">
+      <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🎬 End card ${ec.enabled?'':'<span style="color:var(--mut)">(off)</span>'}</span>
+      <span style="color:var(--mut);flex:none">${ec.enabled?('+'+(+ec.dur).toFixed(1)+'s after video'):''}</span></span>`;
+  row.querySelector('.ovsel').onclick=()=>{ if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();
+    ovSel=EC_SENTINEL; _lastPick='ov'; renderOvList(); buildOvEditor(); $('#endcard').style.display='flex'; };
+  box.appendChild(row);
+}
 function renderOvList(){
   const box=$('#ovList'); if(!box) return; box.innerHTML='';
   const ovs=EDL.overlays||[];
-  if(!ovs.length){ box.innerHTML='<div style="color:var(--mut);font-size:12px">No overlays yet — add Text, Shape, or Image.</div>'; renderTracks(); return; }
+  if(!ovs.length){ box.innerHTML='<div style="color:var(--mut);font-size:12px">No overlays yet — add Text, Shape, or Image.</div>'; appendEcRow(box); renderTracks(); return; }
   box.insertAdjacentHTML('beforeend','<div style="font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px">▲ top of list = front layer</div>');
   const move=(o,dir)=>{ const i=EDL.overlays.indexOf(o), j=i+dir; if(i<0||j<0||j>=EDL.overlays.length) return;
     histCommit(); [EDL.overlays[i],EDL.overlays[j]]=[EDL.overlays[j],EDL.overlays[i]]; renderOvList(); buildOvEditor(); renderOverlays(playhead); renderTracks(); };
@@ -1700,6 +1718,7 @@ function renderOvList(){
     row.querySelector('.ovdn').onclick=()=>move(o,-1);
     row.querySelector('.ovdel').onclick=()=>{ histCommit(); EDL.overlays=EDL.overlays.filter(x=>x.id!==o.id); if(ovSel===o.id) ovSel=null; renderOvList(); buildOvEditor(); renderOverlays(playhead); };
     box.appendChild(row); });
+  appendEcRow(box);   // end-card row always at the bottom (lives outside EDL.overlays — adds time after the video instead of compositing)
   const sr=box.querySelector('.ovselrow'); if(sr) sr.scrollIntoView({block:'nearest'});   // keep the selected overlay visible in the list
   renderTracks();
 }
@@ -1744,8 +1763,19 @@ function addSliderNumbers(scope){
   });
 }
 function buildOvEditor(){
-  const box=$('#ovEditor'); if(!box) return; const o=(EDL.overlays||[]).find(x=>x.id===ovSel);
-  if(!o){ box.innerHTML='<div style="color:var(--mut);font-size:12px">Select an overlay to edit it.</div>'; return; }
+  const box=$('#ovEditor'); if(!box) return;
+  // park the end-card editor body back in #ecModal before we touch box.innerHTML (so its inputs/handlers survive)
+  const ecBody=$('#ecModal > .modal-card > .modal-body') || box.querySelector('.modal-body');
+  const ecModalCard=$('#ecModal > .modal-card');
+  if(ecBody && box.contains(ecBody) && ovSel!==EC_SENTINEL && ecModalCard) ecModalCard.appendChild(ecBody);
+  if(ovSel===EC_SENTINEL){
+    box.innerHTML='<div class="sec">🎬 End card</div><div style="font-size:11px;color:var(--mut);margin-bottom:6px">Plays after the last clip. Adds time to the timeline; not a normal overlay.</div>';
+    if(ecBody && !box.contains(ecBody)) box.appendChild(ecBody);
+    populateEcEditor(); $('#endcard').style.display='flex'; return;
+  }
+  const o=(EDL.overlays||[]).find(x=>x.id===ovSel);
+  if(!o){ box.innerHTML='<div style="color:var(--mut);font-size:12px">Select an overlay to edit it.</div>'; $('#endcard').style.display='none'; return; }
+  $('#endcard').style.display='none';
   migrateAnims(o);
   let h=`<div class="sec">Timing</div><div><label>Start <input type="number" id="ovStart" step="0.1" style="width:58px" value="${o.start}"> s</label>
     <label>Dur <input type="number" id="ovDur" step="0.1" style="width:58px" value="${o.dur}"> s</label>
