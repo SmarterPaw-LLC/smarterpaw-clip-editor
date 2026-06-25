@@ -294,7 +294,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.62.3</span>
+  <span class="ver" id="appVer">v1.62.4</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -2874,8 +2874,12 @@ function openClipMgr(){ $('#clipMgrModal').style.display='flex'; $('#mgrStatus')
 function closeClipMgr(){ $('#clipMgrModal').style.display='none'; }
 async function setProductBrand(product, brand){
   const r=await api('/api/clip/setbrand',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({product,brand})});
-  if(r&&r.ok){ await boot(true); renderClipMgr&&renderClipMgr(); }   // refresh manifest so brand groupings update everywhere
-  else { toast('Brand update failed'); }
+  if(r&&r.ok){ await boot(true); renderClipMgr&&renderClipMgr();
+    const msg = r.moved ? ('Folder moved: sources/youtube/'+brand+'/'+product+'/') :
+                          ('Brand set to '+brand+' (folder already in the right place).');
+    if($('#mgrStatus')) $('#mgrStatus').textContent = msg;
+    toast(msg);
+  } else { toast('Brand update failed: '+((r&&r.log)||'(no detail)')); }
 }
 function renderClipMgr(){
   const box=$('#mgrList'); if(!box) return; const q=($('#mgrFilter').value||'').trim().toLowerCase();
@@ -2909,7 +2913,10 @@ function renderClipMgr(){
       if(cat===c.product){ return; }
       $('#mgrStatus').textContent='Moving “'+(c.label||c.id)+'” → '+cat+'…';
       const r=await api('/api/clip/recat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:c.id,category:cat})});
-      if(r&&r.ok){ await boot(true); renderClipMgr(); $('#mgrStatus').textContent='Moved to “'+cat+'”'; }
+      if(r&&r.ok){ await boot(true); renderClipMgr();
+        const path = 'sources/youtube/'+(r.brand||'?')+'/'+(r.category||cat)+'/';
+        $('#mgrStatus').textContent='Moved to ' + path;
+        toast('Moved to '+path); }
       else { $('#mgrStatus').textContent='Move failed: '+((r&&r.log)||'error'); renderClipMgr(); }
     };
     row.appendChild(sel);
