@@ -944,33 +944,31 @@ def apply_overlays(silent, overlays, W, H, tmp):
             fc.append(f"[{ii}:v]" + ",".join(filt) + f"[oi{k}]")
             fc.append(f"[{last}][oi{k}]overlay=x='W*{ox}-w/2+({odx})':y='H*{oy}-h/2+({ody})':{en}[v{k}]")
             last = f"v{k}"; ii += 1
-        # sparkle: composite twinkling copies of an emoji or image around the overlay center.
+        # sparkle: composite twinkling copies of an emoji (or image) around the overlay center.
         # Iterate ALL sparkle anims (not just the first) so stacked sparkles all render.
-        # If the emoji field is a decorative multi-char string ("˗ˏˋ ✸ ˎˊ˗" or "✶⋆.˚"),
-        # split it into individual glyphs and round-robin per scatter point — otherwise PIL
-        # bakes the whole string as one wide composite per sparkle (a fat colored bar).
+        # The emoji can be a single glyph OR a decorative composite string ("˗ˏˋ ✸ ˎˊ˗", "✶⋆.˚").
+        # Either way it bakes as ONE PNG (user's visual intent: each scatter point IS the cluster).
+        # ffmpeg scales by HEIGHT (scale=-2:sh) so width grows naturally — no width-driven blow-up
+        # when one glyph in the string is a full-color emoji and the others are small modifier marks.
         sparkles = [a for a in (o.get("anims") or []) if a.get("type") == "sparkle" and ((a.get("emoji") or "").strip() or a.get("src"))]
         for ai, spk in enumerate(sparkles):
-            psp_list = []   # one or more piece PNGs for this sparkle anim
-            emoji_str = (spk.get("emoji") or "").strip()
-            if emoji_str:
-                chars = [c for c in emoji_str if not c.isspace()] or [emoji_str]
-                for ci, ch in enumerate(chars):
-                    p = os.path.join(tmp, "emoji_%d_%d_%d.png" % (k, ai, ci))
-                    try:
-                        _emoji_png(ch, p); psp_list.append(p)
-                    except Exception:
-                        pass
+            if (spk.get("emoji") or "").strip():
+                psp = os.path.join(tmp, "emoji_%d_%d.png" % (k, ai))
+                try:
+                    _emoji_png(spk["emoji"], psp)
+                except Exception:
+                    psp = None
             else:
-                p = os.path.join(PROJ, *spk["src"].split("/"))
-                if os.path.exists(p): psp_list.append(p)
-            if not psp_list: continue
+                psp = os.path.join(PROJ, *spk["src"].split("/"))
+                if not os.path.exists(psp):
+                    psp = None
+            if not psp: continue
             spread = float(spk.get("spread", 0.12)) * W; ssize = float(spk.get("size", 0.06)) * W; sspeed = float(spk.get("speed", 1.2))
             for i, f in enumerate(_sparkle_field(spk)):
-                sw = max(2, int(ssize * f["sc"])); offx = f["cx"] * spread; offy = f["cy"] * spread
+                sh_px = max(2, int(ssize * f["sc"])); offx = f["cx"] * spread; offy = f["cy"] * spread
                 twk = "pow(max(0,sin(2*PI*%g*(T-%g)+%g)),3)" % (sspeed, s, f["ph"])
-                inputs += ["-loop", "1", "-t", str(e), "-i", psp_list[i % len(psp_list)]]
-                fc.append(f"[{ii}:v]scale={sw}:-1,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({twk})'[sp{k}_{ai}_{i}]")
+                inputs += ["-loop", "1", "-t", str(e), "-i", psp]
+                fc.append(f"[{ii}:v]scale=-2:{sh_px},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({twk})'[sp{k}_{ai}_{i}]")
                 fc.append(f"[{last}][sp{k}_{ai}_{i}]overlay=x='W*{ox}-w/2+({offx})':y='H*{oy}-h/2+({offy})':{en}[vs{k}_{ai}_{i}]")
                 last = f"vs{k}_{ai}_{i}"; ii += 1
     if not fc:

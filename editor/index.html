@@ -244,7 +244,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.58.3</span>
+  <span class="ver" id="appVer">v1.58.4</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1558,16 +1558,18 @@ function renderSparkles(o, time, layer){
     while(arr.length>n){ arr.pop().remove(); }
     perAnim[ai]=arr;
     const useEmoji=!!(sp.emoji&&sp.emoji.trim()), url=sp.src?('/'+encodeURI(sp.src)):'';
-    // Split a decorative string ("˗ˏˋ ✸ ˎˊ˗" or "✶⋆.˚") into its individual glyphs and
-    // cycle them across scatter points — otherwise the whole string renders as one wide blob.
-    const chars=useEmoji?[...sp.emoji].filter(c=>c.trim()):[];
+    // Keep decorative strings ("˗ˏˋ ✸ ˎˊ˗" or "✶⋆.˚") as ONE composite per sparkle — that's the
+    // user's visual intent. Size controls HEIGHT (font-size); width grows naturally so wide
+    // composites don't get squished and tall emoji glyphs don't blow up.
     const spread=(sp.spread||0.12)*W, ssize=(sp.size||0.06)*W, speed=sp.speed||1.2;
-    field.forEach((f,i)=>{ const el=arr[i]; const w=ssize*f.sc;
-      if(useEmoji){ const ch=chars[i%chars.length]||sp.emoji;
-        if(el.textContent!==ch) el.textContent=ch;
-        el.style.backgroundImage='none'; el.style.fontSize=w+'px'; el.style.width='auto'; el.style.height='auto'; }
-      else { el.textContent=''; const bg='url("'+url+'")'; if(el.style.backgroundImage!==bg) el.style.backgroundImage=bg; el.style.width=w+'px'; el.style.height=w+'px'; el.style.fontSize=''; }
-      el.style.zIndex=z; el.style.left=(cxp+f.cx*spread-w/2)+'px'; el.style.top=(cyp+f.cy*spread-w/2)+'px';
+    field.forEach((f,i)=>{ const el=arr[i]; const h=ssize*f.sc;
+      if(useEmoji){ if(el.textContent!==sp.emoji) el.textContent=sp.emoji;
+        el.style.backgroundImage='none'; el.style.fontSize=h+'px'; el.style.width='auto'; el.style.height='auto';
+        const w=el.getBoundingClientRect().width||h;
+        el.style.zIndex=z; el.style.left=(cxp+f.cx*spread-w/2)+'px'; el.style.top=(cyp+f.cy*spread-h/2)+'px'; }
+      else { el.textContent=''; const bg='url("'+url+'")'; if(el.style.backgroundImage!==bg) el.style.backgroundImage=bg;
+        el.style.width=h+'px'; el.style.height=h+'px'; el.style.fontSize='';
+        el.style.zIndex=z; el.style.left=(cxp+f.cx*spread-h/2)+'px'; el.style.top=(cyp+f.cy*spread-h/2)+'px'; }
       el.style.opacity=active?sparkleOp(lt,f.ph,speed):0; });
   });
   ovSpark[o.id]=perAnim;
