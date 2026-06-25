@@ -1715,6 +1715,53 @@ class Handler(BaseHTTPRequestHandler):
             # Remember this product->brand mapping so flat-layout siblings still resolve
             bm[cat] = brand; save_brand_map(bm)
             return self._json({"ok": True, "category": cat, "brand": brand})
+        if path == "/api/clip/rename-category":   # rename a product folder; same brand parent kept
+            oldcat = (data.get("old") or "").strip()
+            newcat = re.sub(r"[^A-Za-z0-9_-]", "", (data.get("new") or "").lower())
+            if not oldcat or not newcat:
+                return self._json({"ok": False, "log": "old + valid new category required"}, 400)
+            if oldcat == newcat:
+                return self._json({"ok": True, "old": oldcat, "new": newcat, "renamed": False})
+            src_dir = _find_product_dir(oldcat)
+            if not src_dir:
+                return self._json({"ok": False, "log": f"category folder not found: {oldcat}"}, 404)
+            dest_dir = os.path.join(os.path.dirname(src_dir), newcat)   # same brand parent
+            if os.path.exists(dest_dir):
+                return self._json({"ok": False, "log": f"target folder already exists: {dest_dir}"}, 409)
+            try:
+                shutil.move(src_dir, dest_dir)
+            except Exception as e:
+                return self._json({"ok": False, "log": f"rename failed: {e!r}"}, 500)
+            # Move probe-cache entries forward so we don't re-probe every clip in the folder
+            for k in list(_probe_cache.keys()):
+                if k.startswith(src_dir + os.sep): _probe_cache.pop(k, None)
+            for k in list(_probe_disk.keys()):
+                if k.startswith(src_dir + os.sep):
+                    v = _probe_disk.pop(k)
+                    _probe_disk[k.replace(src_dir, dest_dir, 1)] = v
+            global _probe_dirty; _probe_dirty = True; _probe_cache_save()
+            # Migrate brand_map key
+            bm = load_brand_map()
+            if oldcat in bm:
+                bm[newcat] = bm.pop(oldcat); save_brand_map(bm)
+            return self._json({"ok": True, "old": oldcat, "new": newcat, "renamed": True})
+        if path == "/api/tag/rename":         # rename a tag globally; empty new = delete the tag everywhere
+            oldtag = (data.get("old") or "").strip()
+            newtag = (data.get("new") or "").strip()
+            if not oldtag:
+                return self._json({"ok": False, "log": "old required"}, 400)
+            tm = dict(load_clip_tags())
+            changed = 0
+            for cid in list(tm.keys()):
+                tags = tm[cid]
+                if oldtag in tags:
+                    rest = [t for t in tags if t != oldtag]
+                    if newtag and newtag not in rest: rest.append(newtag)
+                    if rest: tm[cid] = sorted(set(rest))
+                    else:    tm.pop(cid, None)
+                    changed += 1
+            save_clip_tags(tm)
+            return self._json({"ok": True, "old": oldtag, "new": newtag, "clips_updated": changed})
         if path == "/api/clip/tags":      # set the tag list for ONE clip (replaces existing tags)
             cid = (data.get("id") or "").strip()
             tags = data.get("tags") or []
