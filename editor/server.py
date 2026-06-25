@@ -15,6 +15,7 @@ EDITOR = os.path.join(PROJ, "editor")
 THUMBS = os.path.join(EDITOR, "thumbs")
 SRC_ROOT = os.path.join(PROJ, "sources", "youtube")
 MUSIC_DIR = os.path.join(PROJ, "sources", "music")
+SFX_DIR   = os.path.join(PROJ, "sources", "sfx")
 EXPORTS = os.path.join(PROJ, "exports")
 EDL_PATH = os.path.join(PROJ, "edl.json")
 PROJECTS = os.path.join(PROJ, "projects")
@@ -254,10 +255,16 @@ def ensure_thumbs(clips):
                  "-frames:v", "1", "-vf", "scale=200:-1", "-q:v", "4", tp])
 
 
+_AUDIO_EXTS = (".mp3", ".m4a", ".wav", ".ogg", ".aac", ".flac")
 def list_music():
     if not os.path.isdir(MUSIC_DIR):
         return []
-    return sorted(f for f in os.listdir(MUSIC_DIR) if f.lower().endswith((".mp3", ".m4a", ".wav")))
+    return sorted(f for f in os.listdir(MUSIC_DIR) if f.lower().endswith(_AUDIO_EXTS))
+def list_sfx():
+    if not os.path.isdir(SFX_DIR):
+        os.makedirs(SFX_DIR, exist_ok=True)
+        return []
+    return sorted(f for f in os.listdir(SFX_DIR) if f.lower().endswith(_AUDIO_EXTS))
 
 
 def default_edl():
@@ -1381,16 +1388,54 @@ def render(edl, out_dir=None, out_name=None, progress=None):
         except Exception as ex:
             return {"ok": False, "log": f"Can't create folder:\n{target_dir}\n{ex}"}
         out = os.path.join(target_dir, base_name)
-        music = os.path.join(MUSIC_DIR, s.get("music", "1076_smile.mp3"))
+        # === Audio mix: legacy single-music slot + per-clip EDL.audio overlays ===
+        # Each audio source becomes an ffmpeg -i input; its filter chain trims+delays into the right
+        # spot on the timeline and applies per-clip volume + fadeIn/fadeOut. All chains are amix'd
+        # at the end. Order: legacy music first (if any) so it's always input #1, then user-added clips.
+        tracks = []     # list of (path, start, dur, vol, fadeIn, fadeOut)
+        mname = s.get("music", "")
         mvol = float(s.get("musicVol", 0.5) if s.get("musicVol") is not None else 0.5)
-        fade = round(total - 1.0, 2)
-        prog("Adding music + finalizing…", 92)
-        if os.path.exists(music) and mvol > 0.001:
-            af = (f"[1:a]atrim=0:{total},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.3,"
-                  f"afade=t=out:st={fade}:d=1,loudnorm=I=-16:TP=-1.5:LRA=11,volume={mvol:.3f}[a]")
-            r = run([FFMPEG, "-y", "-loglevel", "error", "-i", vid_src, "-i", music,
-                     "-filter_complex", af, "-map", "0:v", "-map", "[a]",
-                     "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest", out])
+        if mname:
+            mp = os.path.join(MUSIC_DIR, mname)
+            if os.path.exists(mp) and mvol > 0.001:
+                tracks.append((mp, 0.0, float(total), mvol, 0.3, 1.0))
+        for a in (edl.get("audio") or []):
+            if a.get("hidden"): continue
+            src_rel = (a.get("src") or "").lstrip("/")
+            if not src_rel: continue
+            ap = os.path.join(PROJ, src_rel.replace("/", os.sep))
+            if not os.path.exists(ap): continue
+            st = max(0.0, float(a.get("start", 0) or 0))
+            du = max(0.05, float(a.get("dur", 0) or 0))
+            vol = max(0.0, min(2.0, float(a.get("volume", 1) if a.get("volume") is not None else 1)))
+            if vol <= 0.001: continue
+            fi = max(0.0, float(a.get("fadeIn", 0) or 0))
+            fo = max(0.0, float(a.get("fadeOut", 0) or 0))
+            if st >= total: continue
+            if st + du > total: du = total - st
+            tracks.append((ap, st, du, vol, fi, fo))
+        prog("Adding audio + finalizing…", 92)
+        if tracks:
+            ff_in = [FFMPEG, "-y", "-loglevel", "error", "-i", vid_src]
+            chains = []
+            outs = []
+            for i, (p, st, du, vol, fi, fo) in enumerate(tracks, start=1):
+                ff_in += ["-i", p]
+                delay_ms = int(round(st * 1000))
+                ch = (f"[{i}:a]atrim=0:{du:.3f},asetpts=PTS-STARTPTS")
+                if fi > 0: ch += f",afade=t=in:st=0:d={fi:.3f}"
+                if fo > 0: ch += f",afade=t=out:st={max(0.0, du-fo):.3f}:d={fo:.3f}"
+                if vol != 1.0: ch += f",volume={vol:.3f}"
+                if delay_ms > 0: ch += f",adelay={delay_ms}|{delay_ms},apad=whole_dur={total:.3f}"
+                else: ch += f",apad=whole_dur={total:.3f}"
+                ch += f"[a{i}]"
+                chains.append(ch)
+                outs.append(f"[a{i}]")
+            chains.append("".join(outs) + f"amix=inputs={len(tracks)}:duration=longest:normalize=0,"
+                          f"atrim=0:{total:.3f},loudnorm=I=-16:TP=-1.5:LRA=11[a]")
+            af = ";".join(chains)
+            r = run(ff_in + ["-filter_complex", af, "-map", "0:v", "-map", "[a]",
+                             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest", out])
         else:
             r = run([FFMPEG, "-y", "-loglevel", "error", "-i", vid_src,
                      "-c:v", "copy", "-movflags", "+faststart", out])
@@ -1536,7 +1581,7 @@ class Handler(BaseHTTPRequestHandler):
                 if os.path.exists(os.path.join(PROJ, cand)):
                     logo = "/" + cand
                     break
-            return self._json({"clips": clips, "music": list_music(),
+            return self._json({"clips": clips, "music": list_music(), "sfx": list_sfx(),
                                "canvases": list(CANVAS.keys()), "logo": logo, "assets": list_assets(),
                                "exportsDir": EXPORTS})
         if path == "/api/edl":

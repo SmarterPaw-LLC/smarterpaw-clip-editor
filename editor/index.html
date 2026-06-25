@@ -64,6 +64,24 @@
   .blk.audio .anm { flex:none; max-width:42%; overflow:hidden; text-overflow:ellipsis; }
   .blk.audio .volsl { flex:1; max-width:220px; accent-color:var(--acc,#8ab81d); cursor:pointer; height:14px; }
   .blk.audio .vpct { flex:none; font-size:10px; color:#cde9d8; }
+  /* Multi-track audio overlays: per-clip blocks on dedicated audio lanes */
+  .blk.audclip { background:#1f5b46; box-shadow:inset 0 0 0 1px #3fae7e88; cursor:grab; }
+  .blk.audclip.sfx { background:#5b461f; box-shadow:inset 0 0 0 1px #ae7e3f88; }
+  .blk.audclip.sel { outline:2px solid #f0a830; outline-offset:1px; z-index:5; }
+  .blk.audclip.clhidden { opacity:0.4; }
+  .blk.audclip.cllocked { cursor:not-allowed; }
+  .blk.audclip .clipicons { position:absolute; top:1px; right:2px; display:flex; gap:1px; }
+  .blk.audclip .clipicons .cic { font-size:10px; padding:0 2px; cursor:pointer; opacity:0.7; }
+  .blk.audclip .clipicons .cic:hover { opacity:1; }
+  .blk.audclip .hL, .blk.audclip .hR { position:absolute; top:0; bottom:0; width:6px; cursor:ew-resize; background:#fff2; }
+  .blk.audclip .hL { left:0; } .blk.audclip .hR { right:0; }
+  #audPickList .audrow { display:flex; align-items:center; gap:8px; padding:5px 8px; border-bottom:1px solid var(--line); cursor:default; font-size:12px; }
+  #audPickList .audrow:last-child { border-bottom:none; }
+  #audPickList .audrow:hover { background:rgba(255,255,255,0.04); }
+  #audPickList .audrow .nm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #audPickList .audrow .kind { font-size:10px; padding:1px 5px; border-radius:3px; color:#fff; }
+  #audPickList .audrow .kind.m { background:#1f5b46; }
+  #audPickList .audrow .kind.s { background:#5b461f; }
   .blk.sel { box-shadow:0 0 0 2px var(--acc2); z-index:2; }
   .blk.msel { box-shadow:0 0 0 2px var(--acc,#8ab81d); outline:1px solid var(--acc,#8ab81d); z-index:2; }
   .blk .hL,.blk .hR { position:absolute; top:0; bottom:0; width:7px; cursor:ew-resize; background:rgba(255,255,255,.18); z-index:6; } .blk .hL{left:0} .blk .hR{right:0}
@@ -249,13 +267,14 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.62.0</span>
+  <span class="ver" id="appVer">v1.62.1</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
   <button class="ghost" id="btnUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
   <button class="ghost" id="btnRedo" title="Redo (Ctrl+Shift+Z / Ctrl+Y)" disabled>↷ Redo</button>
   <button id="btnOverlays">✚ Overlays</button>
+  <button id="btnAudio" title="Add music + sound effects on multiple audio lanes">🎵 Audio</button>
   <button class="ghost" id="btnReload">Reload clips</button>
   <button id="btnSave">Save</button>
   <button class="primary" id="btnRender">▶ Render MP4</button>
@@ -477,6 +496,22 @@
   </div>
 </div>
 
+<div id="audModal" class="modal" style="display:none">
+  <div class="modal-card" style="max-width:640px">
+    <div class="modal-hd"><b>🎵 Audio tracks</b><button class="mini" id="audClose">✕ Done</button></div>
+    <div class="modal-body">
+      <div style="font-size:11px;color:var(--mut);margin-bottom:6px">Add music + sound effects on separate lanes. Drag clips on the timeline to move/retime. Click a clip to edit its volume + fades.</div>
+      <div class="sec">＋ Add at playhead</div>
+      <div class="row" style="gap:8px;margin-bottom:6px"><input type="text" id="audFilter" placeholder="🔍 filter…" style="flex:1" spellcheck="false">
+        <label class="ck"><input type="checkbox" id="audShowMusic" checked> Music</label>
+        <label class="ck"><input type="checkbox" id="audShowSfx" checked> SFX</label></div>
+      <div id="audPickList" style="max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:6px"></div>
+      <hr>
+      <div id="audEditor"><div style="color:var(--mut);font-size:11px">Select an audio clip on the timeline to edit it.</div></div>
+    </div>
+  </div>
+</div>
+
 <div id="clipModal" class="modal" style="display:none">
   <div class="modal-card" style="max-width:580px">
     <div class="modal-hd"><b>🎨 Clip art — icons &amp; emoji</b><button class="mini" id="clipClose">✕ Close</button></div>
@@ -565,7 +600,7 @@
 <script>
 const $ = s => document.querySelector(s);
 const api = (u,o) => fetch(u,o).then(r=>r.json());
-let MAN = {clips:[], byId:{}, music:[]};
+let MAN = {clips:[], byId:{}, music:[], sfx:[]};
 let EDL = null;
 let sel = -1;          // selected segment index
 let _msel = [];        // multi-selected segment objects (timeline group select)
@@ -931,7 +966,7 @@ function loadSegIntoTrim(){
 const music = new Audio();
 let tlPlaying=false, pbToken=0, segRaf=null, clockRaf=null, segTO=null, clockTimer=null, playhead=0;
 function stop(){ tlPlaying=false; pbToken++; cancelAnimationFrame(segRaf); cancelAnimationFrame(clockRaf); clearInterval(clockTimer); clearTimeout(segTO);
-  const v=activeVid(); if(v){ v.onseeked=null; try{v.pause();}catch(e){} v.style.opacity=1; } music.pause();
+  const v=activeVid(); if(v){ v.onseeked=null; try{v.pause();}catch(e){} v.style.opacity=1; } music.pause(); audStopPlayback();
   $('#endcard').style.display='none'; $('#btnPlayTl').textContent='▶ Play timeline'; }   // note: keeps playhead where it stopped
 
 // Show the frame at the current timeline playhead (used when scrubbing while stopped).
@@ -989,6 +1024,7 @@ function playTimeline(){
   $('#btnPlayTl').textContent='❚❚ Stop'; $('#endcard').style.display='none';
   if(MAN.music.includes(EDL.settings.music)){ music.src='/sources/music/'+encodeURIComponent(EDL.settings.music);
     music.currentTime=0; music.volume=musicVol(); music.play().catch(()=>{}); }
+  audSyncPreview(); audStartPlayback();        // multi-track audio overlays start in sync with the playhead
   const ec=normEndcard(EDL.settings);
   const vidTotal=layout().vidTotal, endDur=(ec.enabled?ec.dur:0), total=vidTotal+endDur;
   if(playhead>=total-0.05) playhead=0;                // restart only if parked at the very end (past the end card)
@@ -1000,6 +1036,7 @@ function playTimeline(){
     $('#tlTime').textContent=fmt(playhead)+' / '+fmt(total)+'s';
     $('#scrub').max=total; $('#scrub').value=playhead;   // scrub = smooth timeline playhead
     $('#vidTime').textContent=fmt(playhead)+'s';
+    audTick(playhead);                          // gate audio overlays + update fade envelopes
     if(e>=vidTotal){                                   // end-card phase
       if(ec.enabled){
         if(curKey!=='EC'){ curKey='EC'; buildEndcard(ec); $('#endcard').style.display='flex'; showCap('');
@@ -1157,6 +1194,164 @@ $('#ecLogoShow').onchange=()=>{ normEndcard(EDL.settings).logo.show=$('#ecLogoSh
 $('#ecLogoScale').oninput=()=>{ normEndcard(EDL.settings).logo.scale=parseFloat($('#ecLogoScale').value); ecRefresh(); };
 $('#ecLogoX').oninput=()=>{ normEndcard(EDL.settings).logo.x=parseFloat($('#ecLogoX').value); ecRefresh(); };
 $('#ecLogoY').oninput=()=>{ normEndcard(EDL.settings).logo.y=parseFloat($('#ecLogoY').value); ecRefresh(); };
+
+/* ---------- multi-track audio (music + sfx overlays on dedicated lanes) ---------- */
+let audSel = null;                            // selected audio overlay id
+const _audEls = {};                           // id → HTMLAudioElement (live preview)
+function uidA(){ return 'au'+Date.now()+Math.floor(Math.random()*1000); }
+function audList(){ return (EDL && EDL.audio) || []; }
+function audChCount(){ let n=1; audList().forEach(a=>{ n=Math.max(n,(+a.ach||0)+1); }); return n; }
+function _audSrcInLib(src){            // resolve src to {kind, name} for the picker UI
+  const m=src.match(/^sources\/(music|sfx)\/(.+)$/i);
+  return m?{kind:m[1].toLowerCase(), name:m[2]}:{kind:'?', name:src.split('/').pop()};
+}
+function _audDurForFile(src){          // probe duration client-side; returns Promise<seconds>
+  return new Promise(res=>{ const a=new Audio(); a.preload='metadata'; a.src='/'+encodeURI(src);
+    a.onloadedmetadata=()=>res(a.duration||3); a.onerror=()=>res(3); });
+}
+async function addAudioAtPlayhead(src){
+  histCommit(); EDL.audio = EDL.audio || [];
+  const dur = await _audDurForFile(src);
+  const total = totalDur()||1;
+  const start = Math.min(playhead||0, total-0.05);
+  const ach = _firstFreeAch(start, start + Math.min(dur, total-start));
+  const o = { id:uidA(), src, start:Math.round(start*100)/100, dur:Math.min(dur, total-start),
+              volume:1, fadeIn:0, fadeOut:0, ach };
+  EDL.audio.push(o); audSel = o.id; renderTracks(); audSyncEditor(); audSyncPreview();
+}
+function _firstFreeAch(a, b){          // pick the lowest audio lane that has no overlap in [a,b]
+  const taken = new Set();
+  audList().forEach(o=>{ const s=+o.start||0, e=s+(+o.dur||0); if(s<b && e>a) taken.add(+o.ach||0); });
+  let ch=0; while(taken.has(ch)) ch++; return ch;
+}
+function removeAudio(id){ histCommit(); EDL.audio = (EDL.audio||[]).filter(a=>a.id!==id);
+  if(audSel===id) audSel=null;
+  if(_audEls[id]){ try{_audEls[id].pause();}catch(_){} _audEls[id].src=''; delete _audEls[id]; }
+  renderTracks(); audSyncEditor(); audSyncPreview();
+}
+function audFind(id){ return audList().find(a=>a.id===id); }
+
+function openAudModal(){ stop(); $('#audModal').style.display='flex'; renderAudPickList(); audSyncEditor(); }
+function closeAudModal(){ $('#audModal').style.display='none'; }
+function renderAudPickList(){
+  const box=$('#audPickList'); if(!box) return; box.innerHTML='';
+  const q=(($('#audFilter')||{}).value||'').trim().toLowerCase();
+  const showM=$('#audShowMusic').checked, showS=$('#audShowSfx').checked;
+  const items=[]; if(showM) (MAN.music||[]).forEach(n=>items.push({kind:'m', name:n, src:'sources/music/'+n}));
+  if(showS) (MAN.sfx||[]).forEach(n=>items.push({kind:'s', name:n, src:'sources/sfx/'+n}));
+  const list=items.filter(it=>!q||it.name.toLowerCase().includes(q));
+  if(!list.length){ box.innerHTML='<div style="color:var(--mut);font-size:11px;padding:10px;text-align:center">No audio files. Drop .mp3/.wav into <code>sources/music/</code> or <code>sources/sfx/</code> then click Reload.</div>'; return; }
+  list.forEach(it=>{ const row=document.createElement('div'); row.className='audrow';
+    row.innerHTML=`<span class="kind ${it.kind}">${it.kind==='m'?'music':'sfx'}</span><span class="nm" title="${it.name}">${it.name.replace(/\.(mp3|m4a|wav|ogg|aac|flac)$/i,'')}</span>
+      <button class="mini" data-act="preview" title="Preview (play/stop)">▶</button>
+      <button class="mini primary" data-act="add">＋ Add at playhead</button>`;
+    row.querySelector('[data-act="add"]').onclick=()=>addAudioAtPlayhead(it.src);
+    let prev=null; row.querySelector('[data-act="preview"]').onclick=ev=>{ const btn=ev.currentTarget;
+      if(prev){ prev.pause(); prev=null; btn.textContent='▶'; return; }
+      prev=new Audio('/'+encodeURI(it.src)); prev.volume=0.6; prev.play().catch(()=>{}); btn.textContent='■';
+      prev.onended=()=>{ prev=null; btn.textContent='▶'; }; };
+    box.appendChild(row); });
+}
+function audSyncEditor(){
+  const box=$('#audEditor'); if(!box) return;
+  const a = audFind(audSel);
+  if(!a){ box.innerHTML='<div style="color:var(--mut);font-size:11px">Select an audio clip on the timeline to edit it.</div>'; return; }
+  const meta=_audSrcInLib(a.src||'');
+  box.innerHTML=`<div class="sec">Editing · <b>${meta.name}</b> <span style="color:var(--mut);font-weight:normal">(${meta.kind})</span></div>
+    <div><label>Start <input type="number" id="audE_start" step="0.1" style="width:64px" value="${a.start}"> s</label>
+      <label>Dur <input type="number" id="audE_dur" step="0.1" min="0.1" style="width:64px" value="${a.dur}"> s</label>
+      <button class="mini" id="audE_here">⤓ at playhead</button></div>
+    <div style="margin-top:6px"><label>Volume <input type="range" id="audE_vol" min="0" max="2" step="0.05" value="${a.volume!=null?a.volume:1}" style="width:160px"> <span id="audE_volV" style="font-size:11px;color:var(--mut)">${Math.round((a.volume!=null?a.volume:1)*100)}%</span></label></div>
+    <div><label>Fade in <input type="range" id="audE_fi" min="0" max="5" step="0.1" value="${a.fadeIn||0}" style="width:160px"> <span id="audE_fiV" style="font-size:11px;color:var(--mut)">${(a.fadeIn||0).toFixed(1)}s</span></label></div>
+    <div><label>Fade out <input type="range" id="audE_fo" min="0" max="5" step="0.1" value="${a.fadeOut||0}" style="width:160px"> <span id="audE_foV" style="font-size:11px;color:var(--mut)">${(a.fadeOut||0).toFixed(1)}s</span></label></div>
+    <div style="margin-top:6px"><button class="mini" id="audE_del">✕ Delete</button></div>`;
+  const upd=(k,v)=>{ a[k]=v; audSyncPreview(); renderTracks(); };
+  $('#audE_start').oninput=e=>{ upd('start', Math.max(0, parseFloat(e.target.value)||0)); };
+  $('#audE_dur').oninput=e=>{ upd('dur', Math.max(0.1, parseFloat(e.target.value)||0.1)); };
+  $('#audE_here').onclick=()=>{ a.start=Math.round((playhead||0)*100)/100; audSyncEditor(); audSyncPreview(); renderTracks(); };
+  $('#audE_vol').oninput=e=>{ const v=parseFloat(e.target.value)||0; a.volume=v; $('#audE_volV').textContent=Math.round(v*100)+'%'; audSyncPreview(); };
+  $('#audE_fi').oninput=e=>{ const v=parseFloat(e.target.value)||0; a.fadeIn=v; $('#audE_fiV').textContent=v.toFixed(1)+'s'; audSyncPreview(); };
+  $('#audE_fo').oninput=e=>{ const v=parseFloat(e.target.value)||0; a.fadeOut=v; $('#audE_foV').textContent=v.toFixed(1)+'s'; audSyncPreview(); };
+  $('#audE_del').onclick=()=>removeAudio(a.id);
+}
+// Build the on-timeline bar for one audio clip (drag-to-move, resize handles, hide/lock/delete icons)
+function buildAudioBar(a, total){
+  const b=document.createElement('div');
+  const meta=_audSrcInLib(a.src||'');
+  b.className='blk audclip '+(meta.kind==='s'?'sfx':'music')+(a.id===audSel?' sel':'')+(a.hidden?' clhidden':'')+(a.locked?' cllocked':'');
+  b.style.left=((+a.start||0)/total*100)+'%'; b.style.width=((+a.dur||0)/total*100)+'%';
+  b.appendChild(document.createTextNode((meta.kind==='s'?'🔊 ':'🎵 ')+meta.name.replace(/\.(mp3|m4a|wav|ogg|aac|flac)$/i,'')));
+  const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR'; b.appendChild(hL); b.appendChild(hR);
+  const ic=document.createElement('div'); ic.className='clipicons';
+  const mk=(txt,title,fn)=>{ const el=document.createElement('span'); el.className='cic'; el.textContent=txt; el.title=title;
+    el.onpointerdown=ev=>ev.stopPropagation(); el.onclick=ev=>{ ev.stopPropagation(); fn(); }; return el; };
+  ic.appendChild(mk(a.hidden?'🚫':'👁', a.hidden?'Hidden — click to show':'Click to mute (skips in preview + render)',
+    ()=>{ histCommit(); a.hidden=!a.hidden; renderTracks(); audSyncPreview(); }));
+  ic.appendChild(mk(a.locked?'🔒':'🔓', a.locked?'Locked':'Click to lock (prevents drag/resize)',
+    ()=>{ histCommit(); a.locked=!a.locked; renderTracks(); }));
+  ic.appendChild(mk('✕','Delete', ()=>removeAudio(a.id)));
+  b.appendChild(ic);
+  b.onclick=ev=>{ ev.stopPropagation(); audSel=a.id; if($('#audModal').style.display!=='flex'){ $('#audModal').style.display='flex'; renderAudPickList(); }
+    audSyncEditor(); renderTracks(); };
+  audBarInteract(b, hL, hR, a, total);
+  return b;
+}
+function audBarInteract(b, hL, hR, a, total){
+  const drag = mode => ev => {
+    if(a.locked){ ev.stopPropagation(); return; }
+    ev.preventDefault(); ev.stopPropagation();
+    const wrap=$('#tlTracksWrap'); const W=wrap.clientWidth||wrap.getBoundingClientRect().width||1;
+    const x0=ev.clientX; const start0=+a.start||0, dur0=+a.dur||0;
+    const move = e => { const dx=(e.clientX-x0)/W*total;
+      if(mode==='move'){ a.start = Math.max(0, Math.min(total-dur0, start0+dx)); }
+      else if(mode==='left'){ const ns=Math.max(0, Math.min(start0+dur0-0.1, start0+dx)); a.dur=Math.max(0.1, dur0-(ns-start0)); a.start=ns; }
+      else if(mode==='right'){ a.dur=Math.max(0.1, Math.min(total-start0, dur0+dx)); }
+      renderTracks(); audSyncPreview();
+    };
+    const up = () => { window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); histCommit(); audSyncEditor(); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+  b.onpointerdown = drag('move'); hL.onpointerdown = drag('left'); hR.onpointerdown = drag('right');
+}
+// Sync per-clip <audio> elements to current playhead + volume + fade envelope. Called on edit + every tick during playback.
+function _audEnv(a, t){             // returns volume multiplier at absolute time t (0..1 of clip-volume)
+  const ls = t - (+a.start||0); const dur = +a.dur||0; if(ls < 0 || ls > dur) return 0;
+  let v = (+a.volume!=null ? +a.volume : 1);
+  const fi = +a.fadeIn||0; if(fi > 0 && ls < fi) v *= ls/fi;
+  const fo = +a.fadeOut||0; if(fo > 0 && (dur-ls) < fo) v *= (dur-ls)/fo;
+  return Math.max(0, v);
+}
+function audSyncPreview(){
+  // ensure each audio overlay has its <audio> element with correct src + volume; remove stale ones
+  const list = audList(); const seen = new Set();
+  list.forEach(a=>{ seen.add(a.id);
+    let el = _audEls[a.id];
+    const url = '/'+encodeURI(a.src||'');
+    if(!el){ el = new Audio(); el.preload='metadata'; _audEls[a.id]=el; }
+    if(el._url !== url){ el.src = url; el._url = url; }
+    if(a.hidden){ el.volume=0; try{el.pause();}catch(_){} return; }
+    el.volume = Math.max(0, Math.min(1, _audEnv(a, playhead||0)));
+  });
+  Object.keys(_audEls).forEach(id=>{ if(!seen.has(id)){ try{_audEls[id].pause();}catch(_){} _audEls[id].src=''; delete _audEls[id]; } });
+}
+function audStartPlayback(){          // align + play every active audio clip at the current playhead
+  audList().forEach(a=>{ const el=_audEls[a.id]; if(!el) return;
+    const t = (playhead||0) - (+a.start||0);
+    if(t >= 0 && t < (+a.dur||0) && !a.hidden){ try{el.currentTime=t;}catch(_){} el.play().catch(()=>{}); }
+    else { try{el.pause();}catch(_){} }
+  });
+}
+function audStopPlayback(){ Object.values(_audEls).forEach(el=>{ try{el.pause();}catch(_){} }); }
+function audTick(t){                  // called from the playback loop; gate each clip on/off + update volume envelope
+  audList().forEach(a=>{ const el=_audEls[a.id]; if(!el) return;
+    const ls = t - (+a.start||0); const dur = +a.dur||0;
+    const active = !a.hidden && ls >= 0 && ls < dur;
+    if(active){ el.volume = _audEnv(a, t);
+      // soft re-sync if drift exceeds 0.15s (browsers occasionally drop frames or stutter)
+      if(el.paused) el.play().catch(()=>{}); else if(Math.abs(el.currentTime - ls) > 0.15){ try{el.currentTime=ls;}catch(_){} }
+    } else { if(!el.paused){ try{el.pause();}catch(_){} } }
+  });
+}
 
 /* ---------- overlays (free text / image / shape elements) ---------- */
 let ovEdit=false, ovSel=null;
@@ -2049,6 +2244,8 @@ function addShapeOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const g
   const o={id:uid(),type:'shape',shape:'roundrect',w:0.6,h:0.18,fill:g.solid,fillType:'gradient',gradStart:g.from,gradEnd:g.to,gradType:'linear',gradAngle:0,opacity:0.9,radius:0.04,stroke:'#ffffff',strokeW:0,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 $('#btnOverlays').onclick=openOvModal; $('#ovClose').onclick=closeOvModal;
+$('#btnAudio').onclick=openAudModal; $('#audClose').onclick=closeAudModal;
+$('#audFilter').oninput=renderAudPickList; $('#audShowMusic').onchange=renderAudPickList; $('#audShowSfx').onchange=renderAudPickList;
 $('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay; $('#ovAddArrow').onclick=addArrowOverlay;
 // + Image / ✨ Sprinkle dropdowns: Upload / Clip art / Library
 function closeImgMenu(){ $('#ovImgMenu').classList.remove('open'); }
@@ -2222,7 +2419,15 @@ function renderTracks(){
     }
     tr.appendChild(row);
   }
-  // music audio lane (spans the whole timeline; inline level control)
+  // Multi-track audio lanes (one row per audio channel) — each holds draggable audio clips
+  const audN = audChCount();
+  for(let ach=audN-1; ach>=0; ach--){
+    const arow2=document.createElement('div'); arow2.className='trk audiolane'; arow2.dataset.ach=ach;
+    audList().filter(a=>(+a.ach||0)===ach).forEach(a=>arow2.appendChild(buildAudioBar(a,total)));
+    const al2=document.createElement('div'); al2.className='lab'; al2.textContent='🎚 A'+ach; arow2.appendChild(al2);
+    tr.appendChild(arow2);
+  }
+  // Legacy single-music lane (kept for backward compat; renders alongside the new audio overlays)
   const arow=document.createElement('div'); arow.className='trk audiolane';
   const mname=EDL.settings.music||'';
   if(mname && MAN.music && MAN.music.includes(mname)){
@@ -2652,6 +2857,7 @@ function applyEDL(edl){
   if(s.captionY==null) s.captionY=0.62;
   if(!EDL.segments) EDL.segments=[];
   if(!Array.isArray(EDL.overlays)) EDL.overlays=[];
+  if(!Array.isArray(EDL.audio)) EDL.audio=[];   // multi-track audio overlays (music + sfx); legacy s.music still works alongside
   normEndcard(s);   // migrate/normalize end-card settings
   const ms=$('#setMusic'); ms.innerHTML=MAN.music.map(m=>`<option ${m===s.music?'selected':''}>${m}</option>`).join('');
   if(!MAN.music.includes(s.music)) s.music=MAN.music[0]||'';
