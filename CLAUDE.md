@@ -26,7 +26,7 @@ same story. When source is vertical UGC, the 16:9 cut needs deliberate reframing
 
 ## Folder layout
 
-- `sources/youtube/` — yt-dlp downloads (keep original filenames + a `urls.txt` log).
+- `sources/clips/` — yt-dlp downloads (keep original filenames + a `urls.txt` log).
 - `sources/dropped/` — clips Jason places here manually.
 - `_analysis/` — ffprobe dumps, contact sheets, scene-cut detection, caption transcripts.
 - `exports/` — final per-placement masters. Name `Meowi_<story>_<placement>_<len>.mp4`
@@ -39,13 +39,13 @@ same story. When source is vertical UGC, the 16:9 cut needs deliberate reframing
   shell, find via `(Get-Command ffmpeg).Source` or under
   `%LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg*`.
 - **yt-dlp** — installed via winget (`yt-dlp.yt-dlp`). Pull best mp4:
-  `yt-dlp -f "bv*+ba/b" -o "sources/youtube/%(title)s.%(ext)s" <URL>`.
+  `yt-dlp -f "bv*+ba/b" -o "sources/clips/%(title)s.%(ext)s" <URL>`.
 - Run terminal steps for Jason — he prefers GUI/chat over the terminal.
 - Long encodes: run in background (`run_in_background`) and poll, don't block.
 
 ## Workflow
 
-1. **Gather** — download YouTube links into `sources/youtube/`, log URLs; ingest dropped
+1. **Gather** — download YouTube links into `sources/clips/`, log URLs; ingest dropped
    clips. ffprobe every source (res, fps, duration, has-audio) into `_analysis/`.
 2. **Story EDL** — pick segments + order that tell the story. One continuous shot per
    segment; note in/out trims in seconds. Build a vertical master first.

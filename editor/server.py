@@ -13,7 +13,7 @@ RESTART_EXIT_CODE = 42   # launcher loop re-runs server.py when it exits with th
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EDITOR = os.path.join(PROJ, "editor")
 THUMBS = os.path.join(EDITOR, "thumbs")
-SRC_ROOT = os.path.join(PROJ, "sources", "youtube")
+SRC_ROOT = os.path.join(PROJ, "sources", "clips")   # the clip repository (was 'sources/youtube'; renamed v1.62.5 for clarity)
 MUSIC_DIR = os.path.join(PROJ, "sources", "music")
 SFX_DIR   = os.path.join(PROJ, "sources", "sfx")
 EXPORTS = os.path.join(PROJ, "exports")
@@ -135,7 +135,7 @@ def probe(path):
 BRAND_KEYS = ("meowijuana", "doggijuana", "kkz", "unassigned")     # canonical brand ids
 BRAND_LABEL = {"meowijuana": "Meowijuana", "doggijuana": "Doggijuana", "kkz": "Kitty Ka-Zoom", "unassigned": "Unassigned"}
 # Auto-defaults for known product folders. Anything not listed → "meowijuana" (most of the catalog).
-# Per-product overrides live in sources/youtube/_brands.json and beat these defaults.
+# Per-product overrides live in sources/clips/_brands.json and beat these defaults.
 BRAND_AUTODEFAULTS = {"juananip": "doggijuana"}
 BRANDS_FILE = os.path.join(SRC_ROOT, "_brands.json")
 
@@ -249,7 +249,7 @@ def vcodec(path):
 
 
 def ingest_upload(raw, orig_name, category):
-    """Save an uploaded video into sources/youtube/<brand>/<category>/ as a browser-playable
+    """Save an uploaded video into sources/clips/<brand>/<category>/ as a browser-playable
     .mp4 (remux if already H.264, else re-encode). Returns (rel_path, category)."""
     cat = re.sub(r"[^A-Za-z0-9_-]", "", (category or "uploads").lower()) or "uploads"
     # Reuse an existing product folder if there is one (flat OR nested) so we don't fragment.
