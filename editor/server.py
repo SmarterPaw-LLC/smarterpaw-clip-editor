@@ -703,20 +703,87 @@ def _sparkle_field(a):
     return out
 
 
+_FONT_CMAP_CACHE = {}
+def _font_has_char(font_path, codepoint):
+    """True iff the font's cmap actually has a glyph for this codepoint (not just .notdef tofu)."""
+    cm = _FONT_CMAP_CACHE.get(font_path)
+    if cm is None:
+        cm = set()
+        try:
+            from fontTools.ttLib import TTFont
+            tt = TTFont(font_path, lazy=True)
+            for table in tt["cmap"].tables:
+                cm.update(table.cmap.keys())
+            tt.close()
+        except Exception:
+            cm = None                              # fontTools missing → assume the font has everything
+        _FONT_CMAP_CACHE[font_path] = cm
+    return True if cm is None else (codepoint in cm)
+
+
 def _emoji_png(emoji, out, px=256):
-    """Rasterize an emoji to a transparent PNG via Segoe UI Emoji (color)."""
+    """Rasterize an emoji / decorative sparkle string to a transparent PNG with FONT FALLBACK.
+    Each char picks the first font whose CMAP ACTUALLY has it (Pillow has no per-glyph fallback,
+    and .notdef tofu glyphs would otherwise sneak through a naive 'rendered pixels' check).
+    So "˗ˏˋ ✸ ˎˊ˗" renders the modifier marks via Lucida/Cambria and the star via emoji font."""
     from PIL import Image, ImageDraw, ImageFont
-    font = ImageFont.truetype("C:/Windows/Fonts/seguiemj.ttf", px)
-    img = Image.new("RGBA", (px * 2, px * 2), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    try:
-        d.text((px, px), emoji, font=font, embedded_color=True, anchor="mm")
-    except Exception:
-        d.text((px, px), emoji, font=font, anchor="mm")
-    bb = img.getbbox()
-    if bb:
-        img = img.crop(bb)
-    img.save(out)
+    candidates = [
+        ("C:/Windows/Fonts/seguiemj.ttf",      True),    # color emoji (✨ 🎉 ⭐)
+        ("C:/Windows/Fonts/seguisym.ttf",      False),   # Segoe UI Symbol (✸ ✶ ⋆ ★)
+        ("C:/Windows/Fonts/l_10646.ttf",       False),   # Lucida Sans Unicode (modifier letters ˗ˏˋ)
+        ("C:/Windows/Fonts/lucon.ttf",         False),   # Lucida Console (broad coverage fallback)
+        ("C:/Windows/Fonts/cambria.ttc",       False),   # Cambria (broad symbol coverage)
+        ("C:/Windows/Fonts/segoeui.ttf",       False),
+        ("C:/Windows/Fonts/arial.ttf",         False),
+    ]
+    fonts = []
+    for path, is_color in candidates:
+        try:
+            fonts.append((path, is_color, ImageFont.truetype(path, px)))
+        except Exception:
+            pass
+    if not fonts:
+        Image.new("RGBA", (1, 1)).save(out); return
+
+    def pick(ch):
+        cp = ord(ch)
+        for path, is_color, f in fonts:
+            if _font_has_char(path, cp):
+                return f, is_color
+        return fonts[-1][2], fonts[-1][1]
+
+    if not emoji:
+        Image.new("RGBA", (1, 1)).save(out); return
+
+    pad = int(px * 0.05)
+    pieces = []
+    for ch in emoji:
+        if ch.isspace():
+            pieces.append((None, int(px * 0.3))); continue
+        f, is_color = pick(ch)
+        cell = Image.new("RGBA", (px * 2, px * 2), (0, 0, 0, 0))
+        d = ImageDraw.Draw(cell)
+        try:
+            d.text((px, px), ch, font=f, embedded_color=is_color, anchor="mm", fill=(255, 255, 255, 255))
+        except Exception:
+            d.text((px, px), ch, font=f, anchor="mm", fill=(255, 255, 255, 255))
+        bb = cell.getbbox()
+        if not bb: pieces.append((None, int(px * 0.15))); continue
+        pieces.append((cell.crop(bb), cell.crop(bb).width))
+
+    real = [p for p in pieces if p[0] is not None]
+    if not real:
+        Image.new("RGBA", (1, 1)).save(out); return
+
+    total_w = sum(w for _, w in pieces) + max(0, len(pieces) - 1) * pad
+    max_h = max(p[0].height for p in real)
+    out_img = Image.new("RGBA", (max(1, total_w), max(1, max_h)), (0, 0, 0, 0))
+    x = 0
+    for img, w in pieces:
+        if img is not None:
+            out_img.paste(img, (x, (max_h - img.height) // 2), img)
+        x += w + pad
+    out_img.save(out)
 
 
 def prerender_piececlip(o, W, H, tmp, k):
