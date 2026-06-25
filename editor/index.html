@@ -244,7 +244,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.61.1</span>
+  <span class="ver" id="appVer">v1.61.2</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1238,7 +1238,8 @@ function buildStickerCanvas(o){
   const maxLineW=rows.reduce((mx,t)=>Math.max(mx,measure(t)),0);
   const cw=Math.max(60,Math.ceil(maxLineW+strokeBleed*2));
   const maxW=cw-strokeBleed*2;
-  const TOP=Math.round(sizePx*0.32), BOT=Math.round(sizePx*0.32);
+  const STROKE_PAD=Math.ceil(outline*1.5);   // give the white outline room above/below tall dots+descenders so it doesn't clip at the canvas top/bottom (strokeBleed already handles horizontal)
+  const TOP=Math.round(sizePx*0.32)+STROKE_PAD, BOT=Math.round(sizePx*0.32)+STROKE_PAD;
   let y=TOP; const rowPos=[]; rows.forEach((t,i)=>{ y+=sizePx; rowPos.push({text:t,y:y}); if(i<rows.length-1) y+=gapPx; });
   const textBottom=y, textH=textBottom-TOP;
   const shadowBleed=Math.ceil((sdy+shadow*2)*spread)+8;
