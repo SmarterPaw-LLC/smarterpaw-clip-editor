@@ -625,6 +625,9 @@ def _anim_exprs(o, s, dur, W, tv="t"):
         eA = s + aE                        # absolute timeline end of the window
         win_open, win_close = s + aS, eA
         lt = "((%s-%g)+%g)" % (tv, win_open, aphase) if aphase else "(%s-%g)" % (tv, win_open)
+        gfps = float(a.get("gifFps", 0) or 0)             # GIF-look: quantize this anim's time
+        if gfps > 0:
+            lt = "(floor(%s*%g)/%g)" % (lt, gfps, gfps)
         gate = "between(%s,%g,%g)" % (tv, win_open, win_close)
         windowed = (aS > 0 or aE < dur)
         def add_dx(expr): dxs.append(("if(%s,%s,0)" % (gate, expr)) if windowed else expr)
@@ -818,6 +821,16 @@ def prerender_piececlip(o, W, H, tmp, k):
         odx, ody, _, _, orot = _anim_exprs(po, 0, dur, W, "t")    # position + anim rotation (overlay/clip time = t)
         _, _, amT, has_op, _ = _anim_exprs(po, 0, dur, W, "T")    # opacity via geq (pixel time = T)
         filt = ["scale=%d:-1" % sw, "format=rgba"]
+        # cycle-hue support for per-piece sprinkles (each piece animates with its own phase via aphase)
+        aphase = float(pc.get("aphase", 0) or 0)
+        for a in anims:
+            if a.get("type") != "cycleHue": continue
+            aS = max(0.0, float(a.get("tStart", 0) or 0)); aEv = a.get("tEnd")
+            aE = min(dur, float(aEv)) if (aEv is not None and float(aEv) > 0) else dur
+            if aE <= aS: continue
+            sp = float(a.get("speed", 0.5)); off = float(a.get("offset", 0))
+            expr = "if(between(t,%g,%g),%g+%g*((t-%g)+%g),0)" % (aS, aE, off, sp * 360.0, aS, aphase)
+            filt.append("hue=h='%s'" % expr)
         if has_op:
             filt.append("geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(%s)'" % amT)
         pop = next((a for a in anims if a.get("type") == "popIn"), None)

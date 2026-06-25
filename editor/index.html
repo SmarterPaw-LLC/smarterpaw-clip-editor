@@ -244,7 +244,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.59.0</span>
+  <span class="ver" id="appVer">v1.60.0</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1174,7 +1174,8 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg
     const aS=Math.max(0, +a.tStart||0);
     const aE=(a.tEnd!=null && +a.tEnd>0) ? Math.min(dur, +a.tEnd) : dur;
     if(Tg < aS || Tg >= aE) return;
-    const T = Tg - aS, dw = aE - aS;
+    let T = Tg - aS; const dw = aE - aS;
+    if(a.gifFps && +a.gifFps>0) T = Math.floor(T * +a.gifFps) / +a.gifFps;   // GIF-look: quantize this anim's time
     switch(a.type){
     case 'blink': { const sp=a.speed||2; op*=(Math.sin(2*Math.PI*sp*T)>=0)?1:0; break; }
     case 'wiggle': { const amp=a.amp!=null?a.amp:8, sp=a.speed||2; rot+=amp*Math.sin(2*Math.PI*sp*T); break; }
@@ -1540,6 +1541,7 @@ function renderSprinklePieces(o, time, layer, baseZ){
     el.style.width=pw+'px'; el.style.height=(pw*ar)+'px'; el.style.zIndex=baseZ;
     el.style.left=((bx+p.fx*(o.w||0.7))*100)+'%'; el.style.top=((by+p.fy*(o.h||0.7))*100)+'%';
     el.style.transform='translate(-50%,-50%) translate('+A.dx.toFixed(1)+'px,'+A.dy.toFixed(1)+'px) rotate('+((A.rot||0)+p.rot*180/Math.PI).toFixed(1)+'deg) scale('+(A.sc!=null?A.sc:1).toFixed(3)+')';
+    el.style.filter = (A.hue && A.hue!==0) ? ('hue-rotate('+A.hue.toFixed(1)+'deg)') : '';   // per-piece hue cycle
     el.style.opacity=active?A.op:0;
   });
 }
@@ -1918,12 +1920,18 @@ function buildOvEditor(){
   function renderAnimList(){ const L=$('#ovAnimList'); if(!L) return; const anims=o.anims||[];
     L.innerHTML = anims.length ? anims.map((a,ai)=>{ const def=ANIM_DEFS[a.type]||{label:a.type,ctrls:[]};
       const tsv=(a.tStart!=null?(+a.tStart).toFixed(2):''), tev=(a.tEnd!=null?(+a.tEnd).toFixed(2):'');
+      const gfOn=!!(a.gifFps && +a.gifFps>0); const gfv=gfOn?(+a.gifFps):8;
       return `<div class="ecline" style="flex-direction:column;align-items:stretch;gap:4px"><div style="display:flex;align-items:center;gap:6px"><b style="flex:1;font-size:12px">${def.label}</b><button class="mini anrm" data-ai="${ai}" title="remove">✕</button></div><div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--mut)">${def.ctrls.map(c=>animCtrl(ai,a,c)).join('')}</div>
         <div style="display:flex;gap:8px;font-size:11px;color:var(--mut);align-items:center;border-top:1px solid var(--line);padding-top:4px">
           <span title="Seconds within the overlay">Plays</span>
           <label>from <input type="number" class="anwin" data-ai="${ai}" data-k="tStart" min="0" step="0.1" value="${tsv}" placeholder="0" style="width:54px"></label>
           <label>to <input type="number" class="anwin" data-ai="${ai}" data-k="tEnd" min="0" step="0.1" value="${tev}" placeholder="end" style="width:54px"></label>
           <span style="color:var(--mut);font-size:10px">s · blank = full overlay</span>
+        </div>
+        <div style="display:flex;gap:8px;font-size:11px;color:var(--mut);align-items:center;border-top:1px solid var(--line);padding-top:4px" title="Quantizes this animation's time to discrete frames — like a low-FPS GIF/stop-motion">
+          <label class="ck"><input type="checkbox" class="angif" data-ai="${ai}" ${gfOn?'checked':''}> GIF look</label>
+          <label style="${gfOn?'':'opacity:.5'}">fps <input type="number" class="angiff" data-ai="${ai}" min="1" max="30" step="1" value="${gfv}" style="width:46px" ${gfOn?'':'disabled'}></label>
+          <span style="color:var(--mut);font-size:10px">stepped frames</span>
         </div></div>`;
     }).join('') : '<div style="color:var(--mut);font-size:11px">No animations yet.</div>';
     const have=new Set(anims.map(a=>a.type));
@@ -1937,6 +1945,10 @@ function buildOvEditor(){
     L.querySelectorAll('.anrm').forEach(b=>{ b.onclick=()=>{ histCommit(); o.anims.splice(+b.dataset.ai,1); renderAnimList(); renderOverlays(playhead); }; });
     L.querySelectorAll('.anwin').forEach(el=>{ el.oninput=el.onchange=()=>{ const a=o.anims[+el.dataset.ai], k=el.dataset.k, v=el.value.trim();
       if(v==='') delete a[k]; else a[k]=parseFloat(v)||0; renderOverlays(playhead); }; });
+    L.querySelectorAll('.angif').forEach(el=>{ el.onchange=()=>{ const a=o.anims[+el.dataset.ai];
+      if(el.checked){ a.gifFps = a.gifFps && +a.gifFps>0 ? +a.gifFps : 8; } else { delete a.gifFps; }
+      renderAnimList(); renderOverlays(playhead); }; });
+    L.querySelectorAll('.angiff').forEach(el=>{ el.oninput=el.onchange=()=>{ const a=o.anims[+el.dataset.ai], v=Math.max(1, parseFloat(el.value)||8); a.gifFps=v; renderOverlays(playhead); }; });
     addSliderNumbers(L);   // number steppers on animation sliders too
     updSpWarn();
   }
