@@ -128,6 +128,11 @@
   .mgrrow .meta { flex:1; min-width:0; }
   .mgrrow .meta b { display:block; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .mgrrow .meta span { color:var(--mut); font-size:11px; }
+  .mgrrow .tags { display:flex; flex-wrap:wrap; gap:3px; margin-top:3px; }
+  .mgrrow .tag { background:#2d3140; color:#cde; border:1px solid #3a3e48; padding:0 6px; border-radius:8px; font-size:10px; cursor:pointer; line-height:16px; }
+  .mgrrow .tag:hover { background:#4a3f1a; color:#fff; }
+  .mgrrow .tagadd { background:transparent; color:var(--mut); border:1px dashed #3a3e48; padding:0 6px; border-radius:8px; font-size:10px; cursor:pointer; line-height:16px; }
+  .mgrrow .tagadd:hover { color:#fff; border-color:var(--acc, #f0a830); }
   .mgrrow .mgrcat { flex:none; max-width:140px; }
   .ovdrop { position:relative; display:inline-block; }
   .ovmenu { display:none; position:absolute; top:100%; left:0; z-index:20; margin-top:3px; background:var(--panel2,#222); border:1px solid var(--line); border-radius:8px; padding:4px; min-width:150px; box-shadow:0 6px 20px #0008; }
@@ -267,7 +272,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.62.1</span>
+  <span class="ver" id="appVer">v1.62.2</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -763,6 +768,7 @@ async function saveClipTags(cid, tags){
     if(r && r.ok && local) local.tags = r.tags || [];
   }catch(e){}
   renderBin();
+  if($('#clipMgrModal') && $('#clipMgrModal').style.display==='flex') renderClipMgr();   // keep both views in sync
 }
 function _clipMatchesQuery(c, q){
   if(!q) return true;
@@ -2797,7 +2803,14 @@ function renderClipMgr(){
       bsel.onchange=()=>{ $('#mgrStatus').textContent='Updating brand for '+c.product+'…'; setProductBrand(c.product, bsel.value).then(()=>$('#mgrStatus').textContent='Brand updated.'); };
       ph.appendChild(bsel); box.appendChild(ph); }
     const row=document.createElement('div'); row.className='mgrrow';
-    row.innerHTML=`<img src="${c.thumb}" loading="lazy"><div class="meta"><b>${(c.label||c.id).replace(/</g,'&lt;')}</b><span>${c.product} · ${fmt(c.dur)}s · ${c.w}×${c.h}</span></div>`;
+    const tagsHtml = (c.tags||[]).map(t=>`<span class="tag" data-t="${t.replace(/"/g,'&quot;')}" title="Click to remove">${t}</span>`).join('');
+    row.innerHTML=`<img src="${c.thumb}" loading="lazy"><div class="meta"><b>${(c.label||c.id).replace(/</g,'&lt;')}</b><span>${c.product} · ${fmt(c.dur)}s · ${c.w}×${c.h}</span>
+      <div class="tags">${tagsHtml}<span class="tagadd" title="Add tag">+ tag</span></div></div>`;
+    row.querySelectorAll('.tag').forEach(chip=>{ chip.onclick=ev=>{ ev.stopPropagation(); const tag=chip.dataset.t; saveClipTags(c.id, (c.tags||[]).filter(t=>t!==tag)); }; });
+    const addBtn=row.querySelector('.tagadd'); if(addBtn) addBtn.onclick=ev=>{ ev.stopPropagation();
+      const v=(prompt('Add tag(s) — comma-separated:', '')||'').trim(); if(!v) return;
+      const next=Array.from(new Set([...(c.tags||[]), ...v.split(',').map(t=>t.trim()).filter(Boolean)]));
+      saveClipTags(c.id, next); };
     const sel=document.createElement('select'); sel.className='mgrcat'; sel.title='Category (moves the file)';
     cats.forEach(cat=>{ const o=document.createElement('option'); o.value=cat; o.textContent=cat; if(cat===c.product)o.selected=true; sel.appendChild(o); });
     const nw=document.createElement('option'); nw.value='__new__'; nw.textContent='➕ New category…'; sel.appendChild(nw);

@@ -163,6 +163,49 @@ def product_brand(product, brand_map=None):
     return BRAND_AUTODEFAULTS.get(product, "meowijuana")
 
 
+def _brand_from_path(full_path, product, bm):
+    """If the clip lives under <SRC_ROOT>/<brand>/<product>/file, use that brand from disk.
+    Otherwise fall back to the brand_map / autodefaults (legacy flat layout)."""
+    rel = os.path.relpath(full_path, SRC_ROOT).replace("\\", "/")
+    parts = rel.split("/")
+    if len(parts) >= 3:                                # <brand>/<product>/<file>...
+        b = parts[0].lower()
+        if b in BRAND_KEYS:
+            return b
+    return product_brand(product, bm)
+
+
+def _find_product_dir(product):
+    """Return the absolute path of an existing product folder, whether it's at the legacy
+    flat location (SRC_ROOT/<product>) OR nested under any brand (SRC_ROOT/<brand>/<product>)."""
+    flat = os.path.join(SRC_ROOT, product)
+    if os.path.isdir(flat):
+        return flat
+    if not os.path.isdir(SRC_ROOT):
+        return None
+    for b in os.listdir(SRC_ROOT):
+        bp = os.path.join(SRC_ROOT, b)
+        if not os.path.isdir(bp) or b.lower() not in BRAND_KEYS:
+            continue
+        nested = os.path.join(bp, product)
+        if os.path.isdir(nested):
+            return nested
+    return None
+
+
+def _cleanup_empty_dirs(path):
+    """Remove a directory and any now-empty parent directories up to (but not including) SRC_ROOT.
+    Safe no-op if path doesn't exist or isn't empty."""
+    try:
+        if path and os.path.isdir(path) and not os.listdir(path):
+            os.rmdir(path)
+            parent = os.path.dirname(path)
+            if parent and os.path.abspath(parent) != os.path.abspath(SRC_ROOT):
+                _cleanup_empty_dirs(parent)
+    except OSError:
+        pass
+
+
 def scan_sources():
     """Return list of clips: {id,label,product,brand,url,dur,w,h,tags}."""
     bm = load_brand_map()
@@ -183,7 +226,8 @@ def scan_sources():
             if m:
                 label = fn[:m.start()].strip().strip("｜|").strip()
             label = re.sub(r"\s+", " ", label)[:60] or fn
-            clips.append({"id": cid, "label": label, "product": product, "brand": product_brand(product, bm),
+            clips.append({"id": cid, "label": label, "product": product,
+                          "brand": _brand_from_path(full, product, bm),
                           "url": "/" + urllib.parse.quote(rel), "file": full,
                           "dur": round(dur, 2), "w": w, "h": h,
                           "tags": tags_map.get(cid, [])})
@@ -205,10 +249,16 @@ def vcodec(path):
 
 
 def ingest_upload(raw, orig_name, category):
-    """Save an uploaded video into sources/youtube/<category>/ as a browser-playable
+    """Save an uploaded video into sources/youtube/<brand>/<category>/ as a browser-playable
     .mp4 (remux if already H.264, else re-encode). Returns (rel_path, category)."""
     cat = re.sub(r"[^A-Za-z0-9_-]", "", (category or "uploads").lower()) or "uploads"
-    dest_dir = os.path.join(SRC_ROOT, cat)
+    # Reuse an existing product folder if there is one (flat OR nested) so we don't fragment.
+    existing = _find_product_dir(cat)
+    if existing:
+        dest_dir = existing
+    else:
+        brand = product_brand(cat)                     # brand_map / autodefaults → "meowijuana" if unknown
+        dest_dir = os.path.join(SRC_ROOT, brand, cat)
     os.makedirs(dest_dir, exist_ok=True)
     src_ext = os.path.splitext(orig_name)[1].lower() or ".bin"
     stem = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.splitext(os.path.basename(orig_name))[0]) or "clip"
@@ -1644,19 +1694,27 @@ class Handler(BaseHTTPRequestHandler):
             src = id_to_file().get(cid)
             if not src or not os.path.exists(src):
                 return self._json({"ok": False, "log": "clip not found"}, 404)
-            dest_dir = os.path.join(SRC_ROOT, cat)
+            # Move into <SRC_ROOT>/<brand>/<cat>/ so the folder tree reflects brand AND category.
+            bm = load_brand_map()
+            cur_product = os.path.basename(os.path.dirname(src))
+            brand = _brand_from_path(src, cur_product, bm)
+            dest_dir = os.path.join(SRC_ROOT, brand, cat)
             if os.path.abspath(os.path.dirname(src)) == os.path.abspath(dest_dir):
-                return self._json({"ok": True, "category": cat})   # already there
+                return self._json({"ok": True, "category": cat, "brand": brand})
             os.makedirs(dest_dir, exist_ok=True)
             dest = os.path.join(dest_dir, os.path.basename(src))
             if os.path.exists(dest):
-                return self._json({"ok": False, "log": f"a clip with that name already exists in '{cat}'"}, 409)
+                return self._json({"ok": False, "log": f"a clip with that name already exists in '{brand}/{cat}'"}, 409)
             try:
                 shutil.move(src, dest)
             except Exception as e:
                 return self._json({"ok": False, "log": repr(e)}, 500)
             _probe_cache.pop(src, None)
-            return self._json({"ok": True, "category": cat})
+            _probe_disk.pop(src, None)
+            _cleanup_empty_dirs(os.path.dirname(src))
+            # Remember this product->brand mapping so flat-layout siblings still resolve
+            bm[cat] = brand; save_brand_map(bm)
+            return self._json({"ok": True, "category": cat, "brand": brand})
         if path == "/api/clip/tags":      # set the tag list for ONE clip (replaces existing tags)
             cid = (data.get("id") or "").strip()
             tags = data.get("tags") or []
@@ -1668,13 +1726,32 @@ class Handler(BaseHTTPRequestHandler):
                 tm.pop(cid, None)
             save_clip_tags(tm)
             return self._json({"ok": True, "id": cid, "tags": load_clip_tags().get(cid, [])})
-        if path == "/api/clip/setbrand":   # set the brand of a PRODUCT folder; all clips in it inherit
+        if path == "/api/clip/setbrand":   # set the brand of a PRODUCT folder + PHYSICALLY MOVE the folder under that brand
             product = (data.get("product") or "").strip()
             brand = (data.get("brand") or "").strip().lower()
             if not product or brand not in BRAND_KEYS:
                 return self._json({"ok": False, "log": "product + valid brand required"}, 400)
             bm = load_brand_map(); bm[product] = brand; save_brand_map(bm)
-            return self._json({"ok": True, "product": product, "brand": brand})
+            src_dir = _find_product_dir(product)
+            if not src_dir:
+                return self._json({"ok": True, "product": product, "brand": brand, "moved": False})
+            dest_dir = os.path.join(SRC_ROOT, brand, product)
+            if os.path.abspath(src_dir) == os.path.abspath(dest_dir):
+                return self._json({"ok": True, "product": product, "brand": brand, "moved": False})
+            if os.path.exists(dest_dir):
+                return self._json({"ok": False, "log": f"target folder already exists: {dest_dir}"}, 409)
+            try:
+                os.makedirs(os.path.dirname(dest_dir), exist_ok=True)
+                shutil.move(src_dir, dest_dir)
+            except Exception as e:
+                return self._json({"ok": False, "log": f"move failed: {e!r}"}, 500)
+            # Cached paths under src_dir are now stale — drop them so re-probe (cache key has path)
+            for k in list(_probe_cache.keys()):
+                if k.startswith(src_dir + os.sep): _probe_cache.pop(k, None)
+            for k in list(_probe_disk.keys()):
+                if k.startswith(src_dir + os.sep): _probe_disk.pop(k, None)
+            _cleanup_empty_dirs(os.path.dirname(src_dir))
+            return self._json({"ok": True, "product": product, "brand": brand, "moved": True})
         if path == "/api/clip/delete":
             cid = (data.get("id") or "").strip()
             src = id_to_file().get(cid)
