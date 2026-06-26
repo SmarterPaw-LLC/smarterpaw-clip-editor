@@ -302,7 +302,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.64.2</span>
+  <span class="ver" id="appVer">v1.64.3</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1467,11 +1467,23 @@ function audSyncEditor(){
   $('#audE_del').onclick=()=>removeAudio(a.id);
 }
 // Build the on-timeline bar for one audio clip (drag-to-move, resize handles, hide/lock/delete icons)
+// Hash the audio src to a stable hue (0-359) so every distinct file gets a unique color, and
+// every instance of the same file (copy/paste) shares it — so the timeline reads at a glance.
+function _audHueForSrc(src){
+  let h = 0; const s = src || '';
+  for(let i = 0; i < s.length; i++) h = ((h<<5) - h + s.charCodeAt(i)) | 0;
+  return ((h % 360) + 360) % 360;
+}
 function buildAudioBar(a, total){
-  const b=document.createElement('div');
+  const b=document.createElement('div'); b.dataset.audid=a.id;
   const meta=_audSrcInLib(a.src||'');
   b.className='blk audclip '+(meta.kind==='s'?'sfx':'music')+(a.id===audSel?' sel':'')+(a.hidden?' clhidden':'')+(a.locked?' cllocked':'');
   b.style.left=((+a.start||0)/total*100)+'%'; b.style.width=((+a.dur||0)/total*100)+'%';
+  // Per-file color coding: bar background + inner border derived from the src hash.
+  // SFX get a slightly warmer baseline (saturation+lightness shift) so the kind is also legible at a glance.
+  const hue = _audHueForSrc(a.src||''), sat = meta.kind==='s' ? 60 : 50, lt = meta.kind==='s' ? 28 : 26;
+  b.style.background = `hsl(${hue}, ${sat}%, ${lt}%)`;
+  b.style.boxShadow = `inset 0 0 0 1px hsl(${hue}, ${sat+10}%, ${lt+22}%)`;
   b.appendChild(document.createTextNode((meta.kind==='s'?'🔊 ':'🎵 ')+meta.name.replace(/\.(mp3|m4a|wav|ogg|aac|flac)$/i,'')));
   const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR'; b.appendChild(hL); b.appendChild(hR);
   const ic=document.createElement('div'); ic.className='clipicons';
@@ -1483,7 +1495,7 @@ function buildAudioBar(a, total){
     ()=>{ histCommit(); a.locked=!a.locked; renderTracks(); }));
   ic.appendChild(mk('✕','Delete', ()=>removeAudio(a.id)));
   b.appendChild(ic);
-  b.onclick=ev=>{ ev.stopPropagation(); audSel=a.id; if($('#audModal').style.display!=='flex'){ $('#audModal').style.display='flex'; renderAudPickList(); }
+  b.onclick=ev=>{ ev.stopPropagation(); audSel=a.id; _lastPick='aud'; if($('#audModal').style.display!=='flex'){ $('#audModal').style.display='flex'; renderAudPickList(); }
     audSyncEditor(); renderTracks(); };
   audBarInteract(b, hL, hR, a, total);
   return b;
@@ -3400,9 +3412,15 @@ document.addEventListener('keydown', e=>{ if(!(e.ctrlKey||e.metaKey)) return; co
   if(k==='y'||(k==='z'&&e.shiftKey)){ e.preventDefault(); doRedo(); return; }
   if(k==='c'||k==='x'){   // copy / cut — act on whichever was selected most recently
     const ov=ovSel?(EDL.overlays||[]).find(x=>x.id===ovSel):null;
+    const aud=audSel?(EDL.audio||[]).find(x=>x.id===audSel):null;
     const clipOk=sel>=0 && EDL.segments[sel];
-    const useOv = ov && (_lastPick==='ov' || !clipOk);   // overlay wins if it was picked last (or no clip selected)
-    if(useOv){ e.preventDefault();
+    const useAud = aud && (_lastPick==='aud' || (!ov && !clipOk));
+    const useOv  = !useAud && ov && (_lastPick==='ov' || !clipOk);
+    if(useAud){ e.preventDefault();
+      _clipboard={kind:'aud', obj:JSON.parse(JSON.stringify(aud))};
+      if(k==='x'){ removeAudio(audSel); toast('Audio clip cut'); }
+      else toast('Audio clip copied'); }
+    else if(useOv){ e.preventDefault();
       _clipboard={kind:'ov', obj:JSON.parse(JSON.stringify(ov))};
       if(k==='x'){ histCommit(); EDL.overlays=EDL.overlays.filter(x=>x.id!==ovSel); ovSel=null; renderOvList(); buildOvEditor(); renderTracks(); renderOverlays(playhead); toast('Overlay cut'); }
       else toast('Overlay copied'); }
@@ -3412,7 +3430,15 @@ document.addEventListener('keydown', e=>{ if(!(e.ctrlKey||e.metaKey)) return; co
     return; }
   if(k==='v'){   // paste at the playhead
     if(!_clipboard) return; e.preventDefault(); histCommit();
-    if(_clipboard.kind==='ov'){ const o=JSON.parse(JSON.stringify(_clipboard.obj)); o.id=uid(); ovPlace(o);
+    if(_clipboard.kind==='aud'){
+      const a=JSON.parse(JSON.stringify(_clipboard.obj)); a.id=uidA();
+      const total=totalDur()||1, start=Math.min(playhead||0, Math.max(0,total-0.1));
+      const dur=Math.max(0.1, Math.min(+a.dur||1, total-start));
+      a.start=Math.round(start*100)/100; a.dur=dur;
+      a.ach=_firstFreeAch(start, start+dur);    // drop on the next free audio lane (or stack if everything's busy)
+      (EDL.audio=EDL.audio||[]).push(a); audSel=a.id; _lastPick='aud';
+      renderTracks(); audSyncEditor(); audSyncPreview(); toast('Audio clip pasted'); }
+    else if(_clipboard.kind==='ov'){ const o=JSON.parse(JSON.stringify(_clipboard.obj)); o.id=uid(); ovPlace(o);
       EDL.overlays.push(o); ovSel=o.id; _lastPick='ov'; renderOvList(); buildOvEditor(); renderTimeline(); renderTracks(); renderOverlays(playhead); toast('Overlay pasted'); }
     else { const c=JSON.parse(JSON.stringify(_clipboard.obj)); delete c.gap; const p=placeAtPlayhead(segLen(c),1); c.ch=p.ch; c.t0=p.t0;
       EDL.segments.push(c); sel=EDL.segments.length-1; renderTimeline(); renderTracks(); selectSeg(sel); toast('Clip pasted'); }
