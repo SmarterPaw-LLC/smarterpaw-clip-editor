@@ -302,7 +302,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.64.7</span>
+  <span class="ver" id="appVer">v1.65.0</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -444,7 +444,8 @@
         <button class="mini" id="btnTlZoomIn" title="Zoom in (Ctrl+wheel on the timeline)">+</button>
         <button class="mini" id="btnTlZoomFit" title="Fit timeline to window (zoom 100%)">Fit</button>
       </span>
-      <button class="mini" id="btnAddCh" title="Add a clip channel above (higher channels cover lower ones)" style="margin-left:8px">＋ Channel</button></h2>
+      <button class="mini" id="btnAddCh" title="Add a clip channel above (higher channels cover lower ones)" style="margin-left:8px">＋ Channel</button>
+      <button class="mini" id="btnAddAudCh" title="Add an audio lane (drag audio clips up into it)" style="margin-left:4px">＋ Audio lane</button></h2>
     <div id="tlTracksWrap">
       <div id="tlRuler"></div>
       <div id="tlTracks"></div>
@@ -1398,7 +1399,13 @@ let audSel = null;                            // selected audio overlay id
 const _audEls = {};                           // id → HTMLAudioElement (live preview)
 function uidA(){ return 'au'+Date.now()+Math.floor(Math.random()*1000); }
 function audList(){ return (EDL && EDL.audio) || []; }
-function audChCount(){ let n=1; audList().forEach(a=>{ n=Math.max(n,(+a.ach||0)+1); }); return n; }
+function audChCount(){ let n=Math.max(1, +((EDL&&EDL.audioChannels))||1);   // user-set count (so empty lanes persist)
+  audList().forEach(a=>{ n=Math.max(n,(+a.ach||0)+1); }); return n; }
+function audChEmpty(ach){ return !audList().some(a=>(+a.ach||0)===ach); }
+function addAudChannel(){ histCommit(); EDL.audioChannels=audChCount()+1; renderTracks(); toast('Audio lane A'+(audChCount()-1)+' added — drag audio clips up into it'); }
+function removeAudChannel(){ histCommit();
+  let used=0; audList().forEach(a=>{ used=Math.max(used,(+a.ach||0)); });
+  EDL.audioChannels=Math.max(1, used+1); renderTracks(); }
 function _audSrcInLib(src){            // resolve src to {kind, name} for the picker UI
   const m=src.match(/^sources\/(music|sfx)\/(.+)$/i);
   return m?{kind:m[1].toLowerCase(), name:m[2]}:{kind:'?', name:src.split('/').pop()};
@@ -1510,10 +1517,20 @@ function audBarInteract(b, hL, hR, a, total){
   const drag = mode => ev => {
     if(a.locked){ ev.stopPropagation(); return; }
     ev.preventDefault(); ev.stopPropagation();
-    const wrap=$('#tlTracksWrap'); const W=wrap.clientWidth||wrap.getBoundingClientRect().width||1;
+    const tr=$('#tlTracks'); const W=tr.clientWidth||tr.getBoundingClientRect().width||1;   // scaled tracks width → correct px→time at any zoom
     const x0=ev.clientX; const start0=+a.start||0, dur0=+a.dur||0;
+    // For move mode, also let the user drop into a different audio lane vertically.
+    const targetAch = cy => {
+      const lanes=[...document.querySelectorAll('#tlTracks .trk.audiolane[data-ach]')];   // top→bottom = high→low (ach descending)
+      for(const ln of lanes){ const r=ln.getBoundingClientRect(); if(cy<r.bottom){ return +ln.dataset.ach; } }
+      return audChCount()-1;
+    };
     const move = e => { const dx=(e.clientX-x0)/W*total;
-      if(mode==='move'){ a.start = Math.max(0, Math.min(total-dur0, start0+dx)); }
+      if(mode==='move'){
+        a.start = Math.max(0, Math.min(total-dur0, start0+dx));
+        const newAch = Math.max(0, Math.min(audChCount()-1, targetAch(e.clientY)));
+        if(newAch !== (+a.ach||0)) a.ach = newAch;
+      }
       else if(mode==='left'){ const ns=Math.max(0, Math.min(start0+dur0-0.1, start0+dx)); a.dur=Math.max(0.1, dur0-(ns-start0)); a.start=ns; }
       else if(mode==='right'){ a.dur=Math.max(0.1, Math.min(total-start0, dur0+dx)); }
       renderTracks(); audSyncPreview();
@@ -2730,6 +2747,12 @@ function renderTracks(){
     const arow2=document.createElement('div'); arow2.className='trk audiolane'; arow2.dataset.ach=ach;
     audList().filter(a=>(+a.ach||0)===ach).forEach(a=>arow2.appendChild(buildAudioBar(a,total)));
     const al2=document.createElement('div'); al2.className='lab'; al2.textContent='🎚 A'+ach; arow2.appendChild(al2);
+    // ✕ on the topmost empty audio lane → remove it (mirrors the video lane behavior)
+    if(ach===audN-1 && audChEmpty(ach) && audN>1){
+      const rm=document.createElement('button'); rm.className='mini lanex'; rm.textContent='✕'; rm.title='Remove this empty audio lane';
+      rm.onpointerdown=ev=>ev.stopPropagation(); rm.onclick=ev=>{ ev.stopPropagation(); removeAudChannel(); };
+      arow2.appendChild(rm);
+    }
     tr.appendChild(arow2);
   }
   // Legacy single-music lane (kept for backward compat; renders alongside the new audio overlays)
@@ -3294,6 +3317,7 @@ $('#fileAddClip').onchange=e=>{ if(e.target.files.length) openAddClip(e.target.f
 })();
 $('#btnPlayTl').onclick=()=>{ if(tlPlaying) stop(); else playTimeline(); };
 $('#btnAddCh').onclick=addChannel;
+$('#btnAddAudCh').onclick=addAudChannel;
 $('#btnStop').onclick=stop;
 window.addEventListener('resize', ()=>{ if(EDL) sizeStage(); });
 
@@ -3320,6 +3344,7 @@ function applyEDL(edl){
   if(!EDL.segments) EDL.segments=[];
   if(!Array.isArray(EDL.overlays)) EDL.overlays=[];
   if(!Array.isArray(EDL.audio)) EDL.audio=[];   // multi-track audio overlays (music + sfx); legacy s.music still works alongside
+  if(!Number.isFinite(+EDL.audioChannels)) EDL.audioChannels=1;   // user-set audio lane count (empty lanes persist for drag targets)
   // Per-aspect variants (sparse overrides for overlay positions/sizes per canvas).
   // primaryAspect = the aspect whose values live on the base overlay objects.
   if(!EDL.primaryAspect) EDL.primaryAspect = s.canvas || '9x16';
