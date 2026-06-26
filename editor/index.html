@@ -302,7 +302,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.64.5</span>
+  <span class="ver" id="appVer">v1.64.6</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -2695,7 +2695,8 @@ $('#clipColor').onchange=()=>{ if($('#clipUseColor').checked) clipSearch($('#cli
 /* ---------- bottom timeline tracks ---------- */
 function positionPlayhead(){
   const ph=$('#tlPlayhead'), tr=$('#tlTracks'), wrap=$('#tlTracksWrap');
-  if(!ph) return; const total=totalDur()||1; const t=Math.min(playhead,total)/total;
+  if(!ph || !EDL) return;   // EDL is null at module parse time (boot() hasn't run); skip until ready
+  const total=totalDur()||1; const t=Math.min(playhead,total)/total;
   // tlPlayhead is an absolutely-positioned sibling of tlTracks inside tlTracksWrap; with overflow:auto
   // its 'left' sits in viewport coordinates (doesn't scroll with content). Compute the pixel-x of the
   // time on the SCALED tracks and subtract the wrap's scrollLeft so the line lines up with clips at any zoom.
