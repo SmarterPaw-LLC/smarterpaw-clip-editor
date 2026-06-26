@@ -1000,7 +1000,7 @@ def prerender_piececlip(o, W, H, tmp, k):
             d = max(0.01, float(pop.get("d", 0.45)))
             kk = "(t/%g)" % d; eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (kk, kk)
             pops = "if(between(t,0,%g),max(0.05,%s),1)" % (d, eb)
-            filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame" % (pops, pops))
+            filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame:flags=bicubic" % (pops, pops))   # per-piece sprinkle popIn — bicubic for clean per-frame resizing
         fc.append("[%s]%s[oi%d]" % (srcs[i], ",".join(filt), i))
         fc.append("[%s][oi%d]overlay=x='W*%g-w/2+(%s)':y='H*%g-h/2+(%s)'[v%d]" % (last, i, ox, odx, oy, ody, i))
         last = "v%d" % i
@@ -1043,8 +1043,8 @@ def apply_overlays(silent, overlays, W, H, tmp):
     fc = []
     # Normalize the base to clean CFR/timestamps first. The concatenated video can carry
     # duplicate/irregular timestamps from tpad freeze-fill, which makes the overlay+geq
-    # compositing pass pathologically slow (minutes). fps=30 + reset PTS fixes that.
-    fc.append("[0:v]fps=30,setpts=PTS-STARTPTS[base0]")
+    # compositing pass pathologically slow (minutes). fps=60 + reset PTS fixes that.
+    fc.append("[0:v]fps=60,setpts=PTS-STARTPTS[base0]")
     last = "base0"
     ii = 1  # next ffmpeg input index for image/shape files
     for k, o in enumerate(overlays):
@@ -1194,7 +1194,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
             # and subsequent larger frames get cropped (the "top of sticker chopped off" bug).
             if sc_factors:
                 combined = "*".join("(%s)" % x for x in sc_factors)
-                filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame" % (combined, combined))
+                filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame:flags=bicubic" % (combined, combined))
             fc.append(f"[{ii}:v]" + ",".join(filt) + f"[oi{k}]")
             fc.append(f"[{last}][oi{k}]overlay=x='W*{ox}-w/2+({odx})':y='H*{oy}-h/2+({ody})':{en}[v{k}]")
             last = f"v{k}"; ii += 1
@@ -1377,7 +1377,7 @@ def render(edl, out_dir=None, out_name=None, progress=None):
                 cx, cy = f"(iw-{W})*{px:.5f}", f"(ih-{H})*{py:.5f}"
             else:
                 cx, cy = crop_xy(seg.get("anchor", "center"), W, H)
-            base = f"scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={W}:{H}:{cx}:{cy},setsar=1,fps=30,format=yuv420p"
+            base = f"scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={W}:{H}:{cx}:{cy},setsar=1,fps=60,format=yuv420p"
             dur = float(seg["dur"])                     # dur = SOURCE seconds consumed
             spd = min(10.0, max(0.1, float(seg.get("speed", 1) or 1)))
             outlen = dur / spd                          # timeline (output) seconds
@@ -1442,7 +1442,7 @@ def render(edl, out_dir=None, out_name=None, progress=None):
         # that plays fine but is filter-HOSTILE — the overlay/geq pass crawls (90s+ vs 3s). A clean
         # CFR re-encode here makes the overlay compositing fast again.
         r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", listf,
-                 "-vf", "fps=30,format=yuv420p"] + ENC + [silent])
+                 "-vf", "fps=60,format=yuv420p"] + ENC + [silent])
         if r.returncode != 0:
             return {"ok": False, "log": f"concat failed:\n{r.stderr[-1500:]}"}
         # free-floating overlays (text/images) over the whole timeline
