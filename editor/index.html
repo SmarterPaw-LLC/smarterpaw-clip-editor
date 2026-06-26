@@ -302,7 +302,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.64.1</span>
+  <span class="ver" id="appVer">v1.64.2</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -2835,7 +2835,7 @@ function clipDragMulti(b,o){ const seg=o.seg;
     const area=$('#tlTracks').getBoundingClientRect(); const total=totalDur()||1; let moved=false; const x0=ev.clientX, y0=ev.clientY;
     const ptDown=Math.max(0,Math.min(total,(x0-area.left)/area.width*total)); const grabOff=ptDown-(o.start||0);   // keep the grabbed point under the cursor
     const targetChG=cy=>{ const lanes=[...document.querySelectorAll('#tlTracks .trk[data-ch]')]; let tch=0; for(const ln of lanes){ const r=ln.getBoundingClientRect(); if(cy<r.bottom){ tch=+ln.dataset.ch; break; } } return tch; };
-    if(_msel.includes(seg) && _msel.length>1 && !additive){   // GROUP move: shift all selected clips/overlays together
+    if(_msel.includes(seg) && _msel.length>1){   // GROUP move: any drag of a member shifts all selected together (shift held or not)
       const snap=groupSnapshot(); const grab=snap.find(z=>z.obj===seg)||{start:o.start||0, ch:+seg.ch||0};
       const mvg=e=>{ if(!moved && Math.abs(e.clientX-x0)<5 && Math.abs(e.clientY-y0)<5) return; moved=true;
         const pt=Math.max(0,Math.min(total,(e.clientX-area.left)/area.width*total));
@@ -2992,7 +2992,10 @@ $('#tlTracksWrap').addEventListener('pointerdown', ev => {
     if(!additive){ _msel = []; sel = -1; ovSel = null; }
     picked.forEach(p => { if(!_msel.includes(p)) _msel.push(p); });
     renderTimeline();
-    toast(picked.length + ' selected'+(additive?' (added)':''));
+    const total = _msel.length;
+    if(total === 0){ toast('Nothing selected'); }
+    else if(total === 1){ toast('1 selected — drag to move it'); }
+    else { toast(total + ' selected — drag any of them to move all together'); }
   };
   window.addEventListener('pointermove', move);
   window.addEventListener('pointerup',   up);
