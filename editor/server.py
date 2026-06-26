@@ -987,18 +987,20 @@ def prerender_piececlip(o, W, H, tmp, k):
             filt.append("hue=h='%s'" % expr)
         if has_op:
             filt.append("geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(%s)'" % amT)
-        pop = next((a for a in anims if a.get("type") == "popIn"), None)
-        if pop:
-            d = max(0.01, float(pop.get("d", 0.45)))
-            kk = "(t/%g)" % d; eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (kk, kk)
-            pops = "if(between(t,0,%g),max(0.05,%s),1)" % (d, eb)
-            filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame" % (pops, pops))
         srot = float(pc.get("rot", 0) or 0)
         rot_terms = ([orot] if orot else []) + (["%.6f" % math.radians(srot)] if abs(srot) > 1e-6 else [])
         if rot_terms:
             rexpr = "+".join("(%s)" % r for r in rot_terms)
             filt.append("pad=ceil(iw*1.08):ceil(ih*1.08):(ow-iw)/2:(oh-ih)/2:color=black@0")
             filt.append("rotate='%s':c=none:ow='hypot(iw,ih)':oh='hypot(iw,ih)'" % rexpr)
+        # popIn anim-scale AFTER pad+rotate so pad's static output box doesn't cap subsequent
+        # larger-scale frames (same "chopped top" bug as the main overlay chain — fixed alongside).
+        pop = next((a for a in anims if a.get("type") == "popIn"), None)
+        if pop:
+            d = max(0.01, float(pop.get("d", 0.45)))
+            kk = "(t/%g)" % d; eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (kk, kk)
+            pops = "if(between(t,0,%g),max(0.05,%s),1)" % (d, eb)
+            filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame" % (pops, pops))
         fc.append("[%s]%s[oi%d]" % (srcs[i], ",".join(filt), i))
         fc.append("[%s][oi%d]overlay=x='W*%g-w/2+(%s)':y='H*%g-h/2+(%s)'[v%d]" % (last, i, ox, odx, oy, ody, i))
         last = "v%d" % i
@@ -1178,9 +1180,6 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     d = max(0.01, float(a.get("d", 0.7)))
                     kk = "(%s/%g)" % (lt, d); eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (kk, kk)
                     sc_factors.append("if(between(t,%g,%g),max(0.05,%s),1)" % (aS, aS + d, eb))
-            if sc_factors:
-                combined = "*".join("(%s)" % x for x in sc_factors)
-                filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame" % (combined, combined))
             srot = float(o.get("rot", 0) or 0)                          # static rotation (degrees) + any anim rotation
             rot_terms = ([orot] if orot else []) + ([f"{math.radians(srot):.6f}"] if abs(srot) > 1e-6 else [])
             if rot_terms:
@@ -1189,6 +1188,13 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 # whose content touches the PNG boundary (caused ghost streaks on wobble/spin)
                 filt.append("pad=ceil(iw*1.08):ceil(ih*1.08):(ow-iw)/2:(oh-ih)/2:color=black@0")
                 filt.append(f"rotate='{rexpr}':c=none:ow='hypot(iw,ih)':oh='hypot(iw,ih)'")
+            # Anim scale (popIn / scaleUp / scaleDown / scaleBeat / bubbleUp) goes LAST so its
+            # eval=frame dimension changes don't fight pad's/rotate's static output sizes —
+            # otherwise pad caps the output box at the first frame's tiny size (e.g. bubble at scale 0.05)
+            # and subsequent larger frames get cropped (the "top of sticker chopped off" bug).
+            if sc_factors:
+                combined = "*".join("(%s)" % x for x in sc_factors)
+                filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame" % (combined, combined))
             fc.append(f"[{ii}:v]" + ",".join(filt) + f"[oi{k}]")
             fc.append(f"[{last}][oi{k}]overlay=x='W*{ox}-w/2+({odx})':y='H*{oy}-h/2+({ody})':{en}[v{k}]")
             last = f"v{k}"; ii += 1
