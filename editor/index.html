@@ -45,6 +45,7 @@
   .hsplit:hover, .hsplit.drag { background:var(--acc,#8ab81d); }
   #tlPanel h2 { font-size:12px; text-transform:uppercase; letter-spacing:.6px; color:var(--mut); margin:0; padding:7px 12px; border-bottom:1px solid var(--line); display:flex; gap:10px; align-items:center; }
   #tlTracksWrap { position:relative; flex:1; overflow:auto; }
+  .tlMarquee { position:absolute; background:rgba(91,140,255,0.18); border:1px dashed #5b8cff; pointer-events:none; z-index:50; }
   #tlRuler { height:22px; position:relative; background:var(--panel2); border-bottom:1px solid var(--line); }
   #tlRuler:hover { background:#2a2f38; }
   #tlRuler .tick { position:absolute; top:0; bottom:0; border-left:1px solid var(--line); padding-left:3px; font-size:9px; color:var(--mut); }
@@ -301,7 +302,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.64.0</span>
+  <span class="ver" id="appVer">v1.64.1</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -2724,7 +2725,7 @@ function renderTracks(){
   positionPlayhead(); histSchedule();
 }
 // Build one overlay bar element on its channel lane (drag to move/retime/change channel).
-function buildOverlayBar(o,total){ const b=document.createElement('div'); b.className='blk ov-'+o.type+(o.id===ovSel?' sel':'')+(_msel.includes(o)?' msel':'')+(o.hidden?' clhidden':'')+(o.locked?' cllocked':'');
+function buildOverlayBar(o,total){ const b=document.createElement('div'); b.dataset.ovid=o.id; b.className='blk ov-'+o.type+(o.id===ovSel?' sel':'')+(_msel.includes(o)?' msel':'')+(o.hidden?' clhidden':'')+(o.locked?' cllocked':'');
   b.style.left=((+o.start||0)/total*100)+'%'; b.style.width=((+o.dur||0)/total*100)+'%';
   b.appendChild(document.createTextNode(o.type==='image'?'🖼 image':(o.type==='shape'?'▭ shape':(o.type==='sprinkle'?'✨ sprinkle':(o.type==='arrow'?('➴ '+(o.subtype||'arrow')):('🅣 '+(o.text||'text')))))));
   const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR'; b.appendChild(hL); b.appendChild(hR);
@@ -2751,7 +2752,7 @@ function splitOverlayAtPlayhead(o){
 }
 // Build one clip block element for a layout entry `o` (handles base vs upper-channel behavior).
 function buildClipBlock(o,total){ const i=o.idx, sg=o.seg;
-  const b=document.createElement('div'); b.className='blk clip'+(i===sel?' sel':'')+(_msel.includes(sg)?' msel':'')+(o.ch===0&&sg.editMode==='free'?' free':'')+(sg.hidden?' clhidden':'')+(sg.locked?' cllocked':'');
+  const b=document.createElement('div'); b.dataset.segidx=i; b.className='blk clip'+(i===sel?' sel':'')+(_msel.includes(sg)?' msel':'')+(o.ch===0&&sg.editMode==='free'?' free':'')+(sg.hidden?' clhidden':'')+(sg.locked?' cllocked':'');
   b.style.left=(o.start/total*100)+'%'; b.style.width=(o.dur/total*100)+'%'; const c=MAN.byId[sg.id];
   const txt=document.createElement('span'); txt.className='clbl'; txt.textContent=(i+1)+'. '+(((c&&c.label)||sg.id).slice(0,16)); b.appendChild(txt);
   b.title=txt.textContent+(sg.hidden?' (hidden)':'')+(sg.locked?' (locked)':'');
@@ -2944,7 +2945,58 @@ function scrubToX(cx){ const wrap=$('#tlTracksWrap'); const r=wrap.getBoundingCl
 function startScrub(ev){ ev.preventDefault(); stop(); scrubToX(ev.clientX);
   const mv=e=>scrubToX(e.clientX); const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); };
   window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up); }
-$('#tlTracksWrap').addEventListener('pointerdown', ev=>{ if(ev.target.closest('.blk')) return; startScrub(ev); });
+// Empty-area pointerdown: starts a SCRUB OR a MARQUEE select depending on drag direction.
+// Pure horizontal drag = scrub (playhead). Any vertical movement → switches to marquee mode and
+// draws a rectangle; on release, every .blk overlapping the rect lands in _msel. Shift/Ctrl = additive.
+$('#tlTracksWrap').addEventListener('pointerdown', ev => {
+  if(ev.target.closest('.blk')) return;
+  ev.preventDefault();
+  const wrap = $('#tlTracksWrap');
+  const x0 = ev.clientX, y0 = ev.clientY;
+  const additive = ev.shiftKey || ev.ctrlKey || ev.metaKey;
+  let mode = 'pending';   // pending → scrub or marquee on first significant move
+  let marquee = null;
+  stop();
+  scrubToX(ev.clientX);   // commit playhead immediately for the click case
+  const move = e => {
+    const dx = e.clientX - x0, dy = e.clientY - y0;
+    if(mode === 'pending'){
+      if(Math.abs(dy) > 4){ mode = 'marquee';   // vertical movement = box select
+        marquee = document.createElement('div'); marquee.className = 'tlMarquee'; wrap.appendChild(marquee);
+      } else if(Math.abs(dx) > 4){ mode = 'scrub'; }
+    }
+    if(mode === 'scrub'){ scrubToX(e.clientX); return; }
+    if(mode === 'marquee'){
+      const wr = wrap.getBoundingClientRect();
+      const left = Math.min(x0, e.clientX), top = Math.min(y0, e.clientY);
+      marquee.style.left   = (left - wr.left + wrap.scrollLeft) + 'px';
+      marquee.style.top    = (top  - wr.top  + wrap.scrollTop ) + 'px';
+      marquee.style.width  = Math.abs(e.clientX - x0) + 'px';
+      marquee.style.height = Math.abs(e.clientY - y0) + 'px';
+    }
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup',   up);
+    if(mode !== 'marquee') return;
+    const mRect = marquee.getBoundingClientRect();
+    const picked = [];
+    wrap.querySelectorAll('.blk').forEach(b => {
+      const r = b.getBoundingClientRect();
+      if(r.right < mRect.left || r.left > mRect.right || r.bottom < mRect.top || r.top > mRect.bottom) return;
+      const segIdx = b.dataset.segidx, ovid = b.dataset.ovid;
+      if(segIdx !== undefined){ const sg = EDL.segments[+segIdx]; if(sg) picked.push(sg); }
+      else if(ovid){ const o = (EDL.overlays||[]).find(x => x.id === ovid); if(o) picked.push(o); }
+    });
+    marquee.remove();
+    if(!additive){ _msel = []; sel = -1; ovSel = null; }
+    picked.forEach(p => { if(!_msel.includes(p)) _msel.push(p); });
+    renderTimeline();
+    toast(picked.length + ' selected'+(additive?' (added)':''));
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup',   up);
+});
 $('#tlRuler').addEventListener('pointerdown', ev=>{ ev.stopPropagation(); startScrub(ev); });   // ruler is an explicit scrub strip — click/drag anywhere on it
 $('#tlPhGrip').addEventListener('pointerdown', ev=>{ ev.stopPropagation(); startScrub(ev); });
 
