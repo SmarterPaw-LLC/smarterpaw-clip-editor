@@ -31,7 +31,7 @@ if not os.path.exists(FFMPEG):
 
 FONT = "C\\:/Windows/Fonts/arialbd.ttf"
 ENC = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p",
-       "-r", "30", "-video_track_timescale", "90000", "-an"]
+       "-r", "60", "-video_track_timescale", "90000", "-an"]
 ENDCARD_DUR = 2.6
 ID_RE = re.compile(r"\[([A-Za-z0-9_-]{11})\]")
 
@@ -1282,7 +1282,10 @@ def flatten_segments(edl):
     for c in clips:
         bset.add(round(c["start"], 4))
         bset.add(round(c["end"], 4))
-    bs = sorted(x for x in bset if 0.0 <= x <= vid_total + 1e-6)
+    # Tolerance must exceed round(_, 4)'s upper-bound error (5e-5) — otherwise the rounded
+    # vid_total (e.g. 14.7067 from a true 14.706666…) gets culled here, the last interval
+    # is never created, and the final clip silently drops from the render.
+    bs = sorted(x for x in bset if 0.0 <= x <= vid_total + 5e-4)
     flat = []
     for a, b in zip(bs, bs[1:]):
         if b - a < 0.02:
