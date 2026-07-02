@@ -178,30 +178,46 @@ def _brand_from_path(full_path, product, bm):
 def _find_product_dir(product):
     """Return the absolute path of an existing product folder, whether it's at the legacy
     flat location (SRC_ROOT/<product>) OR nested under any brand (SRC_ROOT/<brand>/<product>)."""
+    dirs = _find_all_product_dirs(product)
+    return dirs[0] if dirs else None
+
+
+def _find_all_product_dirs(product):
+    """Return ALL absolute paths where a product folder exists — flat and nested under every brand.
+    Used by setbrand to detect + merge duplicated folders (e.g. when the same product name
+    ended up under two brand paths and the manifest scan is showing the clip twice)."""
+    out = []
     flat = os.path.join(SRC_ROOT, product)
     if os.path.isdir(flat):
-        return flat
-    if not os.path.isdir(SRC_ROOT):
-        return None
-    for b in os.listdir(SRC_ROOT):
-        bp = os.path.join(SRC_ROOT, b)
-        if not os.path.isdir(bp) or b.lower() not in BRAND_KEYS:
-            continue
-        nested = os.path.join(bp, product)
-        if os.path.isdir(nested):
-            return nested
-    return None
+        out.append(flat)
+    if os.path.isdir(SRC_ROOT):
+        for b in os.listdir(SRC_ROOT):
+            bp = os.path.join(SRC_ROOT, b)
+            if not os.path.isdir(bp) or b.lower() not in BRAND_KEYS:
+                continue
+            nested = os.path.join(bp, product)
+            if os.path.isdir(nested):
+                out.append(nested)
+    return out
 
 
 def _cleanup_empty_dirs(path):
     """Remove a directory and any now-empty parent directories up to (but not including) SRC_ROOT.
-    Safe no-op if path doesn't exist or isn't empty."""
+    Safe no-op if path doesn't exist or isn't empty. Retries briefly on Windows where a rmdir
+    right after a file remove can transiently fail with "directory not empty"."""
+    import time as _t
     try:
-        if path and os.path.isdir(path) and not os.listdir(path):
-            os.rmdir(path)
-            parent = os.path.dirname(path)
-            if parent and os.path.abspath(parent) != os.path.abspath(SRC_ROOT):
-                _cleanup_empty_dirs(parent)
+        if not (path and os.path.isdir(path) and not os.listdir(path)):
+            return
+        for attempt in range(3):
+            try:
+                os.rmdir(path); break
+            except OSError:
+                if attempt == 2: return
+                _t.sleep(0.05)
+        parent = os.path.dirname(path)
+        if parent and os.path.abspath(parent) != os.path.abspath(SRC_ROOT):
+            _cleanup_empty_dirs(parent)
     except OSError:
         pass
 
@@ -1798,32 +1814,45 @@ class Handler(BaseHTTPRequestHandler):
                 tm.pop(cid, None)
             save_clip_tags(tm)
             return self._json({"ok": True, "id": cid, "tags": load_clip_tags().get(cid, [])})
-        if path == "/api/clip/setbrand":   # set the brand of a PRODUCT folder + PHYSICALLY MOVE the folder under that brand
+        if path == "/api/clip/setbrand":   # set the brand of a PRODUCT folder + PHYSICALLY MOVE / MERGE any duplicates under that brand
             product = (data.get("product") or "").strip()
             brand = (data.get("brand") or "").strip().lower()
             if not product or brand not in BRAND_KEYS:
                 return self._json({"ok": False, "log": "product + valid brand required"}, 400)
             bm = load_brand_map(); bm[product] = brand; save_brand_map(bm)
-            src_dir = _find_product_dir(product)
-            if not src_dir:
+            all_dirs = _find_all_product_dirs(product)
+            if not all_dirs:
                 return self._json({"ok": True, "product": product, "brand": brand, "moved": False})
             dest_dir = os.path.join(SRC_ROOT, brand, product)
-            if os.path.abspath(src_dir) == os.path.abspath(dest_dir):
-                return self._json({"ok": True, "product": product, "brand": brand, "moved": False})
-            if os.path.exists(dest_dir):
-                return self._json({"ok": False, "log": f"target folder already exists: {dest_dir}"}, 409)
-            try:
-                os.makedirs(os.path.dirname(dest_dir), exist_ok=True)
-                shutil.move(src_dir, dest_dir)
-            except Exception as e:
-                return self._json({"ok": False, "log": f"move failed: {e!r}"}, 500)
-            # Cached paths under src_dir are now stale — drop them so re-probe (cache key has path)
-            for k in list(_probe_cache.keys()):
-                if k.startswith(src_dir + os.sep): _probe_cache.pop(k, None)
-            for k in list(_probe_disk.keys()):
-                if k.startswith(src_dir + os.sep): _probe_disk.pop(k, None)
-            _cleanup_empty_dirs(os.path.dirname(src_dir))
-            return self._json({"ok": True, "product": product, "brand": brand, "moved": True})
+            os.makedirs(dest_dir, exist_ok=True)
+            moved = 0; merged = 0; conflicts = []
+            for src_dir in all_dirs:
+                if os.path.abspath(src_dir) == os.path.abspath(dest_dir):
+                    continue   # already at destination — nothing to move for this location
+                # Walk src_dir and move each file into dest_dir; skip on name collision instead of losing data
+                for fn in list(os.listdir(src_dir)):
+                    src_f = os.path.join(src_dir, fn); dst_f = os.path.join(dest_dir, fn)
+                    if os.path.exists(dst_f):
+                        # If it's the exact same file (same size), the src copy is safe to delete; otherwise flag it
+                        try:
+                            if os.path.isfile(src_f) and os.path.isfile(dst_f) and os.path.getsize(src_f) == os.path.getsize(dst_f):
+                                os.remove(src_f); merged += 1; continue
+                        except OSError: pass
+                        conflicts.append(fn); continue
+                    try:
+                        shutil.move(src_f, dst_f); moved += 1
+                    except Exception as e:
+                        conflicts.append(f"{fn}: {e!r}")
+                # Cache invalidation for the drained location
+                for k in list(_probe_cache.keys()):
+                    if k.startswith(src_dir + os.sep): _probe_cache.pop(k, None)
+                for k in list(_probe_disk.keys()):
+                    if k.startswith(src_dir + os.sep): _probe_disk.pop(k, None)
+                _cleanup_empty_dirs(src_dir)
+            did_anything = moved > 0 or merged > 0
+            return self._json({"ok": True, "product": product, "brand": brand,
+                               "moved": did_anything, "merged_dupes": merged, "moved_files": moved,
+                               "conflicts": conflicts, "consolidated_from": len(all_dirs)})
         if path == "/api/clip/delete":
             cid = (data.get("id") or "").strip()
             src = id_to_file().get(cid)
