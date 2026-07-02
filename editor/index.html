@@ -7,6 +7,10 @@
 <style>
   @font-face{ font-family:'Cooper Std Black'; src:url('/editor/fonts/CooperBlack-Std.otf') format('opentype'); font-display:swap; }
   @font-face{ font-family:'Meowijuana'; src:url('/editor/fonts/meowijuana.ttf') format('truetype'); font-display:swap; }
+  /* KKZ brand fonts — free-license lookalikes (Barlow Condensed + Alfa Slab One + Century Gothic on Windows).
+     Swap in real Ofelia/Caraque/Avenir if licensed. Slot names ('ofelia', 'caraque', 'avenir') match the KKZ style guide labels. */
+  @font-face{ font-family:'Barlow Condensed ExtraBold'; src:url('/editor/fonts/BarlowCondensed-ExtraBold.ttf') format('truetype'); font-display:swap; font-weight:800; }
+  @font-face{ font-family:'Alfa Slab One'; src:url('/editor/fonts/AlfaSlabOne-Regular.ttf') format('truetype'); font-display:swap; }
   :root { --bg:#15171c; --panel:#1e2128; --panel2:#262a33; --line:#333845; --txt:#e6e8ee;
           --mut:#9aa3b2; --acc:#f5a623; --acc2:#5b8cff; --ok:#34c759; --bad:#ff5a5a; }
   * { box-sizing:border-box; }
@@ -302,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.65.4</span>
+  <span class="ver" id="appVer">v1.66.0</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -729,7 +733,11 @@ function applyFraming(seg, v){ v=v||vids[activeId]; if(!v) return;
 function showCap(text){ const o=$('#capOverlay'); if(text&&text.trim()){ o.querySelector('span').textContent=text; o.style.display='block'; } else { o.style.display='none'; } }
 
 /* ---------- end card ---------- */
-const FONTS={ arial:"'Arial Black',Arial,sans-serif", cooper:"'Cooper Std Black','Cooper Black',serif", meowijuana:"'Meowijuana',cursive" };
+const FONTS={ arial:"'Arial Black',Arial,sans-serif", cooper:"'Cooper Std Black','Cooper Black',serif", meowijuana:"'Meowijuana',cursive",
+  // KKZ brand fonts (free-license lookalikes for now; can be swapped for real Ofelia/Caraque/Avenir if licensed)
+  ofelia:"'Barlow Condensed ExtraBold','Barlow Condensed',Impact,sans-serif",
+  caraque:"'Alfa Slab One',Rockwell,'Cooper Std Black',serif",
+  avenir:"'Century Gothic','Avenir Book','Avenir Next',Futura,sans-serif" };
 const GRADIENTS=[
   {n:'Sierra Sunshine (Toys/Reviews)',s:'#f5e020',e:'#e87820'},
   {n:'Meowi Waui',s:'#c8e830',e:'#1a7a30'},
@@ -1353,7 +1361,7 @@ function buildLineEditors(ec){
   ec.lines.forEach((ln,i)=>{
     const d=document.createElement('div'); d.className='ecline';
     d.innerHTML=`<input class="ecl-text" type="text" placeholder="line ${i+1} text" value="${(ln.text||'').replace(/"/g,'&quot;')}">
-      <select class="ecl-font"><option value="cooper">Cooper</option><option value="meowijuana">Meowijuana</option><option value="arial">Arial</option></select>
+      <select class="ecl-font"><option value="cooper">Cooper</option><option value="meowijuana">Meowijuana</option><option value="ofelia">Ofelia (KKZ display)</option><option value="caraque">Caraque (KKZ chunky)</option><option value="avenir">Avenir (KKZ body)</option><option value="arial">Arial</option></select>
       <input class="ecl-color" type="color" value="${ln.color}" title="text color">
       <label>size<input class="ecl-size" type="range" min="0.02" max="0.14" step="0.005" value="${ln.size}"></label>
       <label>y<input class="ecl-y" type="range" min="0" max="1" step="0.01" value="${ln.y}"></label>
@@ -2289,7 +2297,7 @@ function buildOvEditor(){
   if(o.type==='text'){
     h+=`<div class="sec">Text</div><div><textarea id="ovText" rows="2" style="width:100%" placeholder="text — Enter = new line (bubble sticker)">${(o.text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</textarea></div>
       <div><label>Style <select id="ovStyle"><option value="plain">Plain</option><option value="sticker">Bubble sticker</option></select></label>
-      <label>Font <select id="ovFont"><option value="cooper">Cooper</option><option value="meowijuana">Meowijuana</option><option value="arial">Arial</option></select></label></div>
+      <label>Font <select id="ovFont"><option value="cooper">Cooper</option><option value="meowijuana">Meowijuana</option><option value="ofelia">Ofelia (KKZ display)</option><option value="caraque">Caraque (KKZ chunky)</option><option value="avenir">Avenir (KKZ body)</option><option value="arial">Arial</option></select></label></div>
       <div id="ovPlainRow"><label>Color <input type="color" id="ovColor" value="${o.color||'#ffffff'}"></label>
         <label class="ck"><input type="checkbox" id="ovBtn" ${o.button?'checked':''}> button</label> <input type="color" id="ovBg" value="${o.bg||'#f07830'}" title="button color"></div>
       <div id="ovStickRow"><label>From <input type="color" id="ovStFrom" value="${o.gradStart||'#8ab81d'}"></label>

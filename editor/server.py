@@ -499,6 +499,11 @@ FONT_FILES = {
     "arial": "C:/Windows/Fonts/arialbd.ttf",
     "cooper": os.path.join(EDITOR, "fonts", "CooperBlack-Std.otf"),
     "meowijuana": os.path.join(EDITOR, "fonts", "meowijuana.ttf"),
+    # KKZ brand slots — free-license lookalikes wired to real .ttf files on disk (so Pillow can render them).
+    # Swap paths here when the real Ofelia/Caraque/Avenir .otf files are licensed + activated.
+    "ofelia":  os.path.join(EDITOR, "fonts", "BarlowCondensed-ExtraBold.ttf"),
+    "caraque": os.path.join(EDITOR, "fonts", "AlfaSlabOne-Regular.ttf"),
+    "avenir":  "C:/Windows/Fonts/gothic.ttf",   # Century Gothic ships with Windows — closest free stand-in for Avenir Book
 }
 
 
