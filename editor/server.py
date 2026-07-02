@@ -752,10 +752,12 @@ def build_sticker_png(o, W, H, out):
     _with_shadow(img, {"shadow": so}, W).save(out)
 
 
-def _anim_exprs(o, s, dur, W, tv="t"):
+def _anim_exprs(o, s, dur, W, tv="t", H=None):
     """Build ffmpeg expressions (time var `tv`) for overlay animations:
     (dx_px, dy_px position offsets, alpha multiplier 0..1, has_opacity). Mirrors animState() in the UI.
-    Falls back to legacy fadeIn/fadeOut when no `anims` list is present."""
+    Falls back to legacy fadeIn/fadeOut when no `anims` list is present.
+    H (canvas height in px) is optional — needed for moveTo's Y target scaling; defaults to 16:9 of W."""
+    if H is None: H = int(W * 16 / 9)   # sensible default matching the 9x16 canvas; caller should pass real H
     e = s + dur
     anims = o.get("anims")
     if anims is None:
@@ -803,6 +805,16 @@ def _anim_exprs(o, s, dur, W, tv="t"):
             term = "if(lt(%s,%g),pow(1-%s/%g,2)*%g,0)" % (lt, d, lt, d, dist)
             term = ("-" if dr in ("left", "up") else "") + term
             (add_dx if dr in ("left", "right") else add_dy)(term)
+        elif ty == "moveTo":   # ease from (o.x, o.y) to (a.x, a.y) over d seconds, then hold
+            d = max(0.01, float(a.get("d", 1)))
+            tx = float(a.get("x", o.get("x", 0.5)) or o.get("x", 0.5))
+            ty_ = float(a.get("y", o.get("y", 0.5)) or o.get("y", 0.5))
+            ox = float(o.get("x", 0.5) or 0.5); oy = float(o.get("y", 0.5) or 0.5)
+            # ease-out cubic on k = clamp(lt/d, 0, 1); after t=d it holds at target (k=1 → ease=1)
+            k = "min(1,max(0,%s/%g))" % (lt, d)
+            ease = "(1-pow(1-(%s),3))" % k
+            add_dx("%g*(%s)" % ((tx - ox) * W,  ease))
+            add_dy("%g*(%s)" % ((ty_ - oy) * H, ease))
         elif ty == "bounceIn":
             d = max(0.01, float(a.get("d", 0.6))); amp = float(a.get("amp", 0.12)) * W
             add_dy("if(lt(%s,%g),-%g*exp(-3*%s/%g)*cos(2*PI*1.6*%s/%g)*(1-%s/%g),0)" % (lt, d, amp, lt, d, lt, d, lt, d))
@@ -1090,7 +1102,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
             ff = esc_path(_font_path(o.get("font", "cooper")))
             size = max(8, int(W * float(o.get("size", 0.06))))
             col = (o.get("color", "#ffffff") or "#ffffff").replace("#", "0x")
-            adx, ady, aam, _, _ = _anim_exprs(o, s, float(o.get("dur", 3)), W, "t")
+            adx, ady, aam, _, _ = _anim_exprs(o, s, float(o.get("dur", 3)), W, "t", H=H)
             alpha = f":alpha='{aam}'"
             sh = o.get("shadow") or {}
             shopt = ""
@@ -1134,8 +1146,8 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 else:
                     scale_w = max(1, int(W * float(o.get("scale", 0.3))))
             dur_o = float(o.get("dur", 3))
-            odx, ody, _, _, orot = _anim_exprs(o, s, dur_o, W, "t")     # position + rotation (overlay time = t)
-            _, _, amT, has_op, _ = _anim_exprs(o, s, dur_o, W, "T")     # opacity (geq pixel time = T)
+            odx, ody, _, _, orot = _anim_exprs(o, s, dur_o, W, "t", H=H)     # position + rotation (overlay time = t)
+            _, _, amT, has_op, _ = _anim_exprs(o, s, dur_o, W, "T", H=H)     # opacity (geq pixel time = T)
             if anim_img:
                 inputs += ["-stream_loop", "-1", "-t", str(e), "-i", p]   # play+loop the animation over the timeline
             else:
