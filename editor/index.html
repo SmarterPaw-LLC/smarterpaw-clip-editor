@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.68.3</span>
+  <span class="ver" id="appVer">v1.68.4</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2637,7 +2637,9 @@ function addArrowOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const g
   const o={id:uid(),type:'arrow',subtype:'arrow',color:g.solid,fillType:'gradient',gradStart:g.from,gradEnd:g.to,gradAngle:0,thickness:0.018,thicknessVar:35,wobble:0.7,arch:0,flipH:false,seed:Math.floor(Math.random()*1e6),w:0.5,h:0.25,opacity:1,halo:'#ffffff',aheadAngle:48,aheadLen1:null,aheadLen2:null,aheadCurve1:-25,aheadCurve2:-25,arrowheadEnd:true,arrowheadStart:false,bodyStartTaper:50,wing1EndTaper:50,wing2EndTaper:50,roundEnds:false,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 function addShapeOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const g=brandGrad();
-  const o={id:uid(),type:'shape',shape:'roundrect',w:0.6,h:0.18,fill:g.solid,fillType:'gradient',gradStart:g.from,gradEnd:g.to,gradType:'linear',gradAngle:0,opacity:0.9,radius:0.04,stroke:'#ffffff',strokeW:0,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
+  // Default radius is 0 (hard corners). Bumping the slider adds rounding — safer than the old 0.04
+  // default which quietly rounded every shape, especially noticeable on full-canvas backgrounds.
+  const o={id:uid(),type:'shape',shape:'roundrect',w:0.6,h:0.18,fill:g.solid,fillType:'gradient',gradStart:g.from,gradEnd:g.to,gradType:'linear',gradAngle:0,opacity:0.9,radius:0,stroke:'#ffffff',strokeW:0,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 
 /* ---------- clipframe (picture-in-picture) ---------- */
