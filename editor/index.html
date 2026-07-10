@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.67.3</span>
+  <span class="ver" id="appVer">v1.68.0</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -2635,6 +2635,9 @@ const CF_FRAMES = [
   ['roundrect','Rounded rectangle'],
   ['rect','Rectangle'],
   ['star','Star'],
+  ['trapezoid','Trapezoid'],
+  ['parallelogram','Parallelogram'],
+  ['bolt','Lightning bolt'],
 ];
 const CF_DEFAULT_ASPECT = 1.0;   // square-ish default; user resizes via scale
 function _cfClip(o){ return (MAN.byId||{})[o.srcId] || null; }
@@ -2654,6 +2657,18 @@ function _cfMaskCss(frame, innerW, innerH){
     // 5-point star polygon (approximate; sized by percentage)
     return 'polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)';
   }
+  if(frame==='trapezoid'){
+    // Short top, wide bottom (isosceles trapezoid).
+    return 'polygon(18% 0%, 82% 0%, 100% 100%, 0% 100%)';
+  }
+  if(frame==='parallelogram'){
+    // Slanted rectangle — top offset right, bottom offset left.
+    return 'polygon(22% 0%, 100% 0%, 78% 100%, 0% 100%)';
+  }
+  if(frame==='bolt'){
+    // Classic 7-point lightning bolt (top-right → mid-left → bottom → back up).
+    return 'polygon(58% 0%, 22% 52%, 46% 52%, 34% 100%, 78% 40%, 54% 40%, 66% 0%)';
+  }
   return 'inset(0)';   // plain rectangle / polaroid inner
 }
 function renderClipFrame(el, o, time, W){
@@ -2664,8 +2679,10 @@ function renderClipFrame(el, o, time, W){
   // Fixed outer aspect per shape (like a real polaroid, coin, or badge). The source clip is CROPPED
   // via object-fit:cover to fill the inner rect — that way a 9:16 vertical UGC clip doesn't stretch
   // the polaroid into a weird tall rectangle with a giant white bottom.
-  // Polaroid ≈ 3.5" × 4.3" (~0.815), circle/star square, rect/roundrect square by default.
-  const CF_AR = {polaroid:0.82, circle:1, star:1, rect:1, roundrect:1};
+  // Polaroid ≈ 3.5" × 4.3" (~0.815), circle/star square, rect/roundrect square by default,
+  // trapezoid a bit wider than tall, parallelogram wide-and-short, lightning bolt tall-and-narrow.
+  const CF_AR = {polaroid:0.82, circle:1, star:1, rect:1, roundrect:1,
+                 trapezoid:1.2, parallelogram:1.5, bolt:0.55};
   const outerAR = CF_AR[o.frame] || 1;
   const outerH = outerW / outerAR;
   el.style.width = outerW + 'px';
