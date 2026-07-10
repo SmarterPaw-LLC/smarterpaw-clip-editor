@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.66.1</span>
+  <span class="ver" id="appVer">v1.67.0</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -535,6 +535,7 @@
             <button class="mini" id="ovSpkLib">📚 Library…</button>
           </div></span>
         <button class="mini" id="ovAddArrow">➴ Arrow</button>
+        <button class="mini" id="ovAddClipFrame">🎞 Framed clip</button>
         <input type="file" id="ovFile" accept="image/*" style="display:none"></div>
       <div style="font-size:11px;color:var(--mut)">Tip: scrub the timeline to where an element should appear, then drag it on the preview to position it.</div>
       <hr>
@@ -632,6 +633,18 @@
       <div class="row"><label class="k"></label><label class="ck" style="color:var(--txt)"><input type="checkbox" id="exStamp" checked> Add timestamp (never overwrite an existing file)</label></div>
       <div class="row" style="justify-content:flex-end;gap:8px"><button class="ghost" id="exCancel">Cancel</button><button class="primary" id="exGo">▶ Render</button></div>
       <div class="status" id="exStatus"></div>
+    </div>
+  </div>
+</div>
+
+<div id="cfPickModal" class="modal" style="display:none">
+  <div class="modal-card" style="max-width:720px">
+    <div class="modal-hd"><b>🎞 Pick a clip to frame</b><button class="mini" id="cfPickClose">✕ Close</button></div>
+    <div class="modal-body">
+      <div class="row" style="gap:8px"><input type="text" id="cfPickFilter" placeholder="🔍 filter by name, tag, id…" style="flex:1" spellcheck="false">
+        <select id="cfPickCat" title="Category"></select></div>
+      <div style="font-size:11px;color:var(--mut);margin:4px 0">Click a clip to add it as a picture-in-picture overlay.</div>
+      <div id="cfPickGrid" class="aigrid"></div>
     </div>
   </div>
 </div>
@@ -2044,6 +2057,7 @@ async function bakeStickersForRender(edl){
   return Object.assign({},edl,{overlays:out});
 }
 const ovEls={};   // reused DOM nodes per overlay id (so images don't reload every frame)
+const ovCfVids={}; // clipframe: dedicated <video> element per overlay id (separate from main timeline vids)
 const ovPieces={}; // per-piece sprinkle <img> nodes per overlay id
 function removeSprinklePieces(id){ if(ovPieces[id]){ ovPieces[id].forEach(el=>el.remove()); delete ovPieces[id]; } }
 // Render each scattered piece as its own animated element (phase-offset so they don't move in unison).
@@ -2134,8 +2148,9 @@ function renderOverlays(time){
     const visible = active || (ovEdit && o.id===ovSel && !o.hidden);
     const ekey=(o.type==='text'&&o.style==='sticker')?'sticker':o.type;   // sticker text renders as a baked canvas image
     const wantImg=(ekey==='image'||ekey==='sticker'||ekey==='shape'||ekey==='sprinkle'||ekey==='arrow');     // baked-canvas overlays are <img>; text is <div>
+    const wantCf=(ekey==='clipframe');   // clipframe: <div> wrapper containing a <video>
     let el=ovEls[o.id];
-    if(el && (el.dataset.t!==ekey || (wantImg?el.tagName!=='IMG':el.tagName!=='DIV'))){ el.remove(); el=null; }
+    if(el && (el.dataset.t!==ekey || (wantImg?el.tagName!=='IMG':el.tagName!=='DIV'))){ if(el._cfVid){ el._cfVid.remove(); } el.remove(); el=null; if(ovCfVids[o.id]){ delete ovCfVids[o.id]; } }
     if(!el){ el = wantImg?document.createElement('img'):document.createElement('div'); el.dataset.t=ekey; el.style.position='absolute'; ovEls[o.id]=el; layer.appendChild(el); }
     el.style.zIndex=(+o.ch||0)*1000+idx;   // higher channel on top; array order breaks ties within a channel
     if(!visible){ el.style.display='none';
@@ -2173,6 +2188,9 @@ function renderOverlays(time){
       const key=[o.subtype,o.color,o.fillType,o.gradStart,o.gradEnd,o.gradAngle,o.thickness,o.thicknessVar,o.wobble,o.arch,o.flipH,o.seed,o.opacity,o.w,o.h,o.halo,o.aheadAngle,o.aheadLen1,o.aheadLen2,o.aheadCurve1,o.aheadCurve2,o.arrowheadStart,o.arrowheadEnd,o.bodyStartTaper,o.wing1EndTaper,o.wing2EndTaper,o.roundEnds,EDL.settings.canvas].join('|');
       if(el._arkey!==key){ const r=buildArrowCanvas(o); el.src=r.canvas.toDataURL('image/png'); el._scw=r.cw; el._sch=r.ch; el._arkey=key; }
       el.style.width=(el._scw/px[0]*100)+'%'; el.style.height=(el._sch/px[1]*100)+'%'; }
+    else if(o.type==='clipframe'){   // picture-in-picture: source clip masked in a shape, w/ optional frame deco
+      renderClipFrame(el, o, time, W);
+    }
     else { el.textContent=o.text||''; el.style.fontFamily=FONTS[o.font]||FONTS.cooper; el.style.fontWeight='800'; el.style.lineHeight='1';
       el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.whiteSpace='nowrap'; el.style.color=o.color||'#fff';
       el.style.opacity=(o.opacity!=null?o.opacity:1);
@@ -2235,8 +2253,8 @@ function renderOvList(){
     histCommit(); [EDL.overlays[i],EDL.overlays[j]]=[EDL.overlays[j],EDL.overlays[i]]; renderOvList(); buildOvEditor(); renderOverlays(playhead); renderTracks(); };
   ovs.slice().reverse().forEach(o=>{ const row=document.createElement('div'); row.className='ecline'+(o.id===ovSel?' ovselrow':'');
     const thumb=(o.type==='image'&&o.src)?`<img src="/${encodeURI(o.src)}" style="height:24px;width:auto;max-width:46px;border-radius:3px;background:#0008;flex:none">`:'';
-    const icon=o.type==='image'?'🖼':(o.type==='shape'?'▭':(o.type==='sprinkle'?'✨':(o.type==='arrow'?'➴':'🅣')));
-    const name=o.type==='image'?((o.src||'').split('/').pop()):(o.type==='shape'?'shape':(o.type==='sprinkle'?('sprinkle · '+((o.src||'').split('/').pop()||'no image')):(o.type==='arrow'?((o.subtype||'arrow')):((o.text||'').slice(0,18)||'text'))));
+    const icon=o.type==='image'?'🖼':(o.type==='shape'?'▭':(o.type==='sprinkle'?'✨':(o.type==='arrow'?'➴':(o.type==='clipframe'?'🎞':'🅣'))));
+    const name=o.type==='image'?((o.src||'').split('/').pop()):(o.type==='shape'?'shape':(o.type==='sprinkle'?('sprinkle · '+((o.src||'').split('/').pop()||'no image')):(o.type==='arrow'?((o.subtype||'arrow')):(o.type==='clipframe'?((o.frame||'polaroid')+' · '+((MAN.byId||{})[o.srcId]?.label||o.srcId||'no clip')):((o.text||'').slice(0,18)||'text')))));
     row.innerHTML=`<div style="display:flex;flex-direction:column;gap:1px"><button class="mini ovup" title="bring forward">▲</button><button class="mini ovdn" title="send back">▼</button></div>
       <span class="ovsel" style="flex:1;cursor:pointer;display:flex;align-items:center;gap:6px;min-width:0">${thumb}<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${icon} ${name}</span><span style="color:var(--mut);flex:none">@${fmt(o.start)}–${fmt(o.start+(+o.dur||0))}s</span></span>
       <button class="mini ovdel" title="delete">✕</button>`;
@@ -2386,6 +2404,18 @@ function buildOvEditor(){
         <label>Wing 2 tip <input type="range" id="ovArW2T" min="0" max="100" step="1" value="${o.wing2EndTaper!=null?o.wing2EndTaper:50}"></label></div>
       <div><label class="ck"><input type="checkbox" id="ovArRound" ${o.roundEnds?'checked':''}> Rounded ends (overrides tapers)</label></div>
       <div><button class="mini" id="ovArSeed">🎲 Re-draw</button></div>`;
+  } else if(o.type==='clipframe'){
+    const clip=(MAN.byId||{})[o.srcId];
+    const clipDur=clip?clip.dur:0;
+    h+=`<div class="sec">Framed clip</div>
+      <div><b style="font-size:11px;color:var(--mut)">Source:</b> <span style="font-size:11px">${clip?clip.label:'<span style="color:#f3b54a">⚠ missing clip</span>'}</span> <button class="mini" id="ovCfPick">Replace…</button></div>
+      <div><label>Frame <select id="ovCfFrame">${CF_FRAMES.map(f=>`<option value="${f[0]}" ${(o.frame||'polaroid')===f[0]?'selected':''}>${f[1]}</option>`).join('')}</select></label>
+        <label id="ovCfColRow">Border <input type="color" id="ovCfColor" value="${o.frameColor||'#ffffff'}"></label></div>
+      <div><label>Size <input type="range" id="ovCfScale" min="0.1" max="1" step="0.01" value="${o.scale!=null?o.scale:0.42}"></label>
+        <label>Opacity <input type="range" id="ovCfOp" min="0" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label></div>
+      <div><label>Seek into source <input type="range" id="ovCfIn" min="0" max="${Math.max(0.1,clipDur-0.1)}" step="0.05" value="${+o.srcIn||0}"></label>
+        <label>Speed <input type="range" id="ovCfSpd" min="0.25" max="4" step="0.05" value="${+o.srcSpeed||1}"></label></div>
+      <div style="font-size:11px;color:var(--mut)">Source is ${fmt(clipDur)}s long. Overlay plays from “seek” at the given speed.</div>`;
   } else {
     h+=`<div class="sec">Image</div><div><label>Size <input type="range" id="ovScale" min="0.05" max="1" step="0.01" value="${o.scale}"></label>
       <label>Opacity <input type="range" id="ovImgOp" min="0" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label>
@@ -2452,6 +2482,14 @@ function buildOvEditor(){
       if($('#ovArRound')) o.roundEnds=$('#ovArRound').checked;
       if($('#ovArGrad')){ const g=o.fillType==='gradient'; $('#ovArGrad').style.display=g?'':'none'; $('#ovArSolid').style.display=g?'none':''; }
       if($('#ovArArchRow')) $('#ovArArchRow').style.display=(o.subtype==='arrow')?'':'none'; }
+    else if(o.type==='clipframe'){
+      if($('#ovCfFrame')) o.frame=$('#ovCfFrame').value;
+      if($('#ovCfColor')) o.frameColor=$('#ovCfColor').value;
+      if($('#ovCfScale')) o.scale=parseFloat($('#ovCfScale').value)||0.42;
+      if($('#ovCfOp')) o.opacity=parseFloat($('#ovCfOp').value);
+      if($('#ovCfIn')) o.srcIn=parseFloat($('#ovCfIn').value)||0;
+      if($('#ovCfSpd')) o.srcSpeed=parseFloat($('#ovCfSpd').value)||1;
+      if($('#ovCfColRow')) $('#ovCfColRow').style.display = (o.frame==='polaroid')?'':'none'; }
     else { o.scale=parseFloat($('#ovScale').value)||0.3; if($('#ovImgOp')) o.opacity=parseFloat($('#ovImgOp').value); }
     if(o.type==='sprinkle') updSpWarn();   // live-refresh per-piece hints on toggle/count change
     renderOverlays(playhead); renderOvList(); };
@@ -2466,6 +2504,8 @@ function buildOvEditor(){
   if($('#ovSpSeed')) $('#ovSpSeed').onclick=()=>{ histCommit(); o.seed=Math.floor(Math.random()*1e6); renderOverlays(playhead); };
   if($('#ovArFill')){ $('#ovArFill').value=(o.fillType==='gradient')?'gradient':'solid'; const g=o.fillType==='gradient'; $('#ovArGrad').style.display=g?'':'none'; $('#ovArSolid').style.display=g?'none':''; if($('#ovArArchRow')) $('#ovArArchRow').style.display=((o.subtype||'arrow')==='arrow')?'':'none'; }
   if($('#ovArSeed')) $('#ovArSeed').onclick=()=>{ histCommit(); o.seed=Math.floor(Math.random()*1e6); renderOverlays(playhead); };
+  if($('#ovCfPick')) $('#ovCfPick').onclick=()=>openCfPicker(clip=>{ histCommit(); o.srcId=clip.id; o.srcIn=Math.min(+o.srcIn||0, Math.max(0,(clip.dur||1)-0.1)); if(ovCfVids[o.id]){ ovCfVids[o.id].removeAttribute('src'); ovCfVids[o.id].dataset.src=''; } renderOvList(); buildOvEditor(); renderOverlays(playhead); });
+  if($('#ovCfColRow')) $('#ovCfColRow').style.display = (o.frame==='polaroid')?'':'none';
   box.querySelectorAll('.ovBrandBtn').forEach(b=>{ b.onclick=()=>applyBrandToOverlay(o); });   // 🎨 Brand → reapply project brand gradient
   function animCtrl(ai,a,c){ const key=c[0],label=c[1],kind=c[2],v=a[key];
     if(kind==='text'){ return `<label>${label} <input type="text" class="anc" data-ai="${ai}" data-k="${key}" value="${(v||'').replace(/"/g,'&quot;')}" style="width:46px;text-align:center"></label>`; }
@@ -2576,10 +2616,136 @@ function addArrowOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const g
 function addShapeOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const g=brandGrad();
   const o={id:uid(),type:'shape',shape:'roundrect',w:0.6,h:0.18,fill:g.solid,fillType:'gradient',gradStart:g.from,gradEnd:g.to,gradType:'linear',gradAngle:0,opacity:0.9,radius:0.04,stroke:'#ffffff',strokeW:0,x:0.5,y:0.5,start:Math.round(playhead*100)/100,dur:3};
   ovPlace(o); EDL.overlays.push(o); ovSel=o.id; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
+
+/* ---------- clipframe (picture-in-picture) ---------- */
+// Available shape frames. 'polaroid' adds a white border decoration; others are pure clip masks.
+const CF_FRAMES = [
+  ['polaroid','Polaroid'],
+  ['circle','Circle'],
+  ['roundrect','Rounded rectangle'],
+  ['rect','Rectangle'],
+  ['star','Star'],
+];
+const CF_DEFAULT_ASPECT = 1.0;   // square-ish default; user resizes via scale
+function _cfClip(o){ return (MAN.byId||{})[o.srcId] || null; }
+// Polaroid geometry (fractions of the outer frame). Photo cutout offsets: left/right/top small, bottom large.
+const CF_POLAROID = {padL:0.06, padR:0.06, padT:0.06, padB:0.22};
+function _cfInnerRect(o, outerW, outerH){
+  if(o.frame==='polaroid'){
+    const P=CF_POLAROID;
+    return { x: P.padL*outerW, y: P.padT*outerH, w: (1-P.padL-P.padR)*outerW, h: (1-P.padT-P.padB)*outerH };
+  }
+  return { x:0, y:0, w:outerW, h:outerH };
+}
+function _cfMaskCss(frame, innerW, innerH){
+  if(frame==='circle') return 'ellipse('+ (innerW/2) +'px '+ (innerH/2) +'px at 50% 50%)';
+  if(frame==='roundrect') return 'inset(0 round '+Math.min(innerW,innerH)*0.12+'px)';
+  if(frame==='star'){
+    // 5-point star polygon (approximate; sized by percentage)
+    return 'polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)';
+  }
+  return 'inset(0)';   // plain rectangle / polaroid inner
+}
+function renderClipFrame(el, o, time, W){
+  const px = CANVAS_PX[EDL.settings.canvas]||[1080,1920];
+  const stageH = $('#stageWrap').clientHeight || (W * px[1]/px[0]);
+  const clip = _cfClip(o);
+  const cAR = (clip && clip.w && clip.h) ? (clip.w / clip.h) : 1;
+  // Outer size in pixels: scale is a fraction of canvas width. Aspect ratio comes from clip (or 1 if unknown).
+  // For polaroid, the outer includes the frame padding, so the clip fills the photo area only.
+  const scale = (o.scale!=null?o.scale:0.4);
+  const outerW = scale * W;
+  // Polaroid outer aspect: inner must preserve source aspect (inner_w/inner_h = cAR).
+  // outer_ar = cAR * (1-padT-padB)/(1-padL-padR)
+  const outerAR = (o.frame==='polaroid')
+    ? (cAR * (1-CF_POLAROID.padT-CF_POLAROID.padB)) / (1-CF_POLAROID.padL-CF_POLAROID.padR)
+    : cAR;
+  const outerH = outerW / outerAR;
+  el.style.width = outerW + 'px';
+  el.style.height = outerH + 'px';
+  el.style.background = (o.frame==='polaroid') ? (o.frameColor || '#ffffff') : 'transparent';
+  el.style.borderRadius = '';
+  el.style.overflow = 'hidden';
+  el.style.boxShadow = 'none';
+  // Ensure the inner video exists
+  let vid = ovCfVids[o.id];
+  if(!vid){
+    vid = document.createElement('video');
+    vid.muted = true; vid.playsInline = true; vid.preload = 'auto';
+    vid.style.position='absolute'; vid.style.pointerEvents='none';
+    ovCfVids[o.id] = vid; el.appendChild(vid);
+  } else if(vid.parentNode !== el){ el.appendChild(vid); }
+  // Set source once
+  if(clip && vid.dataset.src !== clip.url){ vid.dataset.src = clip.url; vid.src = clip.url; }
+  // Place video in the inner (photo) rect
+  const inner = _cfInnerRect(o, outerW, outerH);
+  vid.style.left = inner.x + 'px'; vid.style.top = inner.y + 'px';
+  vid.style.width = inner.w + 'px'; vid.style.height = inner.h + 'px';
+  // Object-fit cover keeps clip aspect and fills the inner rect
+  vid.style.objectFit = 'cover';
+  vid.style.clipPath = _cfMaskCss(o.frame||'polaroid', inner.w, inner.h);
+  vid.style.webkitClipPath = vid.style.clipPath;
+  // Sync playback to timeline
+  const spd = Math.max(0.1, +o.srcSpeed || 1);
+  const localT = Math.max(0, time - o.start);
+  const wantT = (+o.srcIn || 0) + localT * spd;
+  if(clip){
+    if(Math.abs(vid.currentTime - wantT) > 0.06){
+      try{ vid.currentTime = Math.min(Math.max(0, wantT), Math.max(0, (clip.dur||wantT+0.1) - 0.02)); }catch(_){}
+    }
+    // Play/pause synced with the main preview (approximated by tlPlaying flag)
+    if(tlPlaying && vid.paused){ vid.playbackRate = spd; vid.play().catch(()=>{}); }
+    else if(!tlPlaying && !vid.paused){ vid.pause(); }
+  }
+  el.style.opacity = (o.opacity!=null?o.opacity:1);
+}
+
+function addClipFrameOverlay(){
+  openCfPicker(clip=>{
+    histCommit(); EDL.overlays = EDL.overlays || [];
+    const o = {id:uid(), type:'clipframe', srcId:clip.id, srcIn:0, srcSpeed:1,
+               frame:'polaroid', frameColor:'#ffffff',
+               scale:0.42, x:0.5, y:0.5, rot:0, opacity:1,
+               start: Math.round(playhead*100)/100, dur: Math.min(3, clip.dur||3)};
+    ovPlace(o); EDL.overlays.push(o); ovSel=o.id;
+    renderOvList(); buildOvEditor(); renderOverlays(playhead);
+  });
+}
+
+/* Single-select clip picker for clipframe overlay. Reuses MAN.clips + grouped-by-brand layout. */
+let _cfPickCb = null;
+function openCfPicker(cb){
+  _cfPickCb = cb;
+  $('#cfPickFilter').value = '';
+  const cats = [...new Set(MAN.clips.map(c=>c.product))].sort();
+  $('#cfPickCat').innerHTML = '<option value="">All categories</option>'
+    + BRAND_ORDER.map(b=>{ const opts = cats.filter(p => (MAN.clips.find(c=>c.product===p)||{}).brand===b);
+        return opts.length ? `<optgroup label="${BRAND_LABELS[b]||b}">`+opts.map(p=>`<option value="${p}">${p}</option>`).join('')+`</optgroup>` : '';
+      }).join('');
+  renderCfPickGrid();
+  $('#cfPickModal').style.display='flex';
+  setTimeout(()=>$('#cfPickFilter').focus(), 30);
+}
+function closeCfPicker(){ _cfPickCb = null; $('#cfPickModal').style.display='none'; }
+function renderCfPickGrid(){
+  const g = $('#cfPickGrid'); g.innerHTML = '';
+  const q = ($('#cfPickFilter').value||'').trim().toLowerCase(), cat=$('#cfPickCat').value;
+  const list = MAN.clips.filter(c=>(!cat || c.product===cat) && _clipMatchesQuery(c, q));
+  if(!list.length){ g.innerHTML='<div style="grid-column:1/-1;color:var(--mut);font-size:12px;padding:8px">No clips match.</div>'; return; }
+  list.forEach(c=>{
+    const cell = document.createElement('div'); cell.className='aicell'; cell.title = c.product+' · '+c.id+' · '+fmt(c.dur)+'s';
+    cell.innerHTML = `<img src="${c.thumb}" loading="lazy"><div class="cap">${c.label} · ${fmt(c.dur)}s</div>`;
+    cell.onclick = ()=>{ const cb=_cfPickCb; closeCfPicker(); if(cb) cb(c); };
+    g.appendChild(cell);
+  });
+}
 $('#btnOverlays').onclick=openOvModal; $('#ovClose').onclick=closeOvModal;
 $('#btnAudio').onclick=openAudModal; $('#audClose').onclick=closeAudModal;
 $('#audFilter').oninput=renderAudPickList; $('#audShowMusic').onchange=renderAudPickList; $('#audShowSfx').onchange=renderAudPickList;
 $('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay; $('#ovAddArrow').onclick=addArrowOverlay;
+$('#ovAddClipFrame').onclick=addClipFrameOverlay;
+$('#cfPickClose').onclick=closeCfPicker;
+$('#cfPickFilter').oninput=renderCfPickGrid; $('#cfPickCat').onchange=renderCfPickGrid;
 // + Image / ✨ Sprinkle dropdowns: Upload / Clip art / Library
 function closeImgMenu(){ $('#ovImgMenu').classList.remove('open'); }
 function closeSpkMenu(){ $('#ovSpkMenu').classList.remove('open'); }
@@ -2798,7 +2964,7 @@ function renderTracks(){
 // Build one overlay bar element on its channel lane (drag to move/retime/change channel).
 function buildOverlayBar(o,total){ const b=document.createElement('div'); b.dataset.ovid=o.id; b.className='blk ov-'+o.type+(o.id===ovSel?' sel':'')+(_msel.includes(o)?' msel':'')+(o.hidden?' clhidden':'')+(o.locked?' cllocked':'');
   b.style.left=((+o.start||0)/total*100)+'%'; b.style.width=((+o.dur||0)/total*100)+'%';
-  b.appendChild(document.createTextNode(o.type==='image'?'🖼 image':(o.type==='shape'?'▭ shape':(o.type==='sprinkle'?'✨ sprinkle':(o.type==='arrow'?('➴ '+(o.subtype||'arrow')):('🅣 '+(o.text||'text')))))));
+  b.appendChild(document.createTextNode(o.type==='image'?'🖼 image':(o.type==='shape'?'▭ shape':(o.type==='sprinkle'?'✨ sprinkle':(o.type==='arrow'?('➴ '+(o.subtype||'arrow')):(o.type==='clipframe'?('🎞 '+(o.frame||'polaroid')):('🅣 '+(o.text||'text'))))))));
   const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR'; b.appendChild(hL); b.appendChild(hR);
   // hide / lock / split icons (same UX as clip blocks)
   const ic=document.createElement('div'); ic.className='clipicons';

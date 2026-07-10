@@ -1048,10 +1048,114 @@ def prerender_piececlip(o, W, H, tmp, k):
     return out
 
 
+CF_POLAROID = {"padL": 0.06, "padR": 0.06, "padT": 0.06, "padB": 0.22}
+
+def _cf_mask_png(frame, out_w, out_h, path):
+    """Draw an alpha mask for a clipframe shape (white where content, transparent elsewhere).
+    Frame is one of 'polaroid'|'circle'|'roundrect'|'rect'|'star'. Path is the mask PNG output."""
+    from PIL import Image, ImageDraw
+    img = Image.new("L", (out_w, out_h), 0)
+    d = ImageDraw.Draw(img)
+    if frame == "circle":
+        d.ellipse([0, 0, out_w - 1, out_h - 1], fill=255)
+    elif frame == "roundrect":
+        r = int(min(out_w, out_h) * 0.12)
+        d.rounded_rectangle([0, 0, out_w - 1, out_h - 1], radius=r, fill=255)
+    elif frame == "star":
+        cx, cy = out_w / 2.0, out_h / 2.0
+        R = min(out_w, out_h) / 2.0
+        r = R * 0.42
+        pts = []
+        for i in range(10):
+            ang = -math.pi / 2 + i * math.pi / 5
+            rad = R if i % 2 == 0 else r
+            pts.append((cx + rad * math.cos(ang), cy + rad * math.sin(ang)))
+        d.polygon(pts, fill=255)
+    else:
+        d.rectangle([0, 0, out_w - 1, out_h - 1], fill=255)   # rect / polaroid inner
+    img.save(path)
+
+
+def prerender_clipframe(o, W, H, tmp, k):
+    """Render a picture-in-picture clipframe to a short transparent MOV (qtrle w/ alpha).
+    Trims the source clip to (srcIn, srcIn+dur*speed), speeds it up 1/spd to fit dur, masks it
+    to the chosen shape, and (for polaroid) pads with a solid border. Returns MOV path or None."""
+    src = o.get("_src")
+    dur = float(o.get("dur", 0) or 0)
+    if not src or dur <= 0 or not os.path.exists(src):
+        return None
+    frame = (o.get("frame") or "polaroid").lower()
+    scale = float(o.get("scale", 0.4))
+    src_in = max(0.0, float(o.get("srcIn", 0) or 0))
+    spd = max(0.1, float(o.get("srcSpeed", 1) or 1))
+    # Probe source aspect (fall back to square if unknown)
+    src_ar = 1.0
+    try:
+        r = run([FFPROBE, "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=width,height", "-of", "csv=p=0", src])
+        w_s, h_s = (r.stdout or "").strip().split(",")
+        if int(w_s) > 0 and int(h_s) > 0:
+            src_ar = int(w_s) / int(h_s)
+    except Exception:
+        pass
+    # Outer/inner dims. Polaroid: outer = white border + inner photo area. Others: outer == inner.
+    outer_w = max(4, int(W * scale))
+    if frame == "polaroid":
+        # inner rect must preserve source aspect: inner_w/inner_h = src_ar
+        # → outer_w*(1-padL-padR) / (outer_h*(1-padT-padB)) = src_ar
+        # → outer_ar = src_ar * (1-padT-padB)/(1-padL-padR)
+        outer_ar = src_ar * (1 - CF_POLAROID["padT"] - CF_POLAROID["padB"]) / (1 - CF_POLAROID["padL"] - CF_POLAROID["padR"])
+        outer_h = max(4, int(outer_w / max(0.01, outer_ar)))
+        inner_x = int(outer_w * CF_POLAROID["padL"])
+        inner_y = int(outer_h * CF_POLAROID["padT"])
+        inner_w = max(2, int(outer_w * (1 - CF_POLAROID["padL"] - CF_POLAROID["padR"])))
+        inner_h = max(2, int(outer_h * (1 - CF_POLAROID["padT"] - CF_POLAROID["padB"])))
+    else:
+        outer_h = max(4, int(outer_w / max(0.01, src_ar)))
+        inner_x = inner_y = 0
+        inner_w, inner_h = outer_w, outer_h
+    # Make even (yuv420p / VP9 friendly)
+    outer_w -= outer_w % 2; outer_h -= outer_h % 2
+    inner_w -= inner_w % 2; inner_h -= inner_h % 2
+    # Mask for the whole outer canvas (transparent outside the shape)
+    mask_path = os.path.join(tmp, "cf_mask_%d.png" % k)
+    _cf_mask_png(frame, outer_w, outer_h, mask_path)
+    # Frame color (polaroid only)
+    fc_color = (o.get("frameColor") or "#ffffff").lstrip("#")
+    fc_rgb = "0x" + (fc_color if len(fc_color) == 6 else "ffffff")
+    # Trim length from source (before speed-up)
+    take = dur * spd
+    src_take = min(take, max(0.1, take))
+    # Inputs
+    # [0] source clip (trimmed)
+    # [1] mask PNG (single-frame, looped)
+    inputs = ["-ss", "%g" % src_in, "-t", "%g" % src_take, "-i", src,
+              "-loop", "1", "-t", "%g" % dur, "-i", mask_path]
+    # Build filter graph
+    parts = []
+    bg = fc_rgb if frame == "polaroid" else "black"     # ffmpeg color: "0xRRGGBB" or a named color — 8-hex ("0x00000000") is invalid
+    bg_a = 1.0 if frame == "polaroid" else 0.0
+    # Speed up + scale to inner + pad to outer with border color (transparent for non-polaroid)
+    parts.append("[0:v]setpts=(PTS-STARTPTS)/%g,scale=%d:%d,format=rgba,"
+                 "pad=%d:%d:%d:%d:color=%s@%g,setpts=PTS-STARTPTS[fg]"
+                 % (spd, inner_w, inner_h, outer_w, outer_h, inner_x, inner_y,
+                    bg, bg_a))
+    parts.append("[1:v]format=gray[m]")
+    parts.append("[fg][m]alphamerge[outv]")
+    fc_txt = ";".join(parts)
+    out = os.path.join(tmp, "cf_%d.mov" % k)
+    r = run([FFMPEG, "-y", "-loglevel", "error"] + inputs
+            + ["-filter_complex", fc_txt, "-map", "[outv]",
+               "-c:v", "qtrle", "-pix_fmt", "argb", "-t", "%g" % dur, out])
+    if r.returncode != 0 or not os.path.exists(out):
+        return None
+    return out
+
+
 def apply_overlays(silent, overlays, W, H, tmp):
     """Composite free-floating text/image/shape overlays over the full timeline (global time),
     preserving list order as z-order (later = on top)."""
-    overlays = [o for o in (overlays or []) if isinstance(o, dict) and o.get("type") in ("text", "image", "shape", "piececlip") and not o.get("hidden")]
+    overlays = [o for o in (overlays or []) if isinstance(o, dict) and o.get("type") in ("text", "image", "shape", "piececlip", "clipframe") and not o.get("hidden")]
     if not overlays:
         return silent, None
     overlays = sorted(overlays, key=lambda o: int(o.get("ch", 0) or 0))   # higher channel composited later = on top (stable within a channel)
@@ -1059,6 +1163,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
     # transparent clip (only the [start,end] window), so the heavy N-piece composite runs once
     # for the window instead of across the whole timeline. Fall back to inline pieces on failure.
     expanded = []
+    i2f = None   # lazily built id → source file map for clipframe lookups
     for o in overlays:
         if o.get("type") == "piececlip":
             clip = prerender_piececlip(o, W, H, tmp, len(expanded))
@@ -1069,6 +1174,17 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     expanded.append({"type": "image", "src": o.get("src"), "x": pc.get("x", 0.5), "y": pc.get("y", 0.5),
                                      "scale": pc.get("scale", 0.08), "start": o.get("start", 0), "dur": o.get("dur", 3),
                                      "ch": o.get("ch", 0), "rot": pc.get("rot", 0), "aphase": pc.get("aphase", 0), "anims": o.get("anims")})
+        elif o.get("type") == "clipframe":
+            if i2f is None:
+                i2f = id_to_file()
+            src_path = i2f.get(o.get("srcId"))
+            if not src_path or not os.path.exists(src_path):
+                continue                                           # missing source — skip silently (project.json can outlive a deleted clip)
+            oo = dict(o); oo["_src"] = src_path
+            clip = prerender_clipframe(oo, W, H, tmp, len(expanded))
+            if clip:
+                oo["_clip"] = clip
+                expanded.append(oo)
         else:
             expanded.append(o)
     overlays = expanded
@@ -1092,6 +1208,15 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 fc.append(f"[{ii}:v]setpts=PTS-STARTPTS+{s}/TB,format=rgba[pcc{k}]")
                 fc.append(f"[{last}][pcc{k}]overlay=0:0:{en}:eof_action=pass[v{k}]")
                 last = f"v{k}"; ii += 1
+            continue
+        if t == "clipframe":                       # picture-in-picture: pre-rendered short MOV, place at overlay center
+            clip = o.get("_clip")
+            if not clip:
+                continue
+            inputs += ["-i", clip]
+            fc.append(f"[{ii}:v]setpts=PTS-STARTPTS+{s}/TB,format=rgba[cfp{k}]")
+            fc.append(f"[{last}][cfp{k}]overlay=x='W*{ox}-w/2':y='H*{oy}-h/2':{en}:eof_action=pass[v{k}]")
+            last = f"v{k}"; ii += 1
             continue
         if t == "text" and o.get("style") != "sticker":
             if not (o.get("text") or "").strip():
