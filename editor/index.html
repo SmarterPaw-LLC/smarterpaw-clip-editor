@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.67.2</span>
+  <span class="ver" id="appVer">v1.67.3</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -1173,6 +1173,9 @@ const music = new Audio();
 let tlPlaying=false, pbToken=0, segRaf=null, clockRaf=null, segTO=null, clockTimer=null, playhead=0;
 function stop(){ tlPlaying=false; pbToken++; cancelAnimationFrame(segRaf); cancelAnimationFrame(clockRaf); clearInterval(clockTimer); clearTimeout(segTO);
   const v=activeVid(); if(v){ v.onseeked=null; try{v.pause();}catch(e){} v.style.opacity=1; } music.pause(); audStopPlayback();
+  // Also pause every clipframe overlay's inner video — they're independent HTML <video> elements
+  // that don't listen to the timeline clock, so they'd keep playing on their own otherwise.
+  for(const id in ovCfVids){ try{ ovCfVids[id].pause(); }catch(e){} }
   $('#endcard').style.display='none'; $('#btnPlayTl').textContent='▶ Play timeline'; }   // note: keeps playhead where it stopped
 
 // Show the frame at the current timeline playhead (used when scrubbing while stopped).
@@ -2159,6 +2162,9 @@ function renderOverlays(time){
       (ovSpark[o.id]||[]).forEach(arr=>arr&&arr.forEach(s=>s.style.opacity=0));
       if(ovShine[o.id]) ovShine[o.id].style.display='none';
       (ovPieces[o.id]||[]).forEach(p=>p.style.opacity=0);
+      // Clipframe: display:none doesn't pause a <video>. If we're outside the overlay window
+      // (or the overlay is hidden), stop playback + rewind so the next entry doesn't jump.
+      if(o.type==='clipframe' && ovCfVids[o.id]){ try{ ovCfVids[o.id].pause(); }catch(e){} }
       return; }
     el.style.display='';
     if(ekey==='sticker'){
