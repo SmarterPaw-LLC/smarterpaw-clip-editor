@@ -1098,20 +1098,19 @@ def prerender_clipframe(o, W, H, tmp, k):
             src_ar = int(w_s) / int(h_s)
     except Exception:
         pass
-    # Outer/inner dims. Polaroid: outer = white border + inner photo area. Others: outer == inner.
+    # Outer dims are FIXED per shape (not derived from source aspect). Source clip is CROPPED to fill
+    # the inner rect ("cover" behavior) so a portrait 9:16 UGC clip doesn't stretch the polaroid into
+    # a tall rectangle with an oversized bottom strip.
     outer_w = max(4, int(W * scale))
+    CF_AR = {"polaroid": 0.82, "circle": 1.0, "star": 1.0, "rect": 1.0, "roundrect": 1.0}
+    outer_ar = CF_AR.get(frame, 1.0)
+    outer_h = max(4, int(outer_w / outer_ar))
     if frame == "polaroid":
-        # inner rect must preserve source aspect: inner_w/inner_h = src_ar
-        # → outer_w*(1-padL-padR) / (outer_h*(1-padT-padB)) = src_ar
-        # → outer_ar = src_ar * (1-padT-padB)/(1-padL-padR)
-        outer_ar = src_ar * (1 - CF_POLAROID["padT"] - CF_POLAROID["padB"]) / (1 - CF_POLAROID["padL"] - CF_POLAROID["padR"])
-        outer_h = max(4, int(outer_w / max(0.01, outer_ar)))
         inner_x = int(outer_w * CF_POLAROID["padL"])
         inner_y = int(outer_h * CF_POLAROID["padT"])
         inner_w = max(2, int(outer_w * (1 - CF_POLAROID["padL"] - CF_POLAROID["padR"])))
         inner_h = max(2, int(outer_h * (1 - CF_POLAROID["padT"] - CF_POLAROID["padB"])))
     else:
-        outer_h = max(4, int(outer_w / max(0.01, src_ar)))
         inner_x = inner_y = 0
         inner_w, inner_h = outer_w, outer_h
     # Make even (yuv420p / VP9 friendly)
@@ -1135,11 +1134,13 @@ def prerender_clipframe(o, W, H, tmp, k):
     parts = []
     bg = fc_rgb if frame == "polaroid" else "black"     # ffmpeg color: "0xRRGGBB" or a named color — 8-hex ("0x00000000") is invalid
     bg_a = 1.0 if frame == "polaroid" else 0.0
-    # Speed up + scale to inner + pad to outer with border color (transparent for non-polaroid)
-    parts.append("[0:v]setpts=(PTS-STARTPTS)/%g,scale=%d:%d,format=rgba,"
-                 "pad=%d:%d:%d:%d:color=%s@%g,setpts=PTS-STARTPTS[fg]"
-                 % (spd, inner_w, inner_h, outer_w, outer_h, inner_x, inner_y,
-                    bg, bg_a))
+    # Speed up + scale to inner (COVER: fill, then crop overflow — matches CSS object-fit:cover)
+    # + pad to outer with border color (transparent for non-polaroid).
+    parts.append("[0:v]setpts=(PTS-STARTPTS)/%g,"
+                 "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,"
+                 "format=rgba,pad=%d:%d:%d:%d:color=%s@%g,setpts=PTS-STARTPTS[fg]"
+                 % (spd, inner_w, inner_h, inner_w, inner_h,
+                    outer_w, outer_h, inner_x, inner_y, bg, bg_a))
     parts.append("[1:v]format=gray[m]")
     parts.append("[fg][m]alphamerge[outv]")
     fc_txt = ";".join(parts)

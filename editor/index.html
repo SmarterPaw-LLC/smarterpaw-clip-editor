@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.67.1</span>
+  <span class="ver" id="appVer">v1.67.2</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -2652,18 +2652,15 @@ function _cfMaskCss(frame, innerW, innerH){
 }
 function renderClipFrame(el, o, time, W){
   const px = CANVAS_PX[EDL.settings.canvas]||[1080,1920];
-  const stageH = $('#stageWrap').clientHeight || (W * px[1]/px[0]);
   const clip = _cfClip(o);
-  const cAR = (clip && clip.w && clip.h) ? (clip.w / clip.h) : 1;
-  // Outer size in pixels: scale is a fraction of canvas width. Aspect ratio comes from clip (or 1 if unknown).
-  // For polaroid, the outer includes the frame padding, so the clip fills the photo area only.
   const scale = (o.scale!=null?o.scale:0.4);
   const outerW = scale * W;
-  // Polaroid outer aspect: inner must preserve source aspect (inner_w/inner_h = cAR).
-  // outer_ar = cAR * (1-padT-padB)/(1-padL-padR)
-  const outerAR = (o.frame==='polaroid')
-    ? (cAR * (1-CF_POLAROID.padT-CF_POLAROID.padB)) / (1-CF_POLAROID.padL-CF_POLAROID.padR)
-    : cAR;
+  // Fixed outer aspect per shape (like a real polaroid, coin, or badge). The source clip is CROPPED
+  // via object-fit:cover to fill the inner rect — that way a 9:16 vertical UGC clip doesn't stretch
+  // the polaroid into a weird tall rectangle with a giant white bottom.
+  // Polaroid ≈ 3.5" × 4.3" (~0.815), circle/star square, rect/roundrect square by default.
+  const CF_AR = {polaroid:0.82, circle:1, star:1, rect:1, roundrect:1};
+  const outerAR = CF_AR[o.frame] || 1;
   const outerH = outerW / outerAR;
   el.style.width = outerW + 'px';
   el.style.height = outerH + 'px';
