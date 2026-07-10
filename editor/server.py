@@ -1105,7 +1105,6 @@ def prerender_clipframe(o, W, H, tmp, k):
     if not src or dur <= 0 or not os.path.exists(src):
         return None
     frame = (o.get("frame") or "polaroid").lower()
-    scale = float(o.get("scale", 0.4))
     src_in = max(0.0, float(o.get("srcIn", 0) or 0))
     spd = max(0.1, float(o.get("srcSpeed", 1) or 1))
     # Probe source aspect (fall back to square if unknown)
@@ -1118,14 +1117,21 @@ def prerender_clipframe(o, W, H, tmp, k):
             src_ar = int(w_s) / int(h_s)
     except Exception:
         pass
-    # Outer dims are FIXED per shape (not derived from source aspect). Source clip is CROPPED to fill
-    # the inner rect ("cover" behavior) so a portrait 9:16 UGC clip doesn't stretch the polaroid into
-    # a tall rectangle with an oversized bottom strip.
-    outer_w = max(4, int(W * scale))
+    # Outer dims: `w` (fraction of canvas W) + `h` (fraction of canvas H) — independent sliders.
+    # Legacy fallback: single `scale` field with a per-frame fixed aspect (kept only so older
+    # projects saved before v1.68.3 still render at their original size).
     CF_AR = {"polaroid": 0.82, "circle": 1.0, "star": 1.0, "rect": 1.0, "roundrect": 1.0,
              "trapezoid": 1.2, "parallelogram": 1.5, "bolt": 0.55}
     outer_ar = CF_AR.get(frame, 1.0)
-    outer_h = max(4, int(outer_w / outer_ar))
+    if o.get("w") is not None and o.get("h") is not None:
+        outer_w = max(4, int(W * float(o["w"])))
+        outer_h = max(4, int(H * float(o["h"])))
+    else:
+        scale = float(o.get("scale", 0.4))
+        outer_w = max(4, int(W * scale))
+        outer_h = max(4, int(outer_w / outer_ar))
+    # Source clip is CROPPED to fill the inner rect ("cover" behavior) so a portrait 9:16 UGC
+    # clip doesn't stretch the polaroid into a tall rectangle with an oversized bottom strip.
     if frame == "polaroid":
         inner_x = int(outer_w * CF_POLAROID["padL"])
         inner_y = int(outer_h * CF_POLAROID["padT"])

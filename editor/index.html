@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.68.2</span>
+  <span class="ver" id="appVer">v1.68.3</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2418,8 +2418,10 @@ function buildOvEditor(){
       <div><b style="font-size:11px;color:var(--mut)">Source:</b> <span style="font-size:11px">${clip?clip.label:'<span style="color:#f3b54a">⚠ missing clip</span>'}</span> <button class="mini" id="ovCfPick">Replace…</button></div>
       <div><label>Frame <select id="ovCfFrame">${CF_FRAMES.map(f=>`<option value="${f[0]}" ${(o.frame||'polaroid')===f[0]?'selected':''}>${f[1]}</option>`).join('')}</select></label>
         <label id="ovCfColRow">Border <input type="color" id="ovCfColor" value="${o.frameColor||'#ffffff'}"></label></div>
-      <div><label>Size <input type="range" id="ovCfScale" min="0.1" max="1" step="0.01" value="${o.scale!=null?o.scale:0.42}"></label>
-        <label>Opacity <input type="range" id="ovCfOp" min="0" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label></div>
+      <div><label>Width <input type="range" id="ovCfW" min="0.05" max="1" step="0.01" value="${_cfEffectiveWH(o).w.toFixed(3)}"></label>
+        <label>Height <input type="range" id="ovCfH" min="0.05" max="1" step="0.01" value="${_cfEffectiveWH(o).h.toFixed(3)}"></label></div>
+      <div><label>Opacity <input type="range" id="ovCfOp" min="0" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label>
+        <button class="mini" id="ovCfFit" title="Reset width & height to the frame shape's natural aspect on this canvas">↔ Fit shape</button></div>
       <div><label>Seek into source <input type="range" id="ovCfIn" min="0" max="${Math.max(0.1,clipDur-0.1)}" step="0.05" value="${+o.srcIn||0}"></label>
         <label>Speed <input type="range" id="ovCfSpd" min="0.25" max="4" step="0.05" value="${+o.srcSpeed||1}"></label></div>
       <div><label class="ck"><input type="checkbox" id="ovCfAud" ${o.srcAudio?'checked':''}> Use source audio</label>
@@ -2494,7 +2496,9 @@ function buildOvEditor(){
     else if(o.type==='clipframe'){
       if($('#ovCfFrame')) o.frame=$('#ovCfFrame').value;
       if($('#ovCfColor')) o.frameColor=$('#ovCfColor').value;
-      if($('#ovCfScale')) o.scale=parseFloat($('#ovCfScale').value)||0.42;
+      if($('#ovCfW')) o.w=parseFloat($('#ovCfW').value)||0.42;
+      if($('#ovCfH')) o.h=parseFloat($('#ovCfH').value)||0.24;
+      if(o.scale != null) delete o.scale;   // legacy single-knob field is now dead — w/h own the sizing
       if($('#ovCfOp')) o.opacity=parseFloat($('#ovCfOp').value);
       if($('#ovCfIn')) o.srcIn=parseFloat($('#ovCfIn').value)||0;
       if($('#ovCfSpd')) o.srcSpeed=parseFloat($('#ovCfSpd').value)||1;
@@ -2516,6 +2520,14 @@ function buildOvEditor(){
   if($('#ovArFill')){ $('#ovArFill').value=(o.fillType==='gradient')?'gradient':'solid'; const g=o.fillType==='gradient'; $('#ovArGrad').style.display=g?'':'none'; $('#ovArSolid').style.display=g?'none':''; if($('#ovArArchRow')) $('#ovArArchRow').style.display=((o.subtype||'arrow')==='arrow')?'':'none'; }
   if($('#ovArSeed')) $('#ovArSeed').onclick=()=>{ histCommit(); o.seed=Math.floor(Math.random()*1e6); renderOverlays(playhead); };
   if($('#ovCfPick')) $('#ovCfPick').onclick=()=>openCfPicker(clip=>{ histCommit(); o.srcId=clip.id; o.srcIn=Math.min(+o.srcIn||0, Math.max(0,(clip.dur||1)-0.1)); if(ovCfVids[o.id]){ ovCfVids[o.id].removeAttribute('src'); ovCfVids[o.id].dataset.src=''; } renderOvList(); buildOvEditor(); renderOverlays(playhead); });
+  if($('#ovCfFit')) $('#ovCfFit').onclick=()=>{ histCommit();
+    // Reset height so the frame renders at its native aspect on THIS canvas — width stays as-is.
+    const px = CANVAS_PX[EDL.settings.canvas]||[1080,1920];
+    const CF_AR = {polaroid:0.82, circle:1, star:1, rect:1, roundrect:1, trapezoid:1.2, parallelogram:1.5, bolt:0.55};
+    const ar = CF_AR[o.frame] || 1;
+    const w = (+o.w != null && !isNaN(+o.w)) ? +o.w : _cfEffectiveWH(o).w;
+    o.w = w; o.h = (w * px[0]) / (ar * px[1]);
+    buildOvEditor(); renderOverlays(playhead); };
   if($('#ovCfColRow')) $('#ovCfColRow').style.display = (o.frame==='polaroid')?'':'none';
   box.querySelectorAll('.ovBrandBtn').forEach(b=>{ b.onclick=()=>applyBrandToOverlay(o); });   // 🎨 Brand → reapply project brand gradient
   function animCtrl(ai,a,c){ const key=c[0],label=c[1],kind=c[2],v=a[key];
@@ -2674,18 +2686,13 @@ function _cfMaskCss(frame, innerW, innerH){
 }
 function renderClipFrame(el, o, time, W){
   const px = CANVAS_PX[EDL.settings.canvas]||[1080,1920];
+  const stageH = W * px[1] / px[0];   // stage-pixel height (W is stage-pixel width)
   const clip = _cfClip(o);
-  const scale = (o.scale!=null?o.scale:0.4);
-  const outerW = scale * W;
-  // Fixed outer aspect per shape (like a real polaroid, coin, or badge). The source clip is CROPPED
-  // via object-fit:cover to fill the inner rect — that way a 9:16 vertical UGC clip doesn't stretch
-  // the polaroid into a weird tall rectangle with a giant white bottom.
-  // Polaroid ≈ 3.5" × 4.3" (~0.815), circle/star square, rect/roundrect square by default,
-  // trapezoid a bit wider than tall, parallelogram wide-and-short, lightning bolt tall-and-narrow.
-  const CF_AR = {polaroid:0.82, circle:1, star:1, rect:1, roundrect:1,
-                 trapezoid:1.2, parallelogram:1.5, bolt:0.55};
-  const outerAR = CF_AR[o.frame] || 1;
-  const outerH = outerW / outerAR;
+  // Independent width + height (fractions of canvas W and H, same convention as shape overlay).
+  // Falls back to legacy `scale` on older projects via _cfEffectiveWH.
+  const wh = _cfEffectiveWH(o);
+  const outerW = wh.w * W;
+  const outerH = wh.h * stageH;
   el.style.width = outerW + 'px';
   el.style.height = outerH + 'px';
   el.style.background = (o.frame==='polaroid') ? (o.frameColor || '#ffffff') : 'transparent';
@@ -2732,14 +2739,32 @@ function renderClipFrame(el, o, time, W){
 function addClipFrameOverlay(){
   openCfPicker(clip=>{
     histCommit(); EDL.overlays = EDL.overlays || [];
+    // Defaults derived so polaroid still looks like a polaroid on the current canvas.
+    // w = fraction of canvas W, h = fraction of canvas H (same convention as shape overlay).
+    const px = CANVAS_PX[EDL.settings.canvas]||[1080,1920];
+    const outerAR = 0.82;   // polaroid default
+    const wF = 0.42;
+    const hF = (wF * px[0]) / (outerAR * px[1]);   // preserve polaroid aspect on the current canvas
     const o = {id:uid(), type:'clipframe', srcId:clip.id, srcIn:0, srcSpeed:1,
                srcAudio:false, srcAudioVol:1.0,
                frame:'polaroid', frameColor:'#ffffff',
-               scale:0.42, x:0.5, y:0.5, rot:0, opacity:1,
+               w:wF, h:hF, x:0.5, y:0.5, rot:0, opacity:1,
                start: Math.round(playhead*100)/100, dur: Math.min(3, clip.dur||3)};
     ovPlace(o); EDL.overlays.push(o); ovSel=o.id;
     renderOvList(); buildOvEditor(); renderOverlays(playhead);
   });
+}
+// Backwards compat: convert legacy `scale` (single knob, fixed CF_AR) → explicit w/h fractions.
+// Called from renderClipFrame + prerender-side (server) so old projects keep working AND become
+// resizable independently once the user drags the new sliders.
+function _cfEffectiveWH(o){
+  const px = CANVAS_PX[EDL.settings.canvas]||[1080,1920];
+  const CF_AR = {polaroid:0.82, circle:1, star:1, rect:1, roundrect:1,
+                 trapezoid:1.2, parallelogram:1.5, bolt:0.55};
+  const ar = CF_AR[o.frame] || 1;
+  if(o.w != null && o.h != null) return {w:+o.w, h:+o.h};
+  const s = (o.scale != null ? +o.scale : 0.42);
+  return {w: s, h: (s * px[0]) / (ar * px[1])};
 }
 
 /* Single-select clip picker for clipframe overlay. Reuses MAN.clips + grouped-by-brand layout. */
