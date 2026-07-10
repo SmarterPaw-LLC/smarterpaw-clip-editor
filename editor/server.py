@@ -1229,7 +1229,14 @@ def apply_overlays(silent, overlays, W, H, tmp):
             if not clip:
                 continue
             inputs += ["-i", clip]
-            fc.append(f"[{ii}:v]setpts=PTS-STARTPTS+{s}/TB,format=rgba[cfp{k}]")
+            filt = [f"setpts=PTS-STARTPTS+{s}/TB", "format=rgba"]
+            # Static rotation (degrees on the overlay). Pad transparent margin first so rotate
+            # doesn't smear edge pixels of the polaroid rectangle. Same pattern as image overlays.
+            srot = float(o.get("rot", 0) or 0)
+            if abs(srot) > 1e-6:
+                filt.append("pad=ceil(iw*1.08):ceil(ih*1.08):(ow-iw)/2:(oh-ih)/2:color=black@0")
+                filt.append(f"rotate='{math.radians(srot):.6f}':c=none:ow='hypot(iw,ih)':oh='hypot(iw,ih)'")
+            fc.append(f"[{ii}:v]" + ",".join(filt) + f"[cfp{k}]")
             fc.append(f"[{last}][cfp{k}]overlay=x='W*{ox}-w/2':y='H*{oy}-h/2':{en}:eof_action=pass[v{k}]")
             last = f"v{k}"; ii += 1
             continue
