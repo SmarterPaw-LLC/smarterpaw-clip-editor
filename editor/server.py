@@ -12,6 +12,13 @@ RESTART_EXIT_CODE = 42   # launcher loop re-runs server.py when it exits with th
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EDITOR = os.path.join(PROJ, "editor")
+# Frozen at process start: the mtime of server.py as this process saw it. UI compares this
+# to the current on-disk mtime and warns when they differ (== code was edited after boot,
+# so the running process is running STALE code and needs a restart).
+try:
+    _SERVER_PY_BOOT_MTIME = int(os.path.getmtime(os.path.join(EDITOR, "server.py")))
+except Exception:
+    _SERVER_PY_BOOT_MTIME = 0
 THUMBS = os.path.join(EDITOR, "thumbs")
 SRC_ROOT = os.path.join(PROJ, "sources", "clips")   # the clip repository (was 'sources/youtube'; renamed v1.62.5 for clarity)
 MUSIC_DIR = os.path.join(PROJ, "sources", "music")
@@ -1881,7 +1888,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/edl":
             return self._json(load_edl())
         if path == "/api/version":
-            return self._json({"version": app_version()})
+            try:
+                on_disk = int(os.path.getmtime(os.path.join(EDITOR, "server.py")))
+            except Exception:
+                on_disk = 0
+            return self._json({"version": app_version(),
+                               "serverMtimeBoot": _SERVER_PY_BOOT_MTIME,
+                               "serverMtimeDisk": on_disk,
+                               "stale": bool(on_disk and _SERVER_PY_BOOT_MTIME
+                                             and on_disk > _SERVER_PY_BOOT_MTIME)})
         if path == "/api/check-update":
             return self._json(check_update())
         if path == "/api/projects":

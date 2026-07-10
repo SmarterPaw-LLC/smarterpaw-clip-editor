@@ -306,7 +306,8 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.68.1</span>
+  <span class="ver" id="appVer">v1.68.2</span>
+  <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -3858,6 +3859,26 @@ async function boot(reload){
   if(list.length) await projLoad(list[0].file);
   else { applyEDL(await api('/api/edl')); setCur(null); }
   $('#status').textContent=MAN.clips.length+' clips loaded · '+list.length+' saved project(s).';
+  checkServerFreshness();   // one-shot at boot, then poll every 30s
+  setInterval(checkServerFreshness, 30000);
+}
+// Poll /api/version; the server compares its boot-time server.py mtime to the current on-disk
+// mtime and reports {stale:true} when they differ. That flags a running Python process that
+// hasn't been restarted since a code edit — the exact "code changed but not applied" trap.
+async function checkServerFreshness(){
+  try{
+    const v = await fetch('/api/version', {cache:'no-store'}).then(r=>r.json());
+    const el = $('#staleServer'); if(!el) return;
+    // Stale if the server explicitly reports it, OR the response lacks the mtime fields
+    // (== pre-v1.68.2 server binary predates this endpoint's freshness reporter — itself proof it's stale).
+    const stale = !!(v && (v.stale || v.serverMtimeBoot === undefined));
+    if(stale){
+      el.style.display = '';
+      el.onclick = ()=>{ toast('Close the terminal window running "python server.py" and double-click "Start SmarterClip Editor.bat" again.'); };
+    } else {
+      el.style.display = 'none';
+    }
+  }catch(e){}
 }
 
 /* ---------- auto-refresh the source library when clips change (no manual Reload needed) ---------- */
