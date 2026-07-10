@@ -1087,9 +1087,10 @@ def _cf_mask_png(frame, out_w, out_h, path):
         d.polygon([(0.22 * out_w, 0), (out_w, 0),
                    (0.78 * out_w, out_h), (0, out_h)], fill=255)
     elif frame == "bolt":
-        # 7-point lightning bolt — same coords as the CSS clip-path (fractions of w/h).
-        pts = [(0.58, 0.00), (0.22, 0.52), (0.46, 0.52), (0.34, 1.00),
-               (0.78, 0.40), (0.54, 0.40), (0.66, 0.00)]
+        # Chunky Z-bolt (KKZ style) — same coords as the CSS clip-path (fractions of w/h),
+        # clockwise from the top-right corner of the upper stroke.
+        pts = [(0.70, 0.00), (0.60, 0.50), (0.82, 0.45), (0.55, 1.00),
+               (0.30, 1.00), (0.40, 0.45), (0.18, 0.50), (0.35, 0.00)]
         d.polygon([(fx * out_w, fy * out_h) for (fx, fy) in pts], fill=255)
     else:
         d.rectangle([0, 0, out_w - 1, out_h - 1], fill=255)   # rect / polaroid inner
@@ -1121,7 +1122,7 @@ def prerender_clipframe(o, W, H, tmp, k):
     # Legacy fallback: single `scale` field with a per-frame fixed aspect (kept only so older
     # projects saved before v1.68.3 still render at their original size).
     CF_AR = {"polaroid": 0.82, "circle": 1.0, "star": 1.0, "rect": 1.0, "roundrect": 1.0,
-             "trapezoid": 1.2, "parallelogram": 1.5, "bolt": 0.55}
+             "trapezoid": 1.2, "parallelogram": 1.5, "bolt": 0.9}
     outer_ar = CF_AR.get(frame, 1.0)
     if o.get("w") is not None and o.get("h") is not None:
         outer_w = max(4, int(W * float(o["w"])))

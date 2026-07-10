@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.68.4</span>
+  <span class="ver" id="appVer">v1.68.5</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2523,7 +2523,7 @@ function buildOvEditor(){
   if($('#ovCfFit')) $('#ovCfFit').onclick=()=>{ histCommit();
     // Reset height so the frame renders at its native aspect on THIS canvas — width stays as-is.
     const px = CANVAS_PX[EDL.settings.canvas]||[1080,1920];
-    const CF_AR = {polaroid:0.82, circle:1, star:1, rect:1, roundrect:1, trapezoid:1.2, parallelogram:1.5, bolt:0.55};
+    const CF_AR = {polaroid:0.82, circle:1, star:1, rect:1, roundrect:1, trapezoid:1.2, parallelogram:1.5, bolt:0.9};
     const ar = CF_AR[o.frame] || 1;
     const w = (+o.w != null && !isNaN(+o.w)) ? +o.w : _cfEffectiveWH(o).w;
     o.w = w; o.h = (w * px[0]) / (ar * px[1]);
@@ -2681,8 +2681,9 @@ function _cfMaskCss(frame, innerW, innerH){
     return 'polygon(22% 0%, 100% 0%, 78% 100%, 0% 100%)';
   }
   if(frame==='bolt'){
-    // Classic 7-point lightning bolt (top-right → mid-left → bottom → back up).
-    return 'polygon(58% 0%, 22% 52%, 46% 52%, 34% 100%, 78% 40%, 54% 40%, 66% 0%)';
+    // Chunky Z-bolt (KKZ style): ~35% top stroke, ~25% bottom stroke, wide joint —
+    // gives a framed clip room to actually READ inside the bolt. Clockwise from top-right.
+    return 'polygon(70% 0%, 60% 50%, 82% 45%, 55% 100%, 30% 100%, 40% 45%, 18% 50%, 35% 0%)';
   }
   return 'inset(0)';   // plain rectangle / polaroid inner
 }
@@ -2762,7 +2763,7 @@ function addClipFrameOverlay(){
 function _cfEffectiveWH(o){
   const px = CANVAS_PX[EDL.settings.canvas]||[1080,1920];
   const CF_AR = {polaroid:0.82, circle:1, star:1, rect:1, roundrect:1,
-                 trapezoid:1.2, parallelogram:1.5, bolt:0.55};
+                 trapezoid:1.2, parallelogram:1.5, bolt:0.9};
   const ar = CF_AR[o.frame] || 1;
   if(o.w != null && o.h != null) return {w:+o.w, h:+o.h};
   const s = (o.scale != null ? +o.scale : 0.42);
