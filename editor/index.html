@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.67.0</span>
+  <span class="ver" id="appVer">v1.67.1</span>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
   <span class="sp"></span>
@@ -2415,6 +2415,8 @@ function buildOvEditor(){
         <label>Opacity <input type="range" id="ovCfOp" min="0" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label></div>
       <div><label>Seek into source <input type="range" id="ovCfIn" min="0" max="${Math.max(0.1,clipDur-0.1)}" step="0.05" value="${+o.srcIn||0}"></label>
         <label>Speed <input type="range" id="ovCfSpd" min="0.25" max="4" step="0.05" value="${+o.srcSpeed||1}"></label></div>
+      <div><label class="ck"><input type="checkbox" id="ovCfAud" ${o.srcAudio?'checked':''}> Use source audio</label>
+        <label>Vol <input type="range" id="ovCfAudVol" min="0" max="2" step="0.05" value="${o.srcAudioVol!=null?o.srcAudioVol:1}"></label></div>
       <div style="font-size:11px;color:var(--mut)">Source is ${fmt(clipDur)}s long. Overlay plays from “seek” at the given speed.</div>`;
   } else {
     h+=`<div class="sec">Image</div><div><label>Size <input type="range" id="ovScale" min="0.05" max="1" step="0.01" value="${o.scale}"></label>
@@ -2489,6 +2491,8 @@ function buildOvEditor(){
       if($('#ovCfOp')) o.opacity=parseFloat($('#ovCfOp').value);
       if($('#ovCfIn')) o.srcIn=parseFloat($('#ovCfIn').value)||0;
       if($('#ovCfSpd')) o.srcSpeed=parseFloat($('#ovCfSpd').value)||1;
+      if($('#ovCfAud')) o.srcAudio=$('#ovCfAud').checked;
+      if($('#ovCfAudVol')) o.srcAudioVol=parseFloat($('#ovCfAudVol').value);
       if($('#ovCfColRow')) $('#ovCfColRow').style.display = (o.frame==='polaroid')?'':'none'; }
     else { o.scale=parseFloat($('#ovScale').value)||0.3; if($('#ovImgOp')) o.opacity=parseFloat($('#ovImgOp').value); }
     if(o.type==='sprinkle') updSpWarn();   // live-refresh per-piece hints on toggle/count change
@@ -2675,6 +2679,10 @@ function renderClipFrame(el, o, time, W){
     vid.style.position='absolute'; vid.style.pointerEvents='none';
     ovCfVids[o.id] = vid; el.appendChild(vid);
   } else if(vid.parentNode !== el){ el.appendChild(vid); }
+  // Per-clip audio: unmute + set volume when srcAudio is on. Clamp to [0,1] since HTML <video>
+  // volume can't exceed 1 (server side supports >1 for boost via ffmpeg volume filter).
+  vid.muted = !o.srcAudio;
+  vid.volume = Math.max(0, Math.min(1, +o.srcAudioVol||1));
   // Set source once
   if(clip && vid.dataset.src !== clip.url){ vid.dataset.src = clip.url; vid.src = clip.url; }
   // Place video in the inner (photo) rect
@@ -2704,6 +2712,7 @@ function addClipFrameOverlay(){
   openCfPicker(clip=>{
     histCommit(); EDL.overlays = EDL.overlays || [];
     const o = {id:uid(), type:'clipframe', srcId:clip.id, srcIn:0, srcSpeed:1,
+               srcAudio:false, srcAudioVol:1.0,
                frame:'polaroid', frameColor:'#ffffff',
                scale:0.42, x:0.5, y:0.5, rot:0, opacity:1,
                start: Math.round(playhead*100)/100, dur: Math.min(3, clip.dur||3)};

@@ -1621,17 +1621,19 @@ def render(edl, out_dir=None, out_name=None, progress=None):
         except Exception as ex:
             return {"ok": False, "log": f"Can't create folder:\n{target_dir}\n{ex}"}
         out = os.path.join(target_dir, base_name)
-        # === Audio mix: legacy single-music slot + per-clip EDL.audio overlays ===
+        # === Audio mix: legacy single-music slot + per-clip EDL.audio overlays + framed-clip source audio ===
         # Each audio source becomes an ffmpeg -i input; its filter chain trims+delays into the right
         # spot on the timeline and applies per-clip volume + fadeIn/fadeOut. All chains are amix'd
         # at the end. Order: legacy music first (if any) so it's always input #1, then user-added clips.
-        tracks = []     # list of (path, start, dur, vol, fadeIn, fadeOut)
+        # Tracks are 8-tuples: (path, start, dur, vol, fadeIn, fadeOut, src_in, speed). src_in seeks
+        # into the source file (framed-clip audio); speed uses atempo chain (framed-clip audio too).
+        tracks = []
         mname = s.get("music", "")
         mvol = float(s.get("musicVol", 0.5) if s.get("musicVol") is not None else 0.5)
         if mname:
             mp = os.path.join(MUSIC_DIR, mname)
             if os.path.exists(mp) and mvol > 0.001:
-                tracks.append((mp, 0.0, float(total), mvol, 0.3, 1.0))
+                tracks.append((mp, 0.0, float(total), mvol, 0.3, 1.0, 0.0, 1.0))
         for a in (edl.get("audio") or []):
             if a.get("hidden"): continue
             src_rel = (a.get("src") or "").lstrip("/")
@@ -1646,16 +1648,53 @@ def render(edl, out_dir=None, out_name=None, progress=None):
             fo = max(0.0, float(a.get("fadeOut", 0) or 0))
             if st >= total: continue
             if st + du > total: du = total - st
-            tracks.append((ap, st, du, vol, fi, fo))
+            tracks.append((ap, st, du, vol, fi, fo, 0.0, 1.0))
+        # Framed-clip (picture-in-picture) source audio — one track per clipframe with srcAudio=true.
+        # Reuse id_to_file lookup to resolve the source file path.
+        cf_i2f = None
+        for o in (edl.get("overlays") or []):
+            if not isinstance(o, dict) or o.get("hidden"): continue
+            if o.get("type") != "clipframe" or not o.get("srcAudio"): continue
+            if cf_i2f is None:
+                cf_i2f = id_to_file()
+            ap = cf_i2f.get(o.get("srcId"))
+            if not ap or not os.path.exists(ap): continue
+            st = max(0.0, float(o.get("start", 0) or 0))
+            du = max(0.05, float(o.get("dur", 0) or 0))
+            vol = max(0.0, min(2.0, float(o.get("srcAudioVol", 1) if o.get("srcAudioVol") is not None else 1)))
+            if vol <= 0.001: continue
+            src_in = max(0.0, float(o.get("srcIn", 0) or 0))
+            spd = max(0.1, float(o.get("srcSpeed", 1) or 1))
+            if st >= total: continue
+            if st + du > total: du = total - st
+            tracks.append((ap, st, du, vol, 0.0, 0.0, src_in, spd))
         prog("Adding audio + finalizing…", 92)
         if tracks:
             ff_in = [FFMPEG, "-y", "-loglevel", "error", "-i", vid_src]
             chains = []
             outs = []
-            for i, (p, st, du, vol, fi, fo) in enumerate(tracks, start=1):
-                ff_in += ["-i", p]
+            def _atempo_chain(spd):
+                # atempo supports 0.5..100.0 per invocation on modern ffmpeg, but 0.5..2.0 is the
+                # portable safe range. Chain factors so their product = spd.
+                out = []
+                x = spd
+                while x > 2.0:  out.append("atempo=2.0"); x /= 2.0
+                while x < 0.5:  out.append("atempo=0.5"); x /= 0.5
+                if abs(x - 1.0) > 1e-3: out.append("atempo=%.4f" % x)
+                return ",".join(out) if out else ""
+            for i, (p, st, du, vol, fi, fo, src_in, spd) in enumerate(tracks, start=1):
+                # Seek into source (framed-clip audio) uses -ss BEFORE -i for accurate keyframe seek.
+                if src_in > 0.001:
+                    ff_in += ["-ss", "%.3f" % src_in, "-i", p]
+                else:
+                    ff_in += ["-i", p]
                 delay_ms = int(round(st * 1000))
-                ch = (f"[{i}:a]atrim=0:{du:.3f},asetpts=PTS-STARTPTS")
+                # Trim BEFORE atempo so we grab exactly (du*spd) seconds pre-speedup; atempo yields du.
+                take = du * spd if spd > 0 else du
+                ch = (f"[{i}:a]atrim=0:{take:.3f},asetpts=PTS-STARTPTS")
+                tempo = _atempo_chain(spd)
+                if tempo:
+                    ch += "," + tempo
                 if fi > 0: ch += f",afade=t=in:st=0:d={fi:.3f}"
                 if fo > 0: ch += f",afade=t=out:st={max(0.0, du-fo):.3f}:d={fo:.3f}"
                 if vol != 1.0: ch += f",volume={vol:.3f}"
