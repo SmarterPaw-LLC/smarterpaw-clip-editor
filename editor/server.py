@@ -1338,7 +1338,10 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 aS = s + max(0.0, float(distort.get("tStart", 0) or 0))
                 aEv = distort.get("tEnd"); aE = s + min(dur_o, float(aEv)) if (aEv is not None and float(aEv) > 0) else (s + dur_o)
                 if aE > aS:
-                    amp = float(distort.get("amp", 0.025)) * W
+                    # Match SVG feDisplacementMap semantics: its max displacement is scale/2 (it uses
+                    # (noise-0.5)*scale, so a scale of `S` gives ±S/2 of range). Server sine wave gives
+                    # ±amp. So halve the raw amp param to keep client preview and server render in step.
+                    amp = float(distort.get("amp", 0.025)) * W * 0.5
                     freq = float(distort.get("freq", 2.5))
                     dspd = float(distort.get("speed", 1.2))
                     # geq's time var is uppercase T (lowercase t is the filter time; geq uses T).
