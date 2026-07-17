@@ -1533,8 +1533,20 @@ def render(edl, out_dir=None, out_name=None, progress=None):
     canvas = s.get("canvas", "9x16")
     W, H = CANVAS.get(canvas, CANVAS["9x16"])
     segs = edl.get("segments", [])
-    if not segs:
-        return {"ok": False, "log": "No segments."}
+    # Overlay-only mode: no video clips, just animated overlays + audio. We build a black base of
+    # the max overlay/audio end time, then run the same overlay/audio compositing pipeline on top.
+    def _content_end(edl_):
+        end = 0.0
+        for o in (edl_.get("overlays") or []):
+            if not isinstance(o, dict) or o.get("hidden"): continue
+            end = max(end, float(o.get("start", 0) or 0) + float(o.get("dur", 0) or 0))
+        for a in (edl_.get("audio") or []):
+            if not isinstance(a, dict) or a.get("hidden"): continue
+            end = max(end, float(a.get("start", 0) or 0) + float(a.get("dur", 0) or 0))
+        return end
+    overlay_only = not segs and _content_end(edl) > 0
+    if not segs and not overlay_only:
+        return {"ok": False, "log": "Nothing to render — add a clip, an overlay, or an audio track."}
     i2f = id_to_file()
     tmp = tempfile.mkdtemp(prefix="meowi_render_")
     try:
@@ -1553,8 +1565,20 @@ def render(edl, out_dir=None, out_name=None, progress=None):
         listf = os.path.join(tmp, "concat.txt")
         lines = []
         total = 0.0
+        # Overlay-only shortcut: bypass the segment loop and lay down a single black clip whose
+        # length covers every overlay + audio. Endcard (if enabled) still appends after.
+        if overlay_only:
+            base_end = _content_end(edl)
+            blk = os.path.join(tmp, "blk_overlay_only.mp4")
+            r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi",
+                     "-i", f"color=black:s={W}x{H}:r=60:d={base_end:g}",
+                     "-vf", "format=yuv420p"] + ENC + [blk])
+            if r.returncode != 0:
+                return {"ok": False, "log": f"overlay-only base failed:\n{r.stderr[-1500:]}"}
+            lines.append("file '" + blk.replace("\\", "/") + "'")
+            total = base_end
         flat, _vt = flatten_segments(edl)   # multi-channel → sequential (top channel covers lower)
-        if not flat:
+        if not flat and not overlay_only:
             return {"ok": False, "log": "Nothing to render."}
         last_real = max((k for k, e in enumerate(flat) if not e.get("black")), default=-1)
         n_flat = len(flat)

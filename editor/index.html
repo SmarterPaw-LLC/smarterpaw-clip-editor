@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.69.0</span>
+  <span class="ver" id="appVer">v1.69.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1063,6 +1063,13 @@ function ch0NeighborIdx(i, side){ const b=clipBounds().bounds; const pos=b.findI
 function layout(){ const base=clipBounds(); const all=base.bounds.map(o=>Object.assign({ch:0},o)); let vt=base.vidTotal;
   (EDL.segments||[]).forEach((s,i)=>{ const ch=+s.ch||0; if(ch===0) return; const t0=Math.max(0,+s.t0||0), d=segLen(s);
     all.push({seg:s, idx:i, ch, start:t0, end:t0+d, dur:d, gap:0}); if(t0+d>vt) vt=t0+d; });
+  // If there are NO video segments at all, extend vidTotal to cover overlays + audio so an
+  // overlay-only project (animated background, sticker sequence, etc.) has a real timeline
+  // length to play and render against. Doesn't affect projects that have any video clip.
+  if(vt === 0){
+    (EDL.overlays||[]).forEach(o=>{ if(o && !o.hidden){ const e=(+o.start||0)+(+o.dur||0); if(e>vt) vt=e; } });
+    (EDL.audio   ||[]).forEach(a=>{ if(a && !a.hidden){ const e=(+a.start||0)+(+a.dur||0); if(e>vt) vt=e; } });
+  }
   return {base:base.bounds, all, vidTotal:vt}; }
 // Topmost clip visible at master-clock time t (higher channel covers lower; tie → later in the array).
 function topAt(t){ let best=null; layout().all.forEach(o=>{ if(o.seg&&o.seg.hidden) return; if(t>=o.start && t<o.end){ if(!best||o.ch>best.ch||(o.ch===best.ch&&o.idx>best.idx)) best=o; } });
@@ -1230,7 +1237,8 @@ function playRange(seg, onDone){
 // events — so the timeline can never stall waiting on a clip to load/seek/play. Each
 // segment's clip is seeked + played best-effort and kept loosely in sync.
 function playTimeline(){
-  if(!EDL.segments.length) return; stop(); tlPlaying=true; pbToken++;
+  // Allow overlay-only projects to play — vidTotal already covers overlays/audio when there are no segments.
+  if(!totalDur()) return; stop(); tlPlaying=true; pbToken++;
   $('#btnPlayTl').textContent='❚❚ Stop'; $('#endcard').style.display='none';
   if(MAN.music.includes(EDL.settings.music)){ music.src='/sources/music/'+encodeURIComponent(EDL.settings.music);
     music.currentTime=0; music.volume=musicVol(); music.play().catch(()=>{}); }
