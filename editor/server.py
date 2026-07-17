@@ -2196,6 +2196,31 @@ class Handler(BaseHTTPRequestHandler):
                 os.remove(full)
                 return self._json({"ok": True})
             return self._json({"ok": False, "log": "not found"}, 404)
+        if path == "/api/project/rename":
+            # Atomic rename: update edl.name, write to new slugged filename, remove old file.
+            # Refuses if the target filename collides with a different existing project.
+            full_old = safe_project(data.get("file", ""))
+            new_name = (data.get("name") or "").strip()
+            if not full_old or not os.path.exists(full_old):
+                return self._json({"ok": False, "log": "source project not found"}, 404)
+            if not new_name:
+                return self._json({"ok": False, "log": "new name required"}, 400)
+            try:
+                with open(full_old, encoding="utf-8") as fh:
+                    edl = json.load(fh)
+            except Exception as e:
+                return self._json({"ok": False, "log": f"could not read source: {e!r}"}, 500)
+            new_fname = slug(new_name) + ".json"
+            full_new = os.path.join(PROJECTS, new_fname)
+            if os.path.abspath(full_new) != os.path.abspath(full_old) and os.path.exists(full_new):
+                return self._json({"ok": False, "log": f"'{new_name}' already exists"}, 409)
+            edl["name"] = new_name
+            with open(full_new, "w", encoding="utf-8") as fh:
+                json.dump(edl, fh, indent=2)
+            if os.path.abspath(full_new) != os.path.abspath(full_old):
+                try: os.remove(full_old)
+                except OSError: pass
+            return self._json({"ok": True, "file": new_fname, "name": new_name})
         if path == "/api/render":
             out_dir = data.pop("_outDir", None) or None
             out_name = data.pop("_outName", None) or None

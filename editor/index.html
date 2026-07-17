@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.71.0</span>
+  <span class="ver" id="appVer">v1.72.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -329,6 +329,7 @@
   <button class="mini" id="btnProjLoad">Load</button>
   <button class="mini" id="btnProjSave" title="Save changes to this project">Save</button>
   <button class="mini" id="btnProjSaveAs">Save As…</button>
+  <button class="mini" id="btnProjRename" title="Rename the current project (renames the file too)">Rename…</button>
   <button class="mini" id="btnProjNew">New</button>
   <button class="mini" id="btnAiBuild" title="New AI-assisted build — pick clips + a brief, then tell Claude to assemble">✨ AI build…</button>
   <button class="mini" id="btnProjDel" title="Delete this project">Delete</button>
@@ -3767,6 +3768,15 @@ async function saveAs(name){
 }
 function projSave(){ if(curProj) saveAs(curProj.name); else projSaveAs(); }
 function projSaveAs(){ const n=prompt('Save project as:', curProj?curProj.name+' copy':'New Project'); if(n&&n.trim()) saveAs(n.trim()); }
+async function projRename(){
+  if(!curProj) return toast('Load a saved project first');
+  const n=prompt('Rename project to:', curProj.name);
+  if(!n||!n.trim()||n.trim()===curProj.name) return;
+  const r=await api('/api/project/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:curProj.file, name:n.trim()})});
+  if(!r||!r.ok){ toast('Rename failed'+((r&&r.log)?': '+r.log:'')); return; }
+  setCur({file:r.file, name:r.name}); EDL.name=r.name;
+  await loadProjects(r.file); toast('Renamed to “'+r.name+'”');
+}
 function projNew(){ if(!confirm('Start a new blank timeline? Unsaved changes will be lost.')) return;
   applyEDL({name:'', settings:{canvas:EDL.settings.canvas||'9x16', music:MAN.music[0]||'', endcard:['MEOWIJUANA','CATNIP JOINTS','SHOP NOW'], captionSize:0.058, captionY:0.62, endcardDur:2.6}, segments:[]});
   EDL.settings.endcard.enabled=false;   // new projects start with the end card OFF (defaults stay pre-filled if turned on)
@@ -3854,6 +3864,7 @@ $('#btnProjLoad').onclick=()=>projLoad($('#projSelect').value);
 $('#projSelect').onchange=()=>projLoad($('#projSelect').value);
 $('#btnProjSave').onclick=projSave;
 $('#btnProjSaveAs').onclick=projSaveAs;
+$('#btnProjRename').onclick=projRename;
 $('#btnProjNew').onclick=projNew;
 $('#btnProjDel').onclick=projDelete;
 $('#btnExport').onclick=exportJSON;
@@ -4004,6 +4015,39 @@ document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) ret
   e.preventDefault(); histSchedule();
   targets.forEach(o=>{ o.x=Math.max(-1,Math.min(2,(o.x!=null?o.x:0.5)+dx)); o.y=Math.max(-1,Math.min(2,(o.y!=null?o.y:0.5)+dy)); });
   renderOverlays(playhead); });
+// Delete / Backspace = remove selection: multi-selection first, else last-picked overlay/audio/segment.
+// Ignored while a text field / dropdown / contenteditable has focus so typing isn't hijacked.
+document.addEventListener('keydown', e=>{
+  if(e.ctrlKey||e.metaKey||e.altKey) return;
+  if(e.key!=='Delete' && e.key!=='Backspace') return;
+  const ae=document.activeElement, tag=(ae&&ae.tagName||'').toLowerCase(), ty=(ae&&ae.type||'').toLowerCase();
+  if(tag==='textarea' || tag==='select' || (ae && ae.isContentEditable) ||
+     (tag==='input' && (ty==='text'||ty==='number'||ty==='search'||ty==='email'||ty==='password'||ty===''))) return;
+  // Any modal that traps input (Overlays modal is edit mode but allows global keys — its own fields are already guarded above)
+  let removed = 0;
+  if(_msel && _msel.length){
+    histCommit();
+    const kill = new Set(_msel);
+    EDL.segments = (EDL.segments||[]).filter(s => !kill.has(s));
+    EDL.overlays = (EDL.overlays||[]).filter(o => !kill.has(o));
+    removed = kill.size; _msel = [];
+    if(sel >= (EDL.segments||[]).length) sel = (EDL.segments||[]).length - 1;
+    if(ovSel && !(EDL.overlays||[]).some(o=>o.id===ovSel)) ovSel = null;
+  } else if(_lastPick==='ov' && ovSel && ovSel !== EC_SENTINEL){
+    histCommit(); EDL.overlays = (EDL.overlays||[]).filter(o=>o.id!==ovSel);
+    ovSel = null; removed = 1;
+  } else if(_lastPick==='aud' && audSel){
+    removeAudio(audSel); removed = 1;   // removeAudio already commits history + rerenders
+  } else if(sel >= 0 && EDL.segments && EDL.segments[sel]){
+    histCommit(); EDL.segments.splice(sel, 1);
+    if(sel >= EDL.segments.length) sel = EDL.segments.length - 1;
+    removed = 1;
+  }
+  if(!removed) return;
+  e.preventDefault();
+  renderTimeline(); renderTracks(); if(ovEdit) buildOvEditor(); renderOverlays(playhead);
+});
+
 // Escape = deselect everything (clip, overlay, multi-selection)
 document.addEventListener('keydown', e=>{ if(e.key!=='Escape') return;
   const ae=document.activeElement, tag=(ae&&ae.tagName||'').toLowerCase();
