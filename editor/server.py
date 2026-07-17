@@ -862,11 +862,9 @@ def _anim_exprs(o, s, dur, W, tv="t", H=None):
             add_dy("%g*cos(2*PI*%g*%s+0.6)" % (j, sp * 0.9, tq))
         elif ty == "spin":
             sp = float(a.get("speed", 0.5)); sign = -1 if a.get("dir") == "ccw" else 1; add_rot("%g*2*PI*%g*%s" % (sign, sp, lt))
-        elif ty == "distort":   # psychedelic warp: continuous rotation + sway (scale breath handled in sc_factors)
-            sp = float(a.get("speed", 0.05)); sway = float(a.get("sway", 0.02)) * W
-            add_rot("2*PI*%g*%s" % (sp, lt))
-            add_dx("%g*sin(2*PI*0.27*%s)" % (sway, lt))
-            add_dy("%g*cos(2*PI*0.19*%s)" % (sway, lt))
+        # NOTE: distort (psychedelic warp) is intentionally NOT handled here — it's a pixel-level
+        # geq warp + hue rotation applied as separate filter passes in apply_overlays, not a
+        # transform on the layer as a whole.
     dx = "+".join("(%s)" % x for x in dxs) if dxs else "0"
     dy = "+".join("(%s)" % x for x in dys) if dys else "0"
     am = "max(0,min(1,%s))" % ("*".join("(%s)" % x for x in amul)) if amul else "1"
@@ -1331,6 +1329,30 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 sp = float(a.get("speed", 0.5)); off = float(a.get("offset", 0))
                 expr = "if(between(t,%g,%g),%g+%g*(t-%g),0)" % (aS, aE, off, sp * 360.0, aS)
                 filt.append("hue=h='%s'" % expr)
+            # Distort (psychedelic warp) — real pixel displacement via geq (sine ripple on X and Y).
+            # Also folds in a hue rotation (matches the client SVG filter + CSS hue-rotate combo).
+            # geq is per-pixel, so amp/freq keep the load reasonable at typical overlay sizes.
+            distort = next((a for a in (o.get("anims") or []) if a.get("type") == "distort"), None)
+            if distort:
+                aS = s + max(0.0, float(distort.get("tStart", 0) or 0))
+                aEv = distort.get("tEnd"); aE = s + min(dur_o, float(aEv)) if (aEv is not None and float(aEv) > 0) else (s + dur_o)
+                if aE > aS:
+                    amp = float(distort.get("amp", 0.025)) * W
+                    freq = float(distort.get("freq", 2.5))
+                    dspd = float(distort.get("speed", 1.2))
+                    # geq's time var is uppercase T (lowercase t is the standard filter time; geq uses T).
+                    # Gate displacement to the anim window; identity (0) outside so nothing warps early/late.
+                    gate = "if(between(T,%g,%g),1,0)" % (aS, aE)
+                    dxE = "%g*(%s)*sin(2*PI*%g*Y/H+2*PI*%g*T)" % (amp, gate, freq, dspd)
+                    dyE = "%g*(%s)*cos(2*PI*%g*X/W+2*PI*%g*T)" % (amp, gate, freq, dspd)
+                    filt.append(
+                        "geq=r='r(X+(%s),Y+(%s))':g='g(X+(%s),Y+(%s))':b='b(X+(%s),Y+(%s))':a='alpha(X,Y)'"
+                        % (dxE, dyE, dxE, dyE, dxE, dyE)
+                    )
+                    hspd = float(distort.get("hue", 0.35))
+                    if hspd > 0:
+                        hexpr = "if(between(t,%g,%g),%g*(t-%g),0)" % (aS, aE, hspd * 360.0, aS)
+                        filt.append("hue=h='%s'" % hexpr)
             static_op = float(o.get("opacity", 1) or 1)   # image overlay's static opacity (text-sticker / shape / sprinkle / arrow bake it into the PNG; only image needs this here)
             if static_op < 0.999:
                 filt.append("colorchannelmixer=aa=%g" % max(0, min(1, static_op)))
@@ -1353,7 +1375,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
             sc_factors = []
             for a in (o.get("anims") or []):
                 ty = a.get("type")
-                if ty not in ("popIn", "scaleUp", "scaleDown", "scaleBeat", "bubbleUp", "distort"): continue
+                if ty not in ("popIn", "scaleUp", "scaleDown", "scaleBeat", "bubbleUp"): continue
                 aS = s + max(0.0, float(a.get("tStart", 0) or 0))
                 aEv = a.get("tEnd"); aE = s + min(dur_o, float(aEv)) if (aEv is not None and float(aEv) > 0) else (s + dur_o)
                 if aE <= aS: continue
@@ -1379,9 +1401,6 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     d = max(0.01, float(a.get("d", 0.7)))
                     kk = "(%s/%g)" % (lt, d); eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (kk, kk)
                     sc_factors.append("if(between(t,%g,%g),max(0.05,%s),1)" % (aS, aS + d, eb))
-                elif ty == "distort":
-                    pulse = float(a.get("pulse", 0.06))
-                    sc_factors.append("if(between(t,%g,%g),max(0.05,1+%g*sin(2*PI*0.35*%s)),1)" % (aS, aE, pulse, lt))
             srot = float(o.get("rot", 0) or 0)                          # static rotation (degrees) + any anim rotation
             rot_terms = ([orot] if orot else []) + ([f"{math.radians(srot):.6f}"] if abs(srot) > 1e-6 else [])
             if rot_terms:

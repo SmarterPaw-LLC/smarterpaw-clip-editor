@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.69.1</span>
+  <span class="ver" id="appVer">v1.70.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1681,13 +1681,15 @@ const ANIM_DEFS={
   shimmer: {label:'Shimmer / glint',png:true,def:{amount:0.7,width:0.22,speed:1.0},ctrls:[['amount','Brightness','range',0.1,1,0.05],['width','Band','range',0.08,0.5,0.02],['speed','Speed','range',0.2,3,0.1]]},
   reshuffle:{label:'Reshuffle (random)',def:{freq:2,amt:0.15,posX:true,posY:true,rot:false,opacity:false,seed:1},
     ctrls:[['freq','Per sec','range',0.2,8,0.2],['amt','Amount','range',0.02,0.6,0.02],['posX','Move X','bool'],['posY','Move Y','bool'],['rot','Rotate','bool'],['opacity','Opacity','bool'],['seed','Seed','seed']]},
-  // Psychedelic warp for background images: continuous slow rotation + scale breath + figure-8 sway.
-  // Rotation & scale need a pixel layer (png:true), same as spin/scaleBeat.
+  // TRUE psychedelic warp: SVG feDisplacementMap in preview + ffmpeg geq sine-warp on render.
+  // Actually displaces pixels (wavy, rippling), not just moves the whole layer around.
+  // Optional hue cycle folds in trippy color rotation without needing a separate cycleHue anim.
   distort: {label:'Distort (psychedelic)', png:true,
-    def:{speed:0.05,pulse:0.06,sway:0.02},
-    ctrls:[['speed','Rotation (rev/s)','range',0.01,0.5,0.01],
-           ['pulse','Pulse','range',0,0.3,0.01],
-           ['sway','Sway','range',0,0.06,0.005]]},
+    def:{amp:0.025,freq:2.5,speed:1.2,hue:0.35},
+    ctrls:[['amp','Warp amount','range',0,0.08,0.005],
+           ['freq','Wave density','range',0.5,8,0.5],
+           ['speed','Warp speed','range',0.1,4,0.1],
+           ['hue','Hue cycle (rev/s)','range',0,2,0.05]]},
 };
 // Deterministic [-1,1] hash for the reshuffle effect — identical math in JS (preview) and ffmpeg (render).
 function _rsHash(step, seed, salt){ const x=Math.sin(step*12.9898 + (seed||1)*78.233 + salt*45.13)*43758.5453; return (x-Math.floor(x))*2-1; }
@@ -1757,12 +1759,9 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg
     case 'reshuffle': { const freq=Math.max(0.2,a.freq||2), amt=(a.amt!=null?a.amt:0.15), st=Math.floor(T*freq), sd=a.seed||1;
       if(a.posX) dx+=_rsHash(st,sd,1.1)*amt*W; if(a.posY) dy+=_rsHash(st,sd,2.3)*amt*W;
       if(a.rot) rot+=_rsHash(st,sd,3.7)*amt*180; if(a.opacity) op*=Math.max(0,1-(_rsHash(st,sd,6.1)*0.5+0.5)*amt*1.4); break; }
-    case 'distort': { const sp=(a.speed!=null?a.speed:0.05), pulse=(a.pulse!=null?a.pulse:0.06), sway=(a.sway!=null?a.sway:0.02)*W;
-      rot += 360*sp*T;                                        // continuous slow rotation (rev/s)
-      sc  *= 1 + pulse*Math.sin(2*Math.PI*0.35*T);            // scale breath, independent of rotation speed
-      dx  += sway*Math.sin(2*Math.PI*0.27*T);                 // figure-8 sway (offset frequencies keep it non-repeating)
-      dy  += sway*Math.cos(2*Math.PI*0.19*T);
-      break; }
+    case 'distort': {   // pixel warp itself lives in an SVG filter (see _distortFilterUpdate);
+      // only hue-cycle contributes to the standard transform pipeline here.
+      const hsp=(a.hue!=null?a.hue:0.35); hue += hsp*360*T; break; }
   }});
   return {dx,dy,op:Math.max(0,Math.min(1,op)),rot,sc,hue}; }
 function migrateAnims(o){ if(o.anims) return; o.anims=[];   // legacy fadeIn/fadeOut → animation entries
@@ -2084,6 +2083,51 @@ async function bakeStickersForRender(edl){
 const ovEls={};   // reused DOM nodes per overlay id (so images don't reload every frame)
 const ovCfVids={}; // clipframe: dedicated <video> element per overlay id (separate from main timeline vids)
 const ovPieces={}; // per-piece sprinkle <img> nodes per overlay id
+// ---- distort: SVG feDisplacementMap filter per overlay id ----
+// Real pixel warp (browsers can composite via CSS `filter: url(#dist-XX)`). Animation happens by
+// bumping the turbulence seed each frame (=noise pattern scrolls). One shared SVG hosts all defs.
+const _NS_SVG='http://www.w3.org/2000/svg';
+function _distortHost(){
+  let h = document.getElementById('_distortHost');
+  if(!h){
+    h = document.createElementNS(_NS_SVG, 'svg');
+    h.id = '_distortHost';
+    h.setAttribute('width','0'); h.setAttribute('height','0');
+    h.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;left:-9999px;top:-9999px';
+    document.body.appendChild(h);
+    h.appendChild(document.createElementNS(_NS_SVG, 'defs'));
+  }
+  return h.firstChild;   // <defs>
+}
+function _distortFilterUpdate(oid, ampPx, baseFreq, seed){
+  const defs = _distortHost();
+  let filt = document.getElementById('dist-'+oid);
+  if(!filt){
+    filt = document.createElementNS(_NS_SVG, 'filter');
+    filt.id = 'dist-'+oid;
+    // Extend the region so displaced pixels near the edge don't clip
+    filt.setAttribute('x','-30%'); filt.setAttribute('y','-30%');
+    filt.setAttribute('width','160%'); filt.setAttribute('height','160%');
+    filt.setAttribute('color-interpolation-filters','sRGB');
+    const turb = document.createElementNS(_NS_SVG, 'feTurbulence');
+    turb.setAttribute('type','fractalNoise');
+    turb.setAttribute('numOctaves','2');
+    turb.setAttribute('result','noise');
+    const disp = document.createElementNS(_NS_SVG, 'feDisplacementMap');
+    disp.setAttribute('in','SourceGraphic'); disp.setAttribute('in2','noise');
+    disp.setAttribute('xChannelSelector','R'); disp.setAttribute('yChannelSelector','G');
+    filt.appendChild(turb); filt.appendChild(disp);
+    defs.appendChild(filt);
+  }
+  const turb = filt.firstChild, disp = filt.lastChild;
+  turb.setAttribute('baseFrequency', baseFreq.toFixed(5));
+  turb.setAttribute('seed', (seed & 0xffff));
+  disp.setAttribute('scale', ampPx.toFixed(2));
+}
+function _distortFilterRemove(oid){
+  const filt = document.getElementById('dist-'+oid);
+  if(filt) filt.remove();
+}
 function removeSprinklePieces(id){ if(ovPieces[id]){ ovPieces[id].forEach(el=>el.remove()); delete ovPieces[id]; } }
 // Render each scattered piece as its own animated element (phase-offset so they don't move in unison).
 function renderSprinklePieces(o, time, layer, baseZ){
@@ -2162,7 +2206,7 @@ function renderOverlays(time){
   const layer=$('#overlayLayer'); if(!layer||!EDL) return;
   const W=$('#stageWrap').clientWidth||360;
   const ids=new Set((EDL.overlays||[]).map(o=>o.id));
-  for(const id in ovEls){ if(!ids.has(id)){ ovEls[id].remove(); delete ovEls[id]; } }
+  for(const id in ovEls){ if(!ids.has(id)){ ovEls[id].remove(); delete ovEls[id]; _distortFilterRemove(id); } }
   for(const id in ovSpark){ if(!ids.has(id)){ (ovSpark[id]||[]).forEach(arr=>arr&&arr.forEach(el=>el.remove())); delete ovSpark[id]; } }
   for(const id in ovPieces){ if(!ids.has(id)){ removeSprinklePieces(id); } }
   for(const id in ovShine){ if(!ids.has(id)){ ovShine[id].remove(); delete ovShine[id]; } }
@@ -2232,7 +2276,20 @@ function renderOverlays(time){
     const sh=o.shadow||{};   // sticker bakes its own shadow into the canvas, so no extra CSS filter for it
     const _shFilt = (ekey!=='sticker' && sh.on) ? `drop-shadow(${(sh.dx!=null?sh.dx:0.004)*W}px ${(sh.dy!=null?sh.dy:0.006)*W}px ${(sh.blur!=null?sh.blur:0.01)*W}px ${hexA(sh.color||'#000000', sh.opacity!=null?sh.opacity:0.5)})` : '';
     const _hueFilt = (A.hue && A.hue!==0) ? `hue-rotate(${A.hue.toFixed(1)}deg)` : '';
-    el.style.filter = [_shFilt,_hueFilt].filter(Boolean).join(' ') || 'none';
+    // TRUE distort: SVG feDisplacementMap warps the actual pixels (wavy ripple), updated per frame
+    // so animation happens by scrolling the noise seed. Removed when the anim is no longer present.
+    const _distortAn = (o.anims||[]).find(a=>a.type==='distort');
+    let _distFilt = '';
+    if(_distortAn){
+      const amp = (_distortAn.amp!=null?+_distortAn.amp:0.025) * W;
+      const freq = (_distortAn.freq!=null?+_distortAn.freq:2.5) * 0.002;   // waves-per-canvas → feTurbulence baseFrequency
+      const seed = Math.floor(Math.max(0, time - o.start) * (+_distortAn.speed||1.2) * 12);
+      _distortFilterUpdate(o.id, amp, freq, seed);
+      _distFilt = `url(#dist-${o.id})`;
+    } else {
+      _distortFilterRemove(o.id);
+    }
+    el.style.filter = [_distFilt,_shFilt,_hueFilt].filter(Boolean).join(' ') || 'none';
     el.style.opacity=active?(A.op*(o.opacity!=null?o.opacity:1)):0;   // static overlay opacity × anim opacity
     if(ovEdit){ el.style.pointerEvents='auto'; el.style.cursor='move'; el.style.outline=(oRaw.id===ovSel)?'2px dashed #5b8cff':'none'; el.style.outlineOffset='3px'; dragify(el,oRaw); }
     else { el.style.pointerEvents='none'; el.style.outline='none'; }
