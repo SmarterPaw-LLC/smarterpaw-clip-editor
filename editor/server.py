@@ -1060,6 +1060,42 @@ def prerender_piececlip(o, W, H, tmp, k):
 
 CF_POLAROID = {"padL": 0.06, "padR": 0.06, "padT": 0.06, "padB": 0.22}
 
+
+def gen_distort_noise_map(w, h, amp_px, freq, octaves, seed, out_path):
+    """Fractal noise displacement PNG matching SVG feTurbulence character (independent R & G channels
+    for X and Y displacement, multi-octave value noise summed). Written as RGBA where R = X-offset,
+    G = Y-offset, both centered at 128 with ±amp_px range. Used by ffmpeg `displace` filter."""
+    import numpy as np
+    from PIL import Image
+    rng = np.random.default_rng(seed)
+    field = np.zeros((h, w, 2), dtype=np.float64)
+    total_amp = 0.0
+    cell = max(4, int(min(w, h) / max(0.5, freq)))
+    layer_amp = 1.0
+    for _ in range(max(1, int(octaves))):
+        gw = max(2, w // cell + 2)
+        gh = max(2, h // cell + 2)
+        # Independent random grids for X and Y displacement so the warp has 2D character.
+        grid_r = (rng.random((gh, gw)) * 255).astype(np.uint8)
+        grid_g = (rng.random((gh, gw)) * 255).astype(np.uint8)
+        # Bilinear upscale via PIL (cheap and smooth)
+        up_r = np.array(Image.fromarray(grid_r).resize((w, h), Image.BILINEAR)).astype(np.float64) / 255.0
+        up_g = np.array(Image.fromarray(grid_g).resize((w, h), Image.BILINEAR)).astype(np.float64) / 255.0
+        field[:, :, 0] += up_r * layer_amp
+        field[:, :, 1] += up_g * layer_amp
+        total_amp += layer_amp
+        layer_amp *= 0.5
+        cell = max(2, cell // 2)
+    field = field / total_amp                        # normalize to [0, 1]
+    disp = 128.0 + amp_px * (2.0 * field - 1.0)      # center at 128, range ±amp_px
+    disp = np.clip(disp, 0, 255).astype(np.uint8)
+    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+    rgba[:, :, 0] = disp[:, :, 0]                    # R = X displacement
+    rgba[:, :, 1] = disp[:, :, 1]                    # G = Y displacement
+    rgba[:, :, 2] = 128
+    rgba[:, :, 3] = 255
+    Image.fromarray(rgba, "RGBA").save(out_path)
+
 def _cf_mask_png(frame, out_w, out_h, path):
     """Draw an alpha mask for a clipframe shape (white where content, transparent elsewhere).
     Frame is one of 'polaroid'|'circle'|'roundrect'|'rect'|'star'. Path is the mask PNG output."""
@@ -1329,54 +1365,34 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 sp = float(a.get("speed", 0.5)); off = float(a.get("offset", 0))
                 expr = "if(between(t,%g,%g),%g+%g*(t-%g),0)" % (aS, aE, off, sp * 360.0, aS)
                 filt.append("hue=h='%s'" % expr)
-            # Distort (psychedelic warp) — real pixel displacement via geq (sine ripple on X and Y).
-            # Also folds in a hue rotation (matches the client SVG filter + CSS hue-rotate combo).
-            # geq is per-pixel, so amp/freq keep the load reasonable at typical overlay sizes.
-            # When gifFps is set, quantize T so the warp steps at the requested frame rate (GIF look).
+            # Distort (psychedelic warp) — pre-bake a fractal noise displacement PNG (same character
+            # as the client's SVG feTurbulence) and apply via ffmpeg `displace` filter. Emitted as
+            # a graph OUTSIDE the filt chain (see below where the fc entry is built). Only the hue
+            # rotation from distort still folds into the in-chain filter list.
             distort = next((a for a in (o.get("anims") or []) if a.get("type") == "distort"), None)
+            distort_noise_png = None
             if distort:
-                aS = s + max(0.0, float(distort.get("tStart", 0) or 0))
-                aEv = distort.get("tEnd"); aE = s + min(dur_o, float(aEv)) if (aEv is not None and float(aEv) > 0) else (s + dur_o)
-                if aE > aS:
-                    # Match the client SVG's feTurbulence look (organic fractal noise), not a single
-                    # coherent sine wave — coherent bands read visually 2-3× stronger than diffuse
-                    # noise at the same displacement magnitude, which is why the render was screaming
-                    # while the preview was chill. Sum-of-sines at different freqs/directions/phases
-                    # approximates fractal noise and normalizes so max displacement ~ ±amp.
-                    # Also halve the raw amp to match SVG feDisplacementMap semantics (uses noise-0.5).
-                    amp = float(distort.get("amp", 0.025)) * W * 0.5
+                aS_d = s + max(0.0, float(distort.get("tStart", 0) or 0))
+                aEv_d = distort.get("tEnd"); aE_d = s + min(dur_o, float(aEv_d)) if (aEv_d is not None and float(aEv_d) > 0) else (s + dur_o)
+                if aE_d > aS_d:
+                    amp_frac = float(distort.get("amp", 0.025))
                     freq = float(distort.get("freq", 2.5))
-                    dspd = float(distort.get("speed", 1.2))
-                    gate = "if(between(T,%g,%g),1,0)" % (aS, aE)
-                    Tq = "T"
-                    gfps = float(distort.get("gifFps", 0) or 0)
-                    if gfps > 0:
-                        Tq = "(floor(T*%g)/%g)" % (gfps, gfps)
-                    # Three sine components at 1x, 1.7x, 2.3x freq, cross-directions, offset phases.
-                    # Divide by 1.8 to keep max magnitude near amp (sum of 3 unit sines maxes near 1.8).
-                    dxE = ("%g*(%s)*("
-                           "sin(2*PI*%g*Y/H+2*PI*%g*%s)"
-                           "+0.55*sin(2*PI*%g*X/W+2*PI*%g*%s+1.3)"
-                           "+0.35*sin(2*PI*%g*(X+Y)/H+2*PI*%g*%s+2.7)"
-                           ")/1.9") % (amp, gate,
-                                       freq, dspd, Tq,
-                                       freq*1.7, dspd*0.83, Tq,
-                                       freq*2.3, dspd*1.21, Tq)
-                    dyE = ("%g*(%s)*("
-                           "cos(2*PI*%g*X/W+2*PI*%g*%s)"
-                           "+0.55*cos(2*PI*%g*Y/H+2*PI*%g*%s+0.7)"
-                           "+0.35*cos(2*PI*%g*(X-Y)/W+2*PI*%g*%s+2.1)"
-                           ")/1.9") % (amp, gate,
-                                       freq, dspd, Tq,
-                                       freq*1.7, dspd*0.83, Tq,
-                                       freq*2.3, dspd*1.21, Tq)
-                    filt.append(
-                        "geq=r='r(X+(%s),Y+(%s))':g='g(X+(%s),Y+(%s))':b='b(X+(%s),Y+(%s))':a='alpha(X,Y)'"
-                        % (dxE, dyE, dxE, dyE, dxE, dyE)
-                    )
+                    octaves = max(1, min(4, int(round(float(distort.get("octaves", 2))))))
+                    # Fixed seed per overlay id — same noise pattern across renders of the same project.
+                    seed = abs(hash(o.get("id", "d") + str(freq) + str(octaves))) & 0xffff
+                    # Noise map at moderate resolution (256×256). ffmpeg scale2ref stretches it to
+                    # overlay dims during displace. amp_px is scaled to the noise map's native size
+                    # so ffmpeg's implicit scale-up multiplies the displacement to canvas dims.
+                    map_size = 256
+                    amp_px = amp_frac * map_size   # in noise-map pixel units; displace scales with the image
+                    try:
+                        distort_noise_png = os.path.join(tmp, f"dnoise_{k}.png")
+                        gen_distort_noise_map(map_size, map_size, amp_px, freq, octaves, seed, distort_noise_png)
+                    except Exception:
+                        distort_noise_png = None
                     hspd = float(distort.get("hue", 0.35))
                     if hspd > 0:
-                        hexpr = "if(between(t,%g,%g),%g*(t-%g),0)" % (aS, aE, hspd * 360.0, aS)
+                        hexpr = "if(between(t,%g,%g),%g*(t-%g),0)" % (aS_d, aE_d, hspd * 360.0, aS_d)
                         filt.append("hue=h='%s'" % hexpr)
             # (Blur anim is emitted OUTSIDE the filt list — see below where the fc entry is built.)
             static_op = float(o.get("opacity", 1) or 1)   # image overlay's static opacity (text-sticker / shape / sprinkle / arrow bake it into the PNG; only image needs this here)
@@ -1465,20 +1481,40 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     else:                 k_curve = "(0.5+0.5*sin(2*PI*%g*%s))" % (bspd, lt)
                     kExpr = "if(between(T,%g,%g),%s,0)" % (b_aS, b_aE, k_curve)
                     blur_expr = (maxR, kExpr)
+            # Emit filter graph. Distort applies displace (needs a noise-map input); blur applies
+            # split+gblur+overlay. Both are graph stages, not chain filters. Chain: filt → distort? → blur? → [oi{k}]
+            noise_ii = None
+            if distort_noise_png:
+                inputs += ["-loop", "1", "-i", distort_noise_png]
+                noise_ii = ii + 1                                                 # slot for the noise map
+            # Stage 1: run the base filter chain, output an intermediate label
+            stage_in = f"[{ii}:v]"
+            stage_out = f"[oi_a{k}]"
+            fc.append(stage_in + ",".join(filt) + stage_out)
+            cur = f"oi_a{k}"
+            # Stage 2 (optional): distort via displace filter with the pre-baked noise map
+            if noise_ii is not None:
+                # scale2ref stretches the noise map to the overlay's dimensions so displace can pair them.
+                # extractplanes pulls out R and G as separate grayscale streams — displace reads R
+                # from each, so xmap gets original R (X offset) and ymap gets original G (Y offset).
+                fc.append(f"[{noise_ii}:v][{cur}]scale2ref[dnraw{k}][{cur}b]")
+                fc.append(f"[dnraw{k}]format=rgba,extractplanes=r+g[dnx{k}][dny{k}]")
+                fc.append(f"[{cur}b][dnx{k}][dny{k}]displace=edge=smear[oi_b{k}]")
+                cur = f"oi_b{k}"
+            # Stage 3 (optional): blur via split + gblur + alpha-modulated overlay
             if blur_expr is not None:
                 maxR, kExpr = blur_expr
-                # Emit as a proper filter GRAPH (multiple `;`-separated stages), not a comma chain.
-                fc.append(f"[{ii}:v]" + ",".join(filt) + f"[oipre{k}]")
-                fc.append(f"[oipre{k}]split=2[oa{k}][ob{k}]")
+                fc.append(f"[{cur}]split=2[oa{k}][ob{k}]")
                 fc.append(
                     f"[ob{k}]gblur=sigma={maxR:g},format=rgba,"
                     f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({kExpr})'[obm{k}]"
                 )
                 fc.append(f"[oa{k}][obm{k}]overlay=0:0[oi{k}]")
             else:
-                fc.append(f"[{ii}:v]" + ",".join(filt) + f"[oi{k}]")
+                fc.append(f"[{cur}]null[oi{k}]")
             fc.append(f"[{last}][oi{k}]overlay=x='W*{ox}-w/2+({odx})':y='H*{oy}-h/2+({ody})':{en}[v{k}]")
-            last = f"v{k}"; ii += 1
+            last = f"v{k}"
+            ii = (noise_ii + 1) if noise_ii is not None else (ii + 1)
         # sparkle: composite twinkling copies of an emoji (or image) around the overlay center.
         # Iterate ALL sparkle anims (not just the first) so stacked sparkles all render.
         # The emoji can be a single glyph OR a decorative composite string ("˗ˏˋ ✸ ˎˊ˗", "✶⋆.˚").
