@@ -1338,20 +1338,38 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 aS = s + max(0.0, float(distort.get("tStart", 0) or 0))
                 aEv = distort.get("tEnd"); aE = s + min(dur_o, float(aEv)) if (aEv is not None and float(aEv) > 0) else (s + dur_o)
                 if aE > aS:
-                    # Match SVG feDisplacementMap semantics: its max displacement is scale/2 (it uses
-                    # (noise-0.5)*scale, so a scale of `S` gives ±S/2 of range). Server sine wave gives
-                    # ±amp. So halve the raw amp param to keep client preview and server render in step.
+                    # Match the client SVG's feTurbulence look (organic fractal noise), not a single
+                    # coherent sine wave — coherent bands read visually 2-3× stronger than diffuse
+                    # noise at the same displacement magnitude, which is why the render was screaming
+                    # while the preview was chill. Sum-of-sines at different freqs/directions/phases
+                    # approximates fractal noise and normalizes so max displacement ~ ±amp.
+                    # Also halve the raw amp to match SVG feDisplacementMap semantics (uses noise-0.5).
                     amp = float(distort.get("amp", 0.025)) * W * 0.5
                     freq = float(distort.get("freq", 2.5))
                     dspd = float(distort.get("speed", 1.2))
-                    # geq's time var is uppercase T (lowercase t is the filter time; geq uses T).
                     gate = "if(between(T,%g,%g),1,0)" % (aS, aE)
                     Tq = "T"
                     gfps = float(distort.get("gifFps", 0) or 0)
                     if gfps > 0:
-                        Tq = "(floor(T*%g)/%g)" % (gfps, gfps)   # stepped time → stepped warp (GIF look)
-                    dxE = "%g*(%s)*sin(2*PI*%g*Y/H+2*PI*%g*%s)" % (amp, gate, freq, dspd, Tq)
-                    dyE = "%g*(%s)*cos(2*PI*%g*X/W+2*PI*%g*%s)" % (amp, gate, freq, dspd, Tq)
+                        Tq = "(floor(T*%g)/%g)" % (gfps, gfps)
+                    # Three sine components at 1x, 1.7x, 2.3x freq, cross-directions, offset phases.
+                    # Divide by 1.8 to keep max magnitude near amp (sum of 3 unit sines maxes near 1.8).
+                    dxE = ("%g*(%s)*("
+                           "sin(2*PI*%g*Y/H+2*PI*%g*%s)"
+                           "+0.55*sin(2*PI*%g*X/W+2*PI*%g*%s+1.3)"
+                           "+0.35*sin(2*PI*%g*(X+Y)/H+2*PI*%g*%s+2.7)"
+                           ")/1.9") % (amp, gate,
+                                       freq, dspd, Tq,
+                                       freq*1.7, dspd*0.83, Tq,
+                                       freq*2.3, dspd*1.21, Tq)
+                    dyE = ("%g*(%s)*("
+                           "cos(2*PI*%g*X/W+2*PI*%g*%s)"
+                           "+0.55*cos(2*PI*%g*Y/H+2*PI*%g*%s+0.7)"
+                           "+0.35*cos(2*PI*%g*(X-Y)/W+2*PI*%g*%s+2.1)"
+                           ")/1.9") % (amp, gate,
+                                       freq, dspd, Tq,
+                                       freq*1.7, dspd*0.83, Tq,
+                                       freq*2.3, dspd*1.21, Tq)
                     filt.append(
                         "geq=r='r(X+(%s),Y+(%s))':g='g(X+(%s),Y+(%s))':b='b(X+(%s),Y+(%s))':a='alpha(X,Y)'"
                         % (dxE, dyE, dxE, dyE, dxE, dyE)
