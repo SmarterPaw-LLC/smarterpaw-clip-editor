@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.72.0</span>
+  <span class="ver" id="appVer">v1.72.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2313,16 +2313,22 @@ function renderOverlays(time){
     const _distortAn = (o.anims||[]).find(a=>a.type==='distort');
     let _distFilt = '';
     if(_distortAn){
-      const amp = (_distortAn.amp!=null?+_distortAn.amp:0.025) * W;
-      const freq = (_distortAn.freq!=null?+_distortAn.freq:2.5) * 0.002;
+      // Match server render: `freq` = waves per OVERLAY dimension (server geq does sin(2π·freq·Y/H)).
+      // So SVG baseFrequency (waves per user-unit pixel) = freq / overlayDisplayWidth.
+      // Reading offsetWidth forces layout, but with just a handful of overlays per frame it's cheap
+      // and it's the only way to keep client density in step with render density.
+      const overlayW_px = Math.max(1, el.offsetWidth || (o.scale||0.3)*W);
+      const amp   = (_distortAn.amp!=null?+_distortAn.amp:0.025) * W;   // in stage/display px; matches server as a % of overlay
+      const freqW = (_distortAn.freq!=null?+_distortAn.freq:2.5);       // waves-per-overlay (same unit as server)
+      const baseFreq = freqW / overlayW_px;
       const speed = (+_distortAn.speed||1.2);
       const octaves = Math.max(1, Math.min(4, Math.round(+_distortAn.octaves||2)));
       let Td = Math.max(0, time - o.start);
       if(_distortAn.gifFps && +_distortAn.gifFps>0) Td = Math.floor(Td * +_distortAn.gifFps) / +_distortAn.gifFps;
       // Smooth continuous animation: baseFrequency breathes AND blend k oscillates between the
       // two static seed maps. Together they produce genuinely flowing warp, not stepped.
-      const breathe = freq * (1 + 0.20*Math.sin(2*Math.PI*speed*0.3*Td));
-      const scale   = amp  * (1 + 0.15*Math.sin(2*Math.PI*speed*0.42*Td));
+      const breathe = baseFreq * (1 + 0.20*Math.sin(2*Math.PI*speed*0.3*Td));
+      const scale   = amp      * (1 + 0.15*Math.sin(2*Math.PI*speed*0.42*Td));
       const blendK  = 0.5 + 0.5*Math.sin(2*Math.PI*speed*0.5*Td);
       _distortFilterUpdate(o.id, scale, breathe, blendK, octaves);
       _distFilt = `url(#dist-${o.id})`;
