@@ -862,6 +862,11 @@ def _anim_exprs(o, s, dur, W, tv="t", H=None):
             add_dy("%g*cos(2*PI*%g*%s+0.6)" % (j, sp * 0.9, tq))
         elif ty == "spin":
             sp = float(a.get("speed", 0.5)); sign = -1 if a.get("dir") == "ccw" else 1; add_rot("%g*2*PI*%g*%s" % (sign, sp, lt))
+        elif ty == "distort":   # psychedelic warp: continuous rotation + sway (scale breath handled in sc_factors)
+            sp = float(a.get("speed", 0.05)); sway = float(a.get("sway", 0.02)) * W
+            add_rot("2*PI*%g*%s" % (sp, lt))
+            add_dx("%g*sin(2*PI*0.27*%s)" % (sway, lt))
+            add_dy("%g*cos(2*PI*0.19*%s)" % (sway, lt))
     dx = "+".join("(%s)" % x for x in dxs) if dxs else "0"
     dy = "+".join("(%s)" % x for x in dys) if dys else "0"
     am = "max(0,min(1,%s))" % ("*".join("(%s)" % x for x in amul)) if amul else "1"
@@ -1348,7 +1353,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
             sc_factors = []
             for a in (o.get("anims") or []):
                 ty = a.get("type")
-                if ty not in ("popIn", "scaleUp", "scaleDown", "scaleBeat", "bubbleUp"): continue
+                if ty not in ("popIn", "scaleUp", "scaleDown", "scaleBeat", "bubbleUp", "distort"): continue
                 aS = s + max(0.0, float(a.get("tStart", 0) or 0))
                 aEv = a.get("tEnd"); aE = s + min(dur_o, float(aEv)) if (aEv is not None and float(aEv) > 0) else (s + dur_o)
                 if aE <= aS: continue
@@ -1374,6 +1379,9 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     d = max(0.01, float(a.get("d", 0.7)))
                     kk = "(%s/%g)" % (lt, d); eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (kk, kk)
                     sc_factors.append("if(between(t,%g,%g),max(0.05,%s),1)" % (aS, aS + d, eb))
+                elif ty == "distort":
+                    pulse = float(a.get("pulse", 0.06))
+                    sc_factors.append("if(between(t,%g,%g),max(0.05,1+%g*sin(2*PI*0.35*%s)),1)" % (aS, aE, pulse, lt))
             srot = float(o.get("rot", 0) or 0)                          # static rotation (degrees) + any anim rotation
             rot_terms = ([orot] if orot else []) + ([f"{math.radians(srot):.6f}"] if abs(srot) > 1e-6 else [])
             if rot_terms:

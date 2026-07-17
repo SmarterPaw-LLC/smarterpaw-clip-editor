@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.68.5</span>
+  <span class="ver" id="appVer">v1.69.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1673,6 +1673,13 @@ const ANIM_DEFS={
   shimmer: {label:'Shimmer / glint',png:true,def:{amount:0.7,width:0.22,speed:1.0},ctrls:[['amount','Brightness','range',0.1,1,0.05],['width','Band','range',0.08,0.5,0.02],['speed','Speed','range',0.2,3,0.1]]},
   reshuffle:{label:'Reshuffle (random)',def:{freq:2,amt:0.15,posX:true,posY:true,rot:false,opacity:false,seed:1},
     ctrls:[['freq','Per sec','range',0.2,8,0.2],['amt','Amount','range',0.02,0.6,0.02],['posX','Move X','bool'],['posY','Move Y','bool'],['rot','Rotate','bool'],['opacity','Opacity','bool'],['seed','Seed','seed']]},
+  // Psychedelic warp for background images: continuous slow rotation + scale breath + figure-8 sway.
+  // Rotation & scale need a pixel layer (png:true), same as spin/scaleBeat.
+  distort: {label:'Distort (psychedelic)', png:true,
+    def:{speed:0.05,pulse:0.06,sway:0.02},
+    ctrls:[['speed','Rotation (rev/s)','range',0.01,0.5,0.01],
+           ['pulse','Pulse','range',0,0.3,0.01],
+           ['sway','Sway','range',0,0.06,0.005]]},
 };
 // Deterministic [-1,1] hash for the reshuffle effect — identical math in JS (preview) and ffmpeg (render).
 function _rsHash(step, seed, salt){ const x=Math.sin(step*12.9898 + (seed||1)*78.233 + salt*45.13)*43758.5453; return (x-Math.floor(x))*2-1; }
@@ -1742,6 +1749,12 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg
     case 'reshuffle': { const freq=Math.max(0.2,a.freq||2), amt=(a.amt!=null?a.amt:0.15), st=Math.floor(T*freq), sd=a.seed||1;
       if(a.posX) dx+=_rsHash(st,sd,1.1)*amt*W; if(a.posY) dy+=_rsHash(st,sd,2.3)*amt*W;
       if(a.rot) rot+=_rsHash(st,sd,3.7)*amt*180; if(a.opacity) op*=Math.max(0,1-(_rsHash(st,sd,6.1)*0.5+0.5)*amt*1.4); break; }
+    case 'distort': { const sp=(a.speed!=null?a.speed:0.05), pulse=(a.pulse!=null?a.pulse:0.06), sway=(a.sway!=null?a.sway:0.02)*W;
+      rot += 360*sp*T;                                        // continuous slow rotation (rev/s)
+      sc  *= 1 + pulse*Math.sin(2*Math.PI*0.35*T);            // scale breath, independent of rotation speed
+      dx  += sway*Math.sin(2*Math.PI*0.27*T);                 // figure-8 sway (offset frequencies keep it non-repeating)
+      dy  += sway*Math.cos(2*Math.PI*0.19*T);
+      break; }
   }});
   return {dx,dy,op:Math.max(0,Math.min(1,op)),rot,sc,hue}; }
 function migrateAnims(o){ if(o.anims) return; o.anims=[];   // legacy fadeIn/fadeOut → animation entries
