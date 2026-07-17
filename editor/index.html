@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.70.0</span>
+  <span class="ver" id="appVer">v1.71.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1685,11 +1685,22 @@ const ANIM_DEFS={
   // Actually displaces pixels (wavy, rippling), not just moves the whole layer around.
   // Optional hue cycle folds in trippy color rotation without needing a separate cycleHue anim.
   distort: {label:'Distort (psychedelic)', png:true,
-    def:{amp:0.025,freq:2.5,speed:1.2,hue:0.35},
+    def:{amp:0.025,freq:2.5,speed:1.2,octaves:2,hue:0.35},
     ctrls:[['amp','Warp amount','range',0,0.08,0.005],
            ['freq','Wave density','range',0.5,8,0.5],
            ['speed','Warp speed','range',0.1,4,0.1],
+           ['octaves','Waviness detail','range',1,4,1],
            ['hue','Hue cycle (rev/s)','range',0,2,0.05]]},
+  // Blur animation. `amount` = max blur radius (fraction of W). `pattern` shapes it over time:
+  //   uniform  — constant blur
+  //   pulse    — sinusoidal breath (0 → amount → 0) at `speed` Hz
+  //   in       — starts at amount, fades to 0 (blur-in reveal)
+  //   out      — starts at 0, grows to amount (blur-out defocus)
+  blur:    {label:'Blur', png:true,
+    def:{amount:0.008,pattern:'pulse',speed:0.6},
+    ctrls:[['amount','Max radius','range',0,0.04,0.001],
+           ['pattern','Pattern','sel',['uniform','pulse','in','out']],
+           ['speed','Speed','range',0.1,4,0.1]]},
 };
 // Deterministic [-1,1] hash for the reshuffle effect — identical math in JS (preview) and ffmpeg (render).
 function _rsHash(step, seed, salt){ const x=Math.sin(step*12.9898 + (seed||1)*78.233 + salt*45.13)*43758.5453; return (x-Math.floor(x))*2-1; }
@@ -2084,8 +2095,9 @@ const ovEls={};   // reused DOM nodes per overlay id (so images don't reload eve
 const ovCfVids={}; // clipframe: dedicated <video> element per overlay id (separate from main timeline vids)
 const ovPieces={}; // per-piece sprinkle <img> nodes per overlay id
 // ---- distort: SVG feDisplacementMap filter per overlay id ----
-// Real pixel warp (browsers can composite via CSS `filter: url(#dist-XX)`). Animation happens by
-// bumping the turbulence seed each frame (=noise pattern scrolls). One shared SVG hosts all defs.
+// Real pixel warp. Two feTurbulence layers with different fixed seeds are cross-faded via
+// feComposite k2/k3 to produce SMOOTH flowing noise instead of the jumpy seed-swap animation
+// the first cut used. baseFrequency also breathes continuously. numOctaves = waviness detail.
 const _NS_SVG='http://www.w3.org/2000/svg';
 function _distortHost(){
   let h = document.getElementById('_distortHost');
@@ -2099,29 +2111,47 @@ function _distortHost(){
   }
   return h.firstChild;   // <defs>
 }
-function _distortFilterUpdate(oid, ampPx, baseFreq, seed){
+// Deterministic seed pair per overlay so noise looks stable across renders yet each overlay differs.
+function _distortSeeds(oid){
+  let a=0, b=0;
+  for(let i=0;i<oid.length;i++){ a=(a*31+oid.charCodeAt(i))|0; b=(b*37+oid.charCodeAt(i))|0; }
+  return [Math.abs(a)%9999+1, Math.abs(b)%9999+1];
+}
+function _distortFilterUpdate(oid, ampPx, baseFreq, blendK, octaves){
   const defs = _distortHost();
   let filt = document.getElementById('dist-'+oid);
+  const [s1, s2] = _distortSeeds(oid);
   if(!filt){
     filt = document.createElementNS(_NS_SVG, 'filter');
     filt.id = 'dist-'+oid;
-    // Extend the region so displaced pixels near the edge don't clip
     filt.setAttribute('x','-30%'); filt.setAttribute('y','-30%');
     filt.setAttribute('width','160%'); filt.setAttribute('height','160%');
     filt.setAttribute('color-interpolation-filters','sRGB');
-    const turb = document.createElementNS(_NS_SVG, 'feTurbulence');
-    turb.setAttribute('type','fractalNoise');
-    turb.setAttribute('numOctaves','2');
-    turb.setAttribute('result','noise');
+    // Two turbulence maps + arithmetic composite = smooth interpolation between noise patterns
+    // as blendK cycles 0↔1. Feels like flowing noise, not the twitchy 15-Hz seed swap.
+    const t1 = document.createElementNS(_NS_SVG, 'feTurbulence');
+    t1.setAttribute('type','fractalNoise'); t1.setAttribute('seed', String(s1)); t1.setAttribute('result','n1');
+    const t2 = document.createElementNS(_NS_SVG, 'feTurbulence');
+    t2.setAttribute('type','fractalNoise'); t2.setAttribute('seed', String(s2)); t2.setAttribute('result','n2');
+    const mix = document.createElementNS(_NS_SVG, 'feComposite');
+    mix.setAttribute('in','n1'); mix.setAttribute('in2','n2');
+    mix.setAttribute('operator','arithmetic'); mix.setAttribute('k1','0'); mix.setAttribute('k4','0');
+    mix.setAttribute('result','noise');
     const disp = document.createElementNS(_NS_SVG, 'feDisplacementMap');
     disp.setAttribute('in','SourceGraphic'); disp.setAttribute('in2','noise');
     disp.setAttribute('xChannelSelector','R'); disp.setAttribute('yChannelSelector','G');
-    filt.appendChild(turb); filt.appendChild(disp);
+    filt.appendChild(t1); filt.appendChild(t2); filt.appendChild(mix); filt.appendChild(disp);
     defs.appendChild(filt);
   }
-  const turb = filt.firstChild, disp = filt.lastChild;
-  turb.setAttribute('baseFrequency', baseFreq.toFixed(5));
-  turb.setAttribute('seed', (seed & 0xffff));
+  const [t1, t2, mix, disp] = filt.children;
+  const bf = baseFreq.toFixed(5);
+  t1.setAttribute('baseFrequency', bf);
+  t2.setAttribute('baseFrequency', bf);
+  t1.setAttribute('numOctaves', String(octaves));
+  t2.setAttribute('numOctaves', String(octaves));
+  // k2 * n1 + k3 * n2 with k2+k3=1 → smooth mix
+  mix.setAttribute('k2', blendK.toFixed(3));
+  mix.setAttribute('k3', (1 - blendK).toFixed(3));
   disp.setAttribute('scale', ampPx.toFixed(2));
 }
 function _distortFilterRemove(oid){
@@ -2276,20 +2306,45 @@ function renderOverlays(time){
     const sh=o.shadow||{};   // sticker bakes its own shadow into the canvas, so no extra CSS filter for it
     const _shFilt = (ekey!=='sticker' && sh.on) ? `drop-shadow(${(sh.dx!=null?sh.dx:0.004)*W}px ${(sh.dy!=null?sh.dy:0.006)*W}px ${(sh.blur!=null?sh.blur:0.01)*W}px ${hexA(sh.color||'#000000', sh.opacity!=null?sh.opacity:0.5)})` : '';
     const _hueFilt = (A.hue && A.hue!==0) ? `hue-rotate(${A.hue.toFixed(1)}deg)` : '';
-    // TRUE distort: SVG feDisplacementMap warps the actual pixels (wavy ripple), updated per frame
-    // so animation happens by scrolling the noise seed. Removed when the anim is no longer present.
+    // TRUE distort: SVG feDisplacementMap warps the actual pixels. Two turbulence layers
+    // cross-faded (feComposite arithmetic k2/k3) for SMOOTH flowing noise instead of the
+    // twitchy per-frame seed swap. Time is only stepped when gifFps is explicitly set.
     const _distortAn = (o.anims||[]).find(a=>a.type==='distort');
     let _distFilt = '';
     if(_distortAn){
       const amp = (_distortAn.amp!=null?+_distortAn.amp:0.025) * W;
-      const freq = (_distortAn.freq!=null?+_distortAn.freq:2.5) * 0.002;   // waves-per-canvas → feTurbulence baseFrequency
-      const seed = Math.floor(Math.max(0, time - o.start) * (+_distortAn.speed||1.2) * 12);
-      _distortFilterUpdate(o.id, amp, freq, seed);
+      const freq = (_distortAn.freq!=null?+_distortAn.freq:2.5) * 0.002;
+      const speed = (+_distortAn.speed||1.2);
+      const octaves = Math.max(1, Math.min(4, Math.round(+_distortAn.octaves||2)));
+      let Td = Math.max(0, time - o.start);
+      if(_distortAn.gifFps && +_distortAn.gifFps>0) Td = Math.floor(Td * +_distortAn.gifFps) / +_distortAn.gifFps;
+      // Smooth continuous animation: baseFrequency breathes AND blend k oscillates between the
+      // two static seed maps. Together they produce genuinely flowing warp, not stepped.
+      const breathe = freq * (1 + 0.20*Math.sin(2*Math.PI*speed*0.3*Td));
+      const scale   = amp  * (1 + 0.15*Math.sin(2*Math.PI*speed*0.42*Td));
+      const blendK  = 0.5 + 0.5*Math.sin(2*Math.PI*speed*0.5*Td);
+      _distortFilterUpdate(o.id, scale, breathe, blendK, octaves);
       _distFilt = `url(#dist-${o.id})`;
     } else {
       _distortFilterRemove(o.id);
     }
-    el.style.filter = [_distFilt,_shFilt,_hueFilt].filter(Boolean).join(' ') || 'none';
+    // Blur anim: compute time-varying radius from pattern. Uses CSS `filter: blur(Xpx)`.
+    let _blurFilt = '';
+    const _blurAn = (o.anims||[]).find(a=>a.type==='blur');
+    if(_blurAn){
+      const maxR = (+_blurAn.amount||0) * W;
+      const dur  = Math.max(0.01, +o.dur||0);
+      let Tb = Math.max(0, time - o.start);
+      if(_blurAn.gifFps && +_blurAn.gifFps>0) Tb = Math.floor(Tb * +_blurAn.gifFps) / +_blurAn.gifFps;
+      const p = _blurAn.pattern || 'pulse', speed = +_blurAn.speed||0.6;
+      let r = 0;
+      if(p==='uniform')   r = maxR;
+      else if(p==='pulse') r = maxR * (0.5 + 0.5*Math.sin(2*Math.PI*speed*Tb));
+      else if(p==='in')    r = maxR * Math.max(0, 1 - Tb/dur);   // starts blurred, sharpens
+      else if(p==='out')   r = maxR * Math.min(1, Tb/dur);       // starts sharp, blurs
+      if(r > 0.05) _blurFilt = `blur(${r.toFixed(2)}px)`;
+    }
+    el.style.filter = [_distFilt,_shFilt,_hueFilt,_blurFilt].filter(Boolean).join(' ') || 'none';
     el.style.opacity=active?(A.op*(o.opacity!=null?o.opacity:1)):0;   // static overlay opacity × anim opacity
     if(ovEdit){ el.style.pointerEvents='auto'; el.style.cursor='move'; el.style.outline=(oRaw.id===ovSel)?'2px dashed #5b8cff':'none'; el.style.outlineOffset='3px'; dragify(el,oRaw); }
     else { el.style.pointerEvents='none'; el.style.outline='none'; }

@@ -1332,6 +1332,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
             # Distort (psychedelic warp) — real pixel displacement via geq (sine ripple on X and Y).
             # Also folds in a hue rotation (matches the client SVG filter + CSS hue-rotate combo).
             # geq is per-pixel, so amp/freq keep the load reasonable at typical overlay sizes.
+            # When gifFps is set, quantize T so the warp steps at the requested frame rate (GIF look).
             distort = next((a for a in (o.get("anims") or []) if a.get("type") == "distort"), None)
             if distort:
                 aS = s + max(0.0, float(distort.get("tStart", 0) or 0))
@@ -1340,11 +1341,14 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     amp = float(distort.get("amp", 0.025)) * W
                     freq = float(distort.get("freq", 2.5))
                     dspd = float(distort.get("speed", 1.2))
-                    # geq's time var is uppercase T (lowercase t is the standard filter time; geq uses T).
-                    # Gate displacement to the anim window; identity (0) outside so nothing warps early/late.
+                    # geq's time var is uppercase T (lowercase t is the filter time; geq uses T).
                     gate = "if(between(T,%g,%g),1,0)" % (aS, aE)
-                    dxE = "%g*(%s)*sin(2*PI*%g*Y/H+2*PI*%g*T)" % (amp, gate, freq, dspd)
-                    dyE = "%g*(%s)*cos(2*PI*%g*X/W+2*PI*%g*T)" % (amp, gate, freq, dspd)
+                    Tq = "T"
+                    gfps = float(distort.get("gifFps", 0) or 0)
+                    if gfps > 0:
+                        Tq = "(floor(T*%g)/%g)" % (gfps, gfps)   # stepped time → stepped warp (GIF look)
+                    dxE = "%g*(%s)*sin(2*PI*%g*Y/H+2*PI*%g*%s)" % (amp, gate, freq, dspd, Tq)
+                    dyE = "%g*(%s)*cos(2*PI*%g*X/W+2*PI*%g*%s)" % (amp, gate, freq, dspd, Tq)
                     filt.append(
                         "geq=r='r(X+(%s),Y+(%s))':g='g(X+(%s),Y+(%s))':b='b(X+(%s),Y+(%s))':a='alpha(X,Y)'"
                         % (dxE, dyE, dxE, dyE, dxE, dyE)
@@ -1353,6 +1357,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     if hspd > 0:
                         hexpr = "if(between(t,%g,%g),%g*(t-%g),0)" % (aS, aE, hspd * 360.0, aS)
                         filt.append("hue=h='%s'" % hexpr)
+            # (Blur anim is emitted OUTSIDE the filt list — see below where the fc entry is built.)
             static_op = float(o.get("opacity", 1) or 1)   # image overlay's static opacity (text-sticker / shape / sprinkle / arrow bake it into the PNG; only image needs this here)
             if static_op < 0.999:
                 filt.append("colorchannelmixer=aa=%g" % max(0, min(1, static_op)))
@@ -1416,7 +1421,41 @@ def apply_overlays(silent, overlays, W, H, tmp):
             if sc_factors:
                 combined = "*".join("(%s)" % x for x in sc_factors)
                 filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame:flags=bicubic" % (combined, combined))
-            fc.append(f"[{ii}:v]" + ",".join(filt) + f"[oi{k}]")
+            # Blur anim: split into original + pre-blurred branches, alpha-modulate the blurred
+            # branch by the pattern time-curve, then overlay them. gblur runs once at max sigma;
+            # per-frame alpha lerps between the two branches for pulse/in/out patterns.
+            blur = next((a for a in (o.get("anims") or []) if a.get("type") == "blur"), None)
+            blur_expr = None
+            if blur:
+                b_aS = s + max(0.0, float(blur.get("tStart", 0) or 0))
+                b_aEv = blur.get("tEnd")
+                b_aE = s + min(dur_o, float(b_aEv)) if (b_aEv is not None and float(b_aEv) > 0) else (s + dur_o)
+                maxR = float(blur.get("amount", 0.008)) * W
+                if b_aE > b_aS and maxR > 0.5:
+                    pat = str(blur.get("pattern") or "pulse")
+                    bspd = float(blur.get("speed", 0.6))
+                    gfps = float(blur.get("gifFps", 0) or 0)
+                    # geq uses uppercase T for time (lowercase t belongs to standard filter chains)
+                    lt = "(T-%g)" % b_aS if gfps <= 0 else "(floor((T-%g)*%g)/%g)" % (b_aS, gfps, gfps)
+                    dw = b_aE - b_aS
+                    if pat == "uniform":  k_curve = "1"
+                    elif pat == "in":     k_curve = "max(0,1-%s/%g)" % (lt, dw)
+                    elif pat == "out":    k_curve = "min(1,%s/%g)" % (lt, dw)
+                    else:                 k_curve = "(0.5+0.5*sin(2*PI*%g*%s))" % (bspd, lt)
+                    kExpr = "if(between(T,%g,%g),%s,0)" % (b_aS, b_aE, k_curve)
+                    blur_expr = (maxR, kExpr)
+            if blur_expr is not None:
+                maxR, kExpr = blur_expr
+                # Emit as a proper filter GRAPH (multiple `;`-separated stages), not a comma chain.
+                fc.append(f"[{ii}:v]" + ",".join(filt) + f"[oipre{k}]")
+                fc.append(f"[oipre{k}]split=2[oa{k}][ob{k}]")
+                fc.append(
+                    f"[ob{k}]gblur=sigma={maxR:g},format=rgba,"
+                    f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({kExpr})'[obm{k}]"
+                )
+                fc.append(f"[oa{k}][obm{k}]overlay=0:0[oi{k}]")
+            else:
+                fc.append(f"[{ii}:v]" + ",".join(filt) + f"[oi{k}]")
             fc.append(f"[{last}][oi{k}]overlay=x='W*{ox}-w/2+({odx})':y='H*{oy}-h/2+({ody})':{en}[v{k}]")
             last = f"v{k}"; ii += 1
         # sparkle: composite twinkling copies of an emoji (or image) around the overlay center.
