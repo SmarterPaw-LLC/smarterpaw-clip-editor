@@ -1381,10 +1381,11 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     # Fixed seed per overlay id — same noise pattern across renders of the same project.
                     seed = abs(hash(o.get("id", "d") + str(freq) + str(octaves))) & 0xffff
                     # Noise map at moderate resolution (256×256). ffmpeg scale2ref stretches it to
-                    # overlay dims during displace. amp_px is scaled to the noise map's native size
-                    # so ffmpeg's implicit scale-up multiplies the displacement to canvas dims.
+                    # overlay dims. Displace reads pixel values as offsets IN THE SCALED IMAGE'S
+                    # coord space — so amp_px must be in CANVAS pixel units, NOT noise-map pixels.
+                    # Halved to match SVG feDisplacementMap semantics (scale ⇒ max displacement scale/2).
                     map_size = 256
-                    amp_px = amp_frac * map_size   # in noise-map pixel units; displace scales with the image
+                    amp_px = amp_frac * W * 0.5
                     try:
                         distort_noise_png = os.path.join(tmp, f"dnoise_{k}.png")
                         gen_distort_noise_map(map_size, map_size, amp_px, freq, octaves, seed, distort_noise_png)
