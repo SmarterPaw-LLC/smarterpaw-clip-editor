@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.74.1</span>
+  <span class="ver" id="appVer">v1.74.2</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2578,9 +2578,15 @@ function buildOvEditor(){
         <label>Vol <input type="range" id="ovCfAudVol" min="0" max="2" step="0.05" value="${o.srcAudioVol!=null?o.srcAudioVol:1}"></label></div>
       <div style="font-size:11px;color:var(--mut)">Source is ${fmt(clipDur)}s long. Overlay plays from “seek” at the given speed.</div>`;
   } else {
-    h+=`<div class="sec">Image</div><div><label>Size <input type="range" id="ovScale" min="0.05" max="1" step="0.01" value="${o.scale}"></label>
-      <label>Opacity <input type="range" id="ovImgOp" min="0" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label>
-      <button class="mini" id="ovReplace">Replace…</button></div>`;
+    h+=`<div class="sec">Image</div>
+      <div><b style="font-size:11px;color:var(--mut)">Source:</b> <span style="font-size:11px;word-break:break-all">${(o.src||'').split('/').pop()||'—'}</span></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+        <button class="mini" id="ovRepUpload" title="Upload a different image from your computer">🖼 Upload…</button>
+        <button class="mini" id="ovRepClip" title="Pick a new clip-art icon or emoji">🎨 Clip art…</button>
+        <button class="mini" id="ovRepLib" title="Pick from the shared image library">📚 Library…</button>
+      </div>
+      <div style="margin-top:6px"><label>Size <input type="range" id="ovScale" min="0.05" max="1" step="0.01" value="${o.scale}"></label>
+      <label>Opacity <input type="range" id="ovImgOp" min="0" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label></div>`;
   }
   h+=`<div class="sec">Transform</div>
     <div><label>Rotate <input type="range" id="ovRot" min="-180" max="180" step="1" value="${+o.rot||0}"></label>
@@ -2730,7 +2736,11 @@ function buildOvEditor(){
   $('#ovAnimAdd').onchange=()=>{ const t=$('#ovAnimAdd').value; if(!t) return; histCommit(); (o.anims=o.anims||[]).push(Object.assign({type:t},JSON.parse(JSON.stringify(ANIM_DEFS[t].def)))); renderAnimList(); renderOverlays(playhead); };
   renderAnimList();
   if($('#ovHere')) $('#ovHere').onclick=()=>{ o.start=Math.round(playhead*100)/100; $('#ovStart').value=o.start; renderOvList(); renderOverlays(playhead); };
-  if($('#ovReplace')) $('#ovReplace').onclick=()=>pickImage(src=>{ o.src=src; renderOverlays(playhead); renderOvList(); });
+  // Image swap — three sources, same as the +Image toolbar dropdown. Each writes o.src + re-renders.
+  const _swapSet = src => { histCommit(); o.src = src; buildOvEditor(); renderOverlays(playhead); renderOvList(); };
+  if($('#ovRepUpload')) $('#ovRepUpload').onclick = () => pickImage(_swapSet);
+  if($('#ovRepClip'))   $('#ovRepClip').onclick   = () => openClipPicker(_swapSet);
+  if($('#ovRepLib'))    $('#ovRepLib').onclick    = () => openLibrary(_swapSet);
 }
 function ovPlace(o){ const p=placeAtPlayhead(+o.dur||3, 0); o.start=p.t0; o.ch=p.ch; return o; }   // new overlays start at the playhead on the topmost free channel
 function pickImage(cb){ const f=$('#ovFile'); f.onchange=()=>{ const file=f.files[0]; if(!file) return; const r=new FileReader();
