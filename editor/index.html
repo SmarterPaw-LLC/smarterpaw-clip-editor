@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.74.3</span>
+  <span class="ver" id="appVer">v1.74.4</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2388,7 +2388,9 @@ function closeOvModal(){
   // park end-card body back in its modal shell before tearing down the editor pane
   const ovBox=$('#ovEditor'), ecModalCard=$('#ecModal > .modal-card');
   if(ovBox && ecModalCard){ const ecBody=ovBox.querySelector('.modal-body'); if(ecBody) ecModalCard.appendChild(ecBody); }
-  ovEdit=false; ovSel=null; $('#ovModal').style.display='none'; $('#endcard').style.display='none'; renderOverlays(playhead); renderTimeline();
+  // Preserve ovSel + _lastPick so arrow-key nudging keeps working after the modal is closed.
+  // ovEdit flip alone hides the drag handles / dashed selection outline on the preview.
+  ovEdit=false; $('#ovModal').style.display='none'; $('#endcard').style.display='none'; renderOverlays(playhead); renderTimeline();
 }
 function appendEcRow(box){   // permanent end-card entry below the regular overlay list
   const ec=normEndcard(EDL.settings);
@@ -4031,7 +4033,8 @@ document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) ret
 document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) return;
   if(!(e.key==='ArrowLeft'||e.key==='ArrowRight'||e.key==='ArrowUp'||e.key==='ArrowDown')) return;
   const ae=document.activeElement, tag=(ae&&ae.tagName||'').toLowerCase(), ty=(ae&&ae.type||'').toLowerCase();
-  if(tag==='textarea' || tag==='select' || (tag==='input' && (ty==='text'||ty==='number'||ty==='search'||ty===''))) return;   // let real typing fields keep arrows
+  // Let native controls handle their own arrows: text/number/search/range/select all consume arrows for their own value editing.
+  if(tag==='textarea' || tag==='select' || (tag==='input' && (ty==='text'||ty==='number'||ty==='search'||ty==='email'||ty==='password'||ty==='range'||ty===''))) return;
   const step=e.shiftKey?0.04:0.005;
   let dx=0,dy=0;
   if(e.key==='ArrowLeft')dx=-step; else if(e.key==='ArrowRight')dx=step; else if(e.key==='ArrowUp')dy=-step; else dy=step;
