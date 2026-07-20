@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.76.4</span>
+  <span class="ver" id="appVer">v1.77.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1720,13 +1720,12 @@ const ANIM_DEFS={
   // Actually displaces pixels (wavy, rippling), not just moves the whole layer around.
   // Optional hue cycle folds in trippy color rotation without needing a separate cycleHue anim.
   distort: {label:'Distort (psychedelic)', png:true,
-    def:{amp:0.025,freq:2.5,speed:1.2,octaves:2,smooth:0.3,motion:'flow',hue:0.35},
+    def:{amp:0.025,freq:2.5,speed:1.2,octaves:2,smooth:0.3,hue:0.35},
     ctrls:[['amp','Warp amount','range',0,0.08,0.005],
            ['freq','Wave density','range',0.5,8,0.5],
            ['speed','Warp speed','range',0.1,4,0.1],
            ['octaves','Waviness detail','range',1,4,1],
            ['smooth','Smoothness','range',0,1,0.05],
-           ['motion','Motion','sel',['pulse','flow','swirl']],
            ['hue','Hue cycle (rev/s)','range',0,2,0.05]]},
   // Blur animation. `amount` = max blur radius (fraction of W). `pattern` shapes it over time:
   //   uniform  — constant blur
@@ -2154,7 +2153,7 @@ function _distortSeeds(oid){
   for(let i=0;i<oid.length;i++){ a=(a*31+oid.charCodeAt(i))|0; b=(b*37+oid.charCodeAt(i))|0; }
   return [Math.abs(a)%9999+1, Math.abs(b)%9999+1];
 }
-function _distortFilterUpdate(oid, ampPx, baseFreq, blendK, octaves, smoothPx, offX, offY){
+function _distortFilterUpdate(oid, ampPx, baseFreq, blendK, octaves, smoothPx){
   const defs = _distortHost();
   let filt = document.getElementById('dist-'+oid);
   const [s1, s2] = _distortSeeds(oid);
@@ -2164,31 +2163,26 @@ function _distortFilterUpdate(oid, ampPx, baseFreq, blendK, octaves, smoothPx, o
     filt.setAttribute('x','-30%'); filt.setAttribute('y','-30%');
     filt.setAttribute('width','160%'); filt.setAttribute('height','160%');
     filt.setAttribute('color-interpolation-filters','sRGB');
-    // Two turbulence maps stitched-tileable so feOffset can scroll them without seam artifacts.
+    // Two turbulence maps + arithmetic composite = smooth interpolation between noise patterns
+    // as blendK cycles 0↔1. Feels like flowing noise, not the twitchy 15-Hz seed swap.
     const t1 = document.createElementNS(_NS_SVG, 'feTurbulence');
-    t1.setAttribute('type','fractalNoise'); t1.setAttribute('seed', String(s1));
-    t1.setAttribute('stitchTiles','stitch'); t1.setAttribute('result','n1');
+    t1.setAttribute('type','fractalNoise'); t1.setAttribute('seed', String(s1)); t1.setAttribute('result','n1');
     const t2 = document.createElementNS(_NS_SVG, 'feTurbulence');
-    t2.setAttribute('type','fractalNoise'); t2.setAttribute('seed', String(s2));
-    t2.setAttribute('stitchTiles','stitch'); t2.setAttribute('result','n2');
+    t2.setAttribute('type','fractalNoise'); t2.setAttribute('seed', String(s2)); t2.setAttribute('result','n2');
     const mix = document.createElementNS(_NS_SVG, 'feComposite');
     mix.setAttribute('in','n1'); mix.setAttribute('in2','n2');
     mix.setAttribute('operator','arithmetic'); mix.setAttribute('k1','0'); mix.setAttribute('k4','0');
-    mix.setAttribute('result','mixed');
-    // feOffset translates the noise map — used by flow/swirl motion to scroll the pattern.
-    const off = document.createElementNS(_NS_SVG, 'feOffset');
-    off.setAttribute('in','mixed'); off.setAttribute('result','shifted');
-    // Gaussian blur on the noise map softens sharp displacement transitions — smoothness control.
+    mix.setAttribute('result','noise');
+    // Gaussian blur on the noise map softens sharp displacement transitions — the "smoothness" control.
     const smooth = document.createElementNS(_NS_SVG, 'feGaussianBlur');
-    smooth.setAttribute('in','shifted'); smooth.setAttribute('result','smoothed');
+    smooth.setAttribute('in','noise'); smooth.setAttribute('result','smoothed');
     const disp = document.createElementNS(_NS_SVG, 'feDisplacementMap');
     disp.setAttribute('in','SourceGraphic'); disp.setAttribute('in2','smoothed');
     disp.setAttribute('xChannelSelector','R'); disp.setAttribute('yChannelSelector','G');
-    filt.appendChild(t1); filt.appendChild(t2); filt.appendChild(mix);
-    filt.appendChild(off); filt.appendChild(smooth); filt.appendChild(disp);
+    filt.appendChild(t1); filt.appendChild(t2); filt.appendChild(mix); filt.appendChild(smooth); filt.appendChild(disp);
     defs.appendChild(filt);
   }
-  const [t1, t2, mix, off, smooth, disp] = filt.children;
+  const [t1, t2, mix, smooth, disp] = filt.children;
   const bf = baseFreq.toFixed(5);
   t1.setAttribute('baseFrequency', bf);
   t2.setAttribute('baseFrequency', bf);
@@ -2196,8 +2190,6 @@ function _distortFilterUpdate(oid, ampPx, baseFreq, blendK, octaves, smoothPx, o
   t2.setAttribute('numOctaves', String(octaves));
   mix.setAttribute('k2', blendK.toFixed(3));
   mix.setAttribute('k3', (1 - blendK).toFixed(3));
-  off.setAttribute('dx', (offX||0).toFixed(2));
-  off.setAttribute('dy', (offY||0).toFixed(2));
   smooth.setAttribute('stdDeviation', Math.max(0, smoothPx).toFixed(2));
   disp.setAttribute('scale', ampPx.toFixed(2));
 }
@@ -2368,46 +2360,21 @@ function renderOverlays(time){
       const freqW = (_distortAn.freq!=null?+_distortAn.freq:2.5);       // waves-per-overlay (same unit as server)
       const baseFreq = freqW / overlayW_px;
       const speed = (+_distortAn.speed||1.2);
-      // Effective octaves is capped by amp — otherwise adjacent pixels get displaced in opposite
-      // directions and the image tears. Same math as the server. User's setting still saved;
-      // only clipped for actual rendering.
-      const _userOct = Math.max(1, Math.min(4, Math.round(+_distortAn.octaves||2)));
-      const _canvasW = ((typeof CANVAS_PX!=='undefined' && EDL && EDL.settings) ? (CANVAS_PX[EDL.settings.canvas]||[1080,1920])[0] : 1080);
-      const _ampPxCanvas = (+_distortAn.amp||0.025) * _canvasW * 0.5;
-      let _maxOct = 1;
-      for(let n=1; n<=4; n++){
-        const featurePx = (_canvasW / Math.max(0.5, +_distortAn.freq||2.5)) / Math.pow(2, n-1);
-        if(featurePx >= 2.5 * Math.max(1, _ampPxCanvas)) _maxOct = n;
-      }
-      const octaves = Math.min(_userOct, _maxOct);
+      const octaves = Math.max(1, Math.min(4, Math.round(+_distortAn.octaves||2)));
+      // Guard null/undefined BEFORE the `+` conversion — `+undefined` is NaN, not 0, and `NaN != null`
+      // is truthy, so the old form silently propagated NaN and killed the blur for legacy anims.
       const smooth  = Math.max(0, Math.min(1, (_distortAn.smooth != null) ? +_distortAn.smooth : 0.3));
-      const motion  = _distortAn.motion || 'flow';
       let Td = Math.max(0, time - o.start);
       if(_distortAn.gifFps && +_distortAn.gifFps>0) Td = Math.floor(Td * +_distortAn.gifFps) / +_distortAn.gifFps;
-      // Motion type layers on top of the baseline breathe + optional cross-blend:
-      //  pulse  — no translation, cross-blend two noise maps (the old back-and-forth character)
-      //  flow   — noise scrolls in one direction (river-like, no seesawing)
-      //  swirl  — noise scrolls in a circle (whirlpool-like)
+      // Smooth continuous animation: baseFrequency breathes AND blend k oscillates between the
+      // two static seed maps. Together they produce genuinely flowing warp, not stepped.
       const breathe = baseFreq * (1 + 0.20*Math.sin(2*Math.PI*speed*0.3*Td));
       const scale   = amp      * (1 + 0.15*Math.sin(2*Math.PI*speed*0.42*Td));
-      // Pulse oscillates blendK for the two-seed shimmer; flow/swirl hold blendK steady so translation is the primary motion.
-      const blendK  = (motion==='pulse') ? (0.5 + 0.5*Math.sin(2*Math.PI*speed*0.5*Td)) : 0.5;
-      // Linear translation for flow (was sinusoidal — that was just a slower seesaw).
-      // Because feTurbulence uses stitchTiles=stitch, feOffset can shift arbitrarily far and
-      // the noise pattern keeps looking continuous.
-      let offX = 0, offY = 0;
-      if(motion === 'flow'){
-        offX = overlayW_px * 0.4 * speed * Td;                 // continuous horizontal drift
-      } else if(motion === 'swirl'){
-        const ang = 2*Math.PI*speed*0.25*Td;                   // circular translation = whirlpool
-        const R = overlayW_px * 0.35;
-        offX = R * Math.cos(ang);
-        offY = R * Math.sin(ang);
-      }
-      // Coefficient dropped 0.15 → 0.02: 0.15 at smooth=1 obliterated the noise features
-      // (sigma > feature size = uniform gray = no visible warp). New max preserves character.
-      const smoothPx = smooth * overlayW_px * 0.02;
-      _distortFilterUpdate(o.id, scale, breathe, blendK, octaves, smoothPx, offX, offY);
+      const blendK  = 0.5 + 0.5*Math.sin(2*Math.PI*speed*0.5*Td);
+      // smoothPx scales with overlay size so the softening feels the same at any resolution.
+      // Coefficient tuned so smooth=1 gives a clearly liquid/dreamy warp (was 0.04 = imperceptible).
+      const smoothPx = smooth * overlayW_px * 0.15;
+      _distortFilterUpdate(o.id, scale, breathe, blendK, octaves, smoothPx);
       _distFilt = `url(#dist-${o.id})`;
     } else {
       _distortFilterRemove(o.id);
