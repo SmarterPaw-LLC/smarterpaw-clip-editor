@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.74.0</span>
+  <span class="ver" id="appVer">v1.74.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2327,7 +2327,9 @@ function renderOverlays(time){
       const baseFreq = freqW / overlayW_px;
       const speed = (+_distortAn.speed||1.2);
       const octaves = Math.max(1, Math.min(4, Math.round(+_distortAn.octaves||2)));
-      const smooth  = Math.max(0, Math.min(1, +_distortAn.smooth!=null ? +_distortAn.smooth : 0.3));
+      // Guard null/undefined BEFORE the `+` conversion — `+undefined` is NaN, not 0, and `NaN != null`
+      // is truthy, so the old form silently propagated NaN and killed the blur for legacy anims.
+      const smooth  = Math.max(0, Math.min(1, (_distortAn.smooth != null) ? +_distortAn.smooth : 0.3));
       let Td = Math.max(0, time - o.start);
       if(_distortAn.gifFps && +_distortAn.gifFps>0) Td = Math.floor(Td * +_distortAn.gifFps) / +_distortAn.gifFps;
       // Smooth continuous animation: baseFrequency breathes AND blend k oscillates between the
@@ -2336,7 +2338,8 @@ function renderOverlays(time){
       const scale   = amp      * (1 + 0.15*Math.sin(2*Math.PI*speed*0.42*Td));
       const blendK  = 0.5 + 0.5*Math.sin(2*Math.PI*speed*0.5*Td);
       // smoothPx scales with overlay size so the softening feels the same at any resolution.
-      const smoothPx = smooth * overlayW_px * 0.04;
+      // Coefficient tuned so smooth=1 gives a clearly liquid/dreamy warp (was 0.04 = imperceptible).
+      const smoothPx = smooth * overlayW_px * 0.15;
       _distortFilterUpdate(o.id, scale, breathe, blendK, octaves, smoothPx);
       _distFilt = `url(#dist-${o.id})`;
     } else {

@@ -1403,7 +1403,8 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     distort_blend_speed = dspd * 0.5
                     distort_window = (aS_d, aE_d)
                     # gblur sigma on the SCALED noise map (canvas coords). Matches client's smoothPx.
-                    distort_smooth_sigma = smooth * W * 0.04
+                    # Coefficient tuned so smooth=1 produces a clearly liquid warp, not a subtle one.
+                    distort_smooth_sigma = smooth * W * 0.15
                     hspd = float(distort.get("hue", 0.35))
                     if hspd > 0:
                         hexpr = "if(between(t,%g,%g),%g*(t-%g),0)" % (aS_d, aE_d, hspd * 360.0, aS_d)
