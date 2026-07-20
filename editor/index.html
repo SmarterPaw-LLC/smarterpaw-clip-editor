@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.74.5</span>
+  <span class="ver" id="appVer">v1.74.6</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -875,7 +875,7 @@ function openTagPicker(anchorEl, clip){
         const r = await api('/api/tag/rename', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({old: t, new: nw})});
         if(r && r.ok){
           // refresh MAN.clips so picker + bin both show new tags
-          MAN = await api('/api/manifest'); MAN.byId = {}; MAN.clips.forEach(c => MAN.byId[c.id] = c);
+          MAN = await api('/api/manifest?_=' + Date.now()); MAN.byId = {}; MAN.clips.forEach(c => MAN.byId[c.id] = c);
           renderBin(); if($('#clipMgrModal') && $('#clipMgrModal').style.display==='flex') renderClipMgr();
           toast(nw ? ('Renamed "'+t+'" → "'+nw+'" on '+r.clips_updated+' clip(s)') : ('Deleted "'+t+'" from '+r.clips_updated+' clip(s)'));
           render();   // re-render the picker with the updated list
@@ -4112,7 +4112,7 @@ document.addEventListener('keydown', e=>{ if(e.key!=='Escape') return;
 
 /* ---------- boot ---------- */
 async function boot(reload){
-  MAN = await api('/api/manifest'); MAN.byId={}; MAN.clips.forEach(c=>MAN.byId[c.id]=c);
+  MAN = await api('/api/manifest?_=' + Date.now()); MAN.byId={}; MAN.clips.forEach(c=>MAN.byId[c.id]=c);
   if(reload){ renderBin(); renderTimeline(); toast('Clips reloaded'); return; }
   const list=await loadProjects();
   if(list.length) await projLoad(list[0].file);
@@ -4150,7 +4150,7 @@ async function pollSrc(){
     const s=await r.json(); const sig=s.n+':'+s.m;
     if(_srcSig===null){ _srcSig=sig; return; }
     if(sig!==_srcSig){ _srcSig=sig;
-      MAN=await api('/api/manifest'); MAN.byId={}; MAN.clips.forEach(c=>MAN.byId[c.id]=c);
+      MAN=await api('/api/manifest?_=' + Date.now()); MAN.byId={}; MAN.clips.forEach(c=>MAN.byId[c.id]=c);
       renderBin(); $('#status').textContent=MAN.clips.length+' clips loaded';
       toast('Source clips updated');
     }
