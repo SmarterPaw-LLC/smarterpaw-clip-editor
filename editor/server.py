@@ -1392,7 +1392,19 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     amp_frac = float(distort.get("amp", 0.025))
                     freq = float(distort.get("freq", 2.5))
                     dspd = float(distort.get("speed", 1.2))
-                    octaves = max(1, min(4, int(round(float(distort.get("octaves", 2))))))
+                    # Cap effective octaves so noise features stay LARGER than the displacement.
+                    # If features < amp, adjacent pixels get whipped in opposite directions = tears.
+                    # Effective feature-size at octave N = (map_w / freq) / 2^N canvas-pixels-equivalent.
+                    # Solve for max N where feature_px >= 2*amp_px_canvas.
+                    user_oct = max(1, min(4, int(round(float(distort.get("octaves", 2))))))
+                    map_size = 256
+                    amp_px_canvas = amp_frac * W * 0.5
+                    max_oct_for_amp = 1
+                    for n in range(1, 5):
+                        feature_px = (W / max(0.5, freq)) / (2 ** (n - 1))
+                        if feature_px >= 2.5 * max(1.0, amp_px_canvas):
+                            max_oct_for_amp = n
+                    octaves = min(user_oct, max_oct_for_amp)
                     smooth = max(0.0, min(1.0, float(distort.get("smooth", 0.3))))
                     motion = str(distort.get("motion") or "flow").lower()
                     if motion not in ("pulse", "flow", "swirl"): motion = "flow"
@@ -1417,11 +1429,11 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     distort_window = (aS_d, aE_d)
                     distort_motion = motion
                     distort_speed_raw = dspd
-                    # gblur sigma on the SCALED noise map (canvas coords). Coefficient dropped
-                    # 0.15 → 0.02 — at smooth=1 the old value gave sigma≈160 which Gaussian-blurred
-                    # the noise into uniform gray = ZERO visible warp. New max (sigma≈22 on 1080)
-                    # softens edges without erasing the noise features that drive the displacement.
-                    distort_smooth_sigma = smooth * W * 0.02
+                    # The octave cap above ALREADY prevents tearing by keeping noise features
+                    # larger than amp — adjacent pixels within a feature have similar noise values,
+                    # so their displacements differ by << 1 px per pixel. No anti-tear blur needed.
+                    # User's smooth slider just adds optional extra softness.
+                    distort_smooth_sigma = smooth * W * 0.03
                     hspd = float(distort.get("hue", 0.35))
                     if hspd > 0:
                         hexpr = "if(between(t,%g,%g),%g*(t-%g),0)" % (aS_d, aE_d, hspd * 360.0, aS_d)
