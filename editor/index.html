@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.77.1</span>
+  <span class="ver" id="appVer">v1.78.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -434,8 +434,6 @@
           <option value="4x5">4:5 Meta feed</option><option value="1x1">1:1 Square</option><option value="16x9">16:9 YouTube</option></select>
         <span id="aspectBadge" style="font-size:10px;color:var(--mut);margin-left:6px" title="Overlay positions/sizes can differ per aspect. The 'primary' aspect's values live on the base; other aspects store sparse overrides."></span>
         <button class="mini" id="aspectReset" title="Drop variant overrides for this aspect — revert overlays to primary values" style="display:none;margin-left:4px;font-size:10px">⟲ Reset variant</button></div>
-      <div class="row"><label>Music</label><select id="setMusic"></select></div>
-      <div class="row"><label>Level</label><input type="range" id="setMusicVol" min="0" max="1" step="0.05" style="flex:1"> <span id="setMusicVolV" style="font-size:11px;color:var(--mut);min-width:32px">50%</span></div>
       <div class="row"><label>End card</label><button class="mini" id="btnEndcard" title="Opens the Overlays panel with the end card selected">🎬 Edit end card…</button></div>
     </div>
     <div class="status" id="status">Loading…</div>
@@ -1178,10 +1176,9 @@ function loadSegIntoTrim(){
 }
 
 /* ---------- playback ---------- */
-const music = new Audio();
 let tlPlaying=false, pbToken=0, segRaf=null, clockRaf=null, segTO=null, clockTimer=null, playhead=0;
 function stop(){ tlPlaying=false; pbToken++; cancelAnimationFrame(segRaf); cancelAnimationFrame(clockRaf); clearInterval(clockTimer); clearTimeout(segTO);
-  const v=activeVid(); if(v){ v.onseeked=null; try{v.pause();}catch(e){} v.style.opacity=1; } music.pause(); audStopPlayback();
+  const v=activeVid(); if(v){ v.onseeked=null; try{v.pause();}catch(e){} v.style.opacity=1; } audStopPlayback();
   // Also pause every clipframe overlay's inner video — they're independent HTML <video> elements
   // that don't listen to the timeline clock, so they'd keep playing on their own otherwise.
   for(const id in ovCfVids){ try{ ovCfVids[id].pause(); }catch(e){} }
@@ -1241,8 +1238,6 @@ function playTimeline(){
   // Allow overlay-only projects to play — vidTotal already covers overlays/audio when there are no segments.
   if(!totalDur()) return; stop(); tlPlaying=true; pbToken++;
   $('#btnPlayTl').textContent='❚❚ Stop'; $('#endcard').style.display='none';
-  if(MAN.music.includes(EDL.settings.music)){ music.src='/sources/music/'+encodeURIComponent(EDL.settings.music);
-    music.currentTime=0; music.volume=musicVol(); music.play().catch(()=>{}); }
   audSyncPreview(); audStartPlayback();        // multi-track audio overlays start in sync with the playhead
   const ec=normEndcard(EDL.settings);
   const vidTotal=layout().vidTotal, endDur=(ec.enabled?ec.dur:0), total=vidTotal+endDur;
@@ -1368,16 +1363,6 @@ $('#aspectReset').onclick=()=>{
 };
 if($('#setProjBrand')) $('#setProjBrand').onchange=e=>{ histCommit(); EDL.settings.brand=e.target.value; toast('Brand: '+(BRAND_LABELS[e.target.value]||e.target.value)+'. New overlays use this brand’s gradient.'); };
 document.querySelectorAll('.arbtn').forEach(b=>b.onclick=()=>chooseCanvas(b.dataset.ar));
-$('#setMusic').onchange=e=>{ EDL.settings.music=e.target.value; renderTracks(); };
-function musicVol(){ return EDL.settings.musicVol!=null ? EDL.settings.musicVol : 0.5; }
-function setMusicVol(v){ EDL.settings.musicVol=Math.max(0,Math.min(1,v)); try{music.volume=musicVol();}catch(_){}
-  const p=Math.round(musicVol()*100)+'%';   // update in place (don't rebuild the slider mid-drag)
-  if($('#setMusicVol') && $('#setMusicVol').value!=String(musicVol())) $('#setMusicVol').value=musicVol();
-  if($('#setMusicVolV')) $('#setMusicVolV').textContent=p;
-  const lv=document.querySelector('#tlTracks .audiolane .volsl'); if(lv && lv.value!=String(musicVol())) lv.value=musicVol();
-  const lp=document.querySelector('#tlTracks .audiolane .vpct'); if(lp) lp.textContent=p;
-  histSchedule(); }
-$('#setMusicVol').oninput=e=>setMusicVol(parseFloat(e.target.value));
 
 /* ---------- end-card modal ---------- */
 function ecBgModeUI(){ const m=$('#ecBgMode').value; $('#ecGradRow').style.display=(m==='gradient')?'':'none'; $('#ecColorRow').style.display=(m==='color')?'':'none'; }
@@ -3196,23 +3181,6 @@ function renderTracks(){
     }
     tr.appendChild(arow2);
   }
-  // Legacy single-music lane (kept for backward compat; renders alongside the new audio overlays)
-  const arow=document.createElement('div'); arow.className='trk audiolane';
-  const mname=EDL.settings.music||'';
-  if(mname && MAN.music && MAN.music.includes(mname)){
-    const bar=document.createElement('div'); bar.className='blk audio'; bar.style.left='0%'; bar.style.width='100%';
-    const nm=document.createElement('span'); nm.className='anm'; nm.textContent='🎵 '+mname.replace(/\.(mp3|m4a|wav)$/i,''); bar.appendChild(nm);
-    const vol=document.createElement('input'); vol.type='range'; vol.min=0; vol.max=1; vol.step=0.05; vol.value=musicVol(); vol.className='volsl'; vol.title='Music level';
-    vol.onpointerdown=e=>e.stopPropagation(); vol.onclick=e=>e.stopPropagation();
-    vol.oninput=()=>setMusicVol(parseFloat(vol.value));
-    bar.appendChild(vol);
-    const vp=document.createElement('span'); vp.className='vpct'; vp.textContent=Math.round(musicVol()*100)+'%'; bar.appendChild(vp);
-    arow.appendChild(bar);
-  } else {
-    const none=document.createElement('div'); none.className='blk audio empty'; none.style.left='0%'; none.style.width='100%'; none.textContent='🎵 no music — pick a track in Settings'; arow.appendChild(none);
-  }
-  const al=document.createElement('div'); al.className='lab'; al.textContent='🎵 Audio'; arow.appendChild(al);
-  tr.appendChild(arow);
   positionPlayhead(); histSchedule();
 }
 // Build one overlay bar element on its channel lane (drag to move/retime/change channel).
@@ -3784,20 +3752,26 @@ function applyEDL(edl){
   if(s.captionY==null) s.captionY=0.62;
   if(!EDL.segments) EDL.segments=[];
   if(!Array.isArray(EDL.overlays)) EDL.overlays=[];
-  if(!Array.isArray(EDL.audio)) EDL.audio=[];   // multi-track audio overlays (music + sfx); legacy s.music still works alongside
+  if(!Array.isArray(EDL.audio)) EDL.audio=[];   // multi-track audio overlays (music + sfx)
   if(!Number.isFinite(+EDL.audioChannels)) EDL.audioChannels=1;   // user-set audio lane count (empty lanes persist for drag targets)
+  // One-time migration: old projects saved music as s.music/s.musicVol. Convert into an
+  // EDL.audio[] entry on the top lane so nothing is lost, then drop the legacy fields.
+  if(s.music && MAN.music && MAN.music.includes(s.music)){
+    const src='sources/music/'+s.music;
+    if(!EDL.audio.some(a=>a.src===src)){
+      EDL.audio.push({ id:uidA(), src, start:0, dur:Math.max(1, totalDur()||10),
+                       volume: (s.musicVol!=null?s.musicVol:0.5), fadeIn:0.3, fadeOut:1.0, ach:0 });
+    }
+  }
+  delete s.music; delete s.musicVol;
   // Per-aspect variants (sparse overrides for overlay positions/sizes per canvas).
   // primaryAspect = the aspect whose values live on the base overlay objects.
   if(!EDL.primaryAspect) EDL.primaryAspect = s.canvas || '9x16';
   if(!EDL.variants || typeof EDL.variants !== 'object') EDL.variants = {};
   normEndcard(s);   // migrate/normalize end-card settings
-  const ms=$('#setMusic'); ms.innerHTML=MAN.music.map(m=>`<option ${m===s.music?'selected':''}>${m}</option>`).join('');
-  if(!MAN.music.includes(s.music)) s.music=MAN.music[0]||'';
-  if(s.musicVol==null) s.musicVol=0.5;
-  $('#setMusic').value=s.music; $('#setCanvas').value=s.canvas;
+  $('#setCanvas').value=s.canvas;
   if(!BRAND_GRADIENTS[s.brand]) s.brand='meowijuana';
   if($('#setProjBrand')) $('#setProjBrand').value=s.brand;
-  if($('#setMusicVol')){ $('#setMusicVol').value=s.musicVol; $('#setMusicVolV').textContent=Math.round(s.musicVol*100)+'%'; }
   document.querySelectorAll('.arbtn').forEach(b=>b.classList.toggle('on', b.dataset.ar===s.canvas));
   const _px=CANVAS_PX[s.canvas]||[1080,1920]; if($('#arDim')) $('#arDim').textContent=_px[0]+'×'+_px[1];
   sel = EDL.segments.length?0:-1;
@@ -3840,7 +3814,7 @@ async function projRename(){
   await loadProjects(r.file); toast('Renamed to “'+r.name+'”');
 }
 function projNew(){ if(!confirm('Start a new blank timeline? Unsaved changes will be lost.')) return;
-  applyEDL({name:'', settings:{canvas:EDL.settings.canvas||'9x16', music:MAN.music[0]||'', endcard:['MEOWIJUANA','CATNIP JOINTS','SHOP NOW'], captionSize:0.058, captionY:0.62, endcardDur:2.6}, segments:[]});
+  applyEDL({name:'', settings:{canvas:EDL.settings.canvas||'9x16', endcard:['MEOWIJUANA','CATNIP JOINTS','SHOP NOW'], captionSize:0.058, captionY:0.62, endcardDur:2.6}, segments:[]});
   EDL.settings.endcard.enabled=false;   // new projects start with the end card OFF (defaults stay pre-filled if turned on)
   updateTotal(); renderTracks();
   setCur(null); }

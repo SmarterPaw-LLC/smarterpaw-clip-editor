@@ -1840,19 +1840,12 @@ def render(edl, out_dir=None, out_name=None, progress=None):
         except Exception as ex:
             return {"ok": False, "log": f"Can't create folder:\n{target_dir}\n{ex}"}
         out = os.path.join(target_dir, base_name)
-        # === Audio mix: legacy single-music slot + per-clip EDL.audio overlays + framed-clip source audio ===
+        # === Audio mix: per-clip EDL.audio overlays + framed-clip source audio ===
         # Each audio source becomes an ffmpeg -i input; its filter chain trims+delays into the right
         # spot on the timeline and applies per-clip volume + fadeIn/fadeOut. All chains are amix'd
-        # at the end. Order: legacy music first (if any) so it's always input #1, then user-added clips.
-        # Tracks are 8-tuples: (path, start, dur, vol, fadeIn, fadeOut, src_in, speed). src_in seeks
-        # into the source file (framed-clip audio); speed uses atempo chain (framed-clip audio too).
+        # at the end. Tracks are 8-tuples: (path, start, dur, vol, fadeIn, fadeOut, src_in, speed).
+        # src_in seeks into the source file (framed-clip audio); speed uses atempo (framed-clip too).
         tracks = []
-        mname = s.get("music", "")
-        mvol = float(s.get("musicVol", 0.5) if s.get("musicVol") is not None else 0.5)
-        if mname:
-            mp = os.path.join(MUSIC_DIR, mname)
-            if os.path.exists(mp) and mvol > 0.001:
-                tracks.append((mp, 0.0, float(total), mvol, 0.3, 1.0, 0.0, 1.0))
         for a in (edl.get("audio") or []):
             if a.get("hidden"): continue
             src_rel = (a.get("src") or "").lstrip("/")
