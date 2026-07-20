@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.74.7</span>
+  <span class="ver" id="appVer">v1.75.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1500,6 +1500,10 @@ function audSyncEditor(){
     <div><label>Start <input type="number" id="audE_start" step="0.1" style="width:64px" value="${a.start}"> s</label>
       <label>Dur <input type="number" id="audE_dur" step="0.1" min="0.1" style="width:64px" value="${a.dur}"> s</label>
       <button class="mini" id="audE_here">⤓ at playhead</button></div>
+    <div style="margin-top:6px"><label>Start in track at <input type="range" id="audE_in" min="0" step="0.05" style="width:140px" value="${a.srcIn||0}">
+      <input type="number" id="audE_inNum" min="0" step="0.1" style="width:60px" value="${(a.srcIn||0).toFixed(1)}"> s</label>
+      <button class="mini" id="audE_prev">▶ Preview</button>
+      <span id="audE_srcLen" style="font-size:11px;color:var(--mut)"></span></div>
     <div style="margin-top:6px"><label>Volume <input type="range" id="audE_vol" min="0" max="2" step="0.05" value="${a.volume!=null?a.volume:1}" style="width:160px"> <span id="audE_volV" style="font-size:11px;color:var(--mut)">${Math.round((a.volume!=null?a.volume:1)*100)}%</span></label></div>
     <div><label>Fade in <input type="range" id="audE_fi" min="0" max="5" step="0.1" value="${a.fadeIn||0}" style="width:160px"> <span id="audE_fiV" style="font-size:11px;color:var(--mut)">${(a.fadeIn||0).toFixed(1)}s</span></label></div>
     <div><label>Fade out <input type="range" id="audE_fo" min="0" max="5" step="0.1" value="${a.fadeOut||0}" style="width:160px"> <span id="audE_foV" style="font-size:11px;color:var(--mut)">${(a.fadeOut||0).toFixed(1)}s</span></label></div>
@@ -1512,6 +1516,35 @@ function audSyncEditor(){
   $('#audE_fi').oninput=e=>{ const v=parseFloat(e.target.value)||0; a.fadeIn=v; $('#audE_fiV').textContent=v.toFixed(1)+'s'; audSyncPreview(); };
   $('#audE_fo').oninput=e=>{ const v=parseFloat(e.target.value)||0; a.fadeOut=v; $('#audE_foV').textContent=v.toFixed(1)+'s'; audSyncPreview(); };
   $('#audE_del').onclick=()=>removeAudio(a.id);
+  // Load source duration so the srcIn slider can cap at (source-length − clip.dur)
+  const _srcLen = $('#audE_srcLen'), _in = $('#audE_in'), _inNum = $('#audE_inNum');
+  const _probe = new Audio(); _probe.preload='metadata'; _probe.src = '/'+encodeURI(a.src||'');
+  _probe.onloadedmetadata = ()=>{
+    const sd = _probe.duration || 0;
+    if(sd > 0){
+      const maxIn = Math.max(0, sd - Math.min(sd, +a.dur||0));
+      _in.max = maxIn.toFixed(2); _inNum.max = maxIn.toFixed(2);
+      _srcLen.textContent = `(source ${sd.toFixed(1)}s · max ${maxIn.toFixed(1)}s)`;
+    }
+  };
+  const _setIn = v=>{ v = Math.max(0, parseFloat(v)||0);
+    a.srcIn = v; _in.value = v.toFixed(2); _inNum.value = v.toFixed(1);
+    // Re-seek the live preview audio so what plays reflects the new offset immediately.
+    const el = _audEls[a.id]; if(el){ const ls = (playhead||0) - (+a.start||0);
+      if(ls >= 0 && ls < (+a.dur||0)) { try{ el.currentTime = Math.max(0, ls + v); }catch(_){} } }
+    audSyncPreview(); renderTracks(); };
+  _in.oninput = e => _setIn(e.target.value);
+  _inNum.oninput = e => _setIn(e.target.value);
+  // Preview button — play a short chunk of the source from srcIn so user can hear their in-point
+  let _prevAud = null;
+  $('#audE_prev').onclick = ()=>{
+    if(_prevAud){ try{_prevAud.pause();}catch(_){} _prevAud=null; $('#audE_prev').textContent='▶ Preview'; return; }
+    _prevAud = new Audio('/'+encodeURI(a.src||''));
+    _prevAud.volume = 0.7;
+    _prevAud.onloadedmetadata = ()=>{ try{ _prevAud.currentTime = a.srcIn||0; }catch(_){} _prevAud.play().catch(()=>{}); };
+    $('#audE_prev').textContent = '■ Stop';
+    _prevAud.onended = ()=>{ _prevAud=null; $('#audE_prev').textContent='▶ Preview'; };
+  };
 }
 // Build the on-timeline bar for one audio clip (drag-to-move, resize handles, hide/lock/delete icons)
 // Hash the audio src to a stable hue (0-359) so every distinct file gets a unique color, and
@@ -1598,7 +1631,7 @@ function audSyncPreview(){
 function audStartPlayback(){          // align + play every active audio clip at the current playhead
   audList().forEach(a=>{ const el=_audEls[a.id]; if(!el) return;
     const t = (playhead||0) - (+a.start||0);
-    if(t >= 0 && t < (+a.dur||0) && !a.hidden){ try{el.currentTime=t;}catch(_){} el.play().catch(()=>{}); }
+    if(t >= 0 && t < (+a.dur||0) && !a.hidden){ try{el.currentTime=Math.max(0, t + (+a.srcIn||0));}catch(_){} el.play().catch(()=>{}); }
     else { try{el.pause();}catch(_){} }
   });
 }
@@ -1608,8 +1641,9 @@ function audTick(t){                  // called from the playback loop; gate eac
     const ls = t - (+a.start||0); const dur = +a.dur||0;
     const active = !a.hidden && ls >= 0 && ls < dur;
     if(active){ el.volume = _audEnv(a, t);
-      // soft re-sync if drift exceeds 0.15s (browsers occasionally drop frames or stutter)
-      if(el.paused) el.play().catch(()=>{}); else if(Math.abs(el.currentTime - ls) > 0.15){ try{el.currentTime=ls;}catch(_){} }
+      // Source position = local time + srcIn (skip past the intro/whatever the user chose).
+      const want = Math.max(0, ls + (+a.srcIn||0));
+      if(el.paused) el.play().catch(()=>{}); else if(Math.abs(el.currentTime - want) > 0.15){ try{el.currentTime=want;}catch(_){} }
     } else { if(!el.paused){ try{el.pause();}catch(_){} } }
   });
 }

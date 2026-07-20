@@ -1861,7 +1861,8 @@ def render(edl, out_dir=None, out_name=None, progress=None):
             fo = max(0.0, float(a.get("fadeOut", 0) or 0))
             if st >= total: continue
             if st + du > total: du = total - st
-            tracks.append((ap, st, du, vol, fi, fo, 0.0, 1.0))
+            src_in = max(0.0, float(a.get("srcIn", 0) or 0))   # skip N seconds into the source file
+            tracks.append((ap, st, du, vol, fi, fo, src_in, 1.0))
         # Framed-clip (picture-in-picture) source audio — one track per clipframe with srcAudio=true.
         # Reuse id_to_file lookup to resolve the source file path.
         cf_i2f = None
