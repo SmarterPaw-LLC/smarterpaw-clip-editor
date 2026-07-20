@@ -1383,6 +1383,8 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     dspd = float(distort.get("speed", 1.2))
                     octaves = max(1, min(4, int(round(float(distort.get("octaves", 2))))))
                     smooth = max(0.0, min(1.0, float(distort.get("smooth", 0.3))))
+                    motion = str(distort.get("motion") or "flow").lower()
+                    if motion not in ("pulse", "flow", "swirl"): motion = "flow"
                     # Fixed seed per overlay id — same noise pattern across renders of the same project.
                     seed = abs(hash(o.get("id", "d") + str(freq) + str(octaves))) & 0xffff
                     # Noise maps at moderate resolution (256×256). Two seeds, cross-blended over time
@@ -1402,8 +1404,9 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     # Blend cycle period matches the client's cross-fade: same 'speed' param.
                     distort_blend_speed = dspd * 0.5
                     distort_window = (aS_d, aE_d)
+                    distort_motion = motion
+                    distort_speed_raw = dspd
                     # gblur sigma on the SCALED noise map (canvas coords). Matches client's smoothPx.
-                    # Coefficient tuned so smooth=1 produces a clearly liquid warp, not a subtle one.
                     distort_smooth_sigma = smooth * W * 0.15
                     hspd = float(distort.get("hue", 0.35))
                     if hspd > 0:
@@ -1519,19 +1522,45 @@ def apply_overlays(silent, overlays, W, H, tmp):
             # this the render's warp is frozen for the whole clip while the preview animates.
             if noise_ii is not None:
                 bsp, (bS, bE) = distort_blend_speed, distort_window
-                # blend expression: A * (0.5 + 0.5*sin(2π*bsp*(t-bS))) + B * (0.5 - 0.5*sin(...))
-                # Gated to the anim window; outside it, k=0.5 (half-blend, harmless static).
-                w_arg = "if(between(T,%g,%g),T-%g,0)" % (bS, bE, bS)
-                blend_expr = ("A*(0.5+0.5*sin(2*PI*%g*(%s)))+B*(0.5-0.5*sin(2*PI*%g*(%s)))"
-                              % (bsp, w_arg, bsp, w_arg))
-                # Blend two static noise maps → animated noise map, then scale2ref to overlay dims,
-                # optional gblur to soften sharp transitions (smoothness slider), then displace.
+                mot = distort_motion; dspd_r = distort_speed_raw
+                # For PULSE motion, oscillate blendK — creates back-and-forth character.
+                # For FLOW/SWIRL, freeze blend at 0.5 and translate/rotate the noise map instead.
+                if mot == "pulse":
+                    w_arg = "if(between(T,%g,%g),T-%g,0)" % (bS, bE, bS)
+                    blend_expr = ("A*(0.5+0.5*sin(2*PI*%g*(%s)))+B*(0.5-0.5*sin(2*PI*%g*(%s)))"
+                                  % (bsp, w_arg, bsp, w_arg))
+                else:
+                    blend_expr = "A*0.5+B*0.5"
+                # Two noise seeds → blended → scale to overlay dims.
                 fc.append(f"[{noise_ii}:v][{noise_ii_b}:v]blend=all_expr='{blend_expr}',format=rgba[dnblend{k}]")
                 fc.append(f"[dnblend{k}][{cur}]scale2ref[dnraw{k}][{cur}b]")
+                dn_cur = f"dnraw{k}"
+                # Motion overlay: scroll (flow), circular translate (swirl), or nothing (pulse).
+                # hstack the noise 2× wide/tall so the sliding window wraps seamlessly via `mod`.
+                if mot in ("flow", "swirl"):
+                    # Scroll speeds in map-pixel-per-second (tuned so speed=1 gives visible motion).
+                    sx = dspd_r * 30.0   # px per second in the map's pixel space
+                    if mot == "flow":
+                        fc.append(f"[{dn_cur}]split=2[fa{k}][fb{k}]")
+                        fc.append(f"[fa{k}][fb{k}]hstack[fwide{k}]")
+                        fc.append(f"[fwide{k}]crop=iw/2:ih:x='mod({sx:g}*t,iw/2)':y=0[fcrop{k}]")
+                        dn_cur = f"fcrop{k}"
+                    else:  # swirl — circular translation in both X and Y
+                        R = dspd_r * 12.0
+                        # Duplicate to 2×2 tile grid so both x AND y can wrap
+                        fc.append(f"[{dn_cur}]split=2[sa{k}][sb{k}]")
+                        fc.append(f"[sa{k}][sb{k}]hstack[shw{k}]")
+                        fc.append(f"[shw{k}]split=2[st{k}][sbt{k}]")
+                        fc.append(f"[st{k}][sbt{k}]vstack[sgrid{k}]")
+                        fc.append(f"[sgrid{k}]crop=iw/2:ih/2:"
+                                  f"x='mod(iw/4+{R:g}*cos(2*PI*{dspd_r*0.2:g}*t)+{sx:g}*t,iw/2)':"
+                                  f"y='mod(ih/4+{R:g}*sin(2*PI*{dspd_r*0.2:g}*t),ih/2)'[scrop{k}]")
+                        dn_cur = f"scrop{k}"
+                # Optional gblur for smoothness slider, then split R/G planes for displace.
                 if distort_smooth_sigma > 0.5:
-                    fc.append(f"[dnraw{k}]gblur=sigma={distort_smooth_sigma:g},format=gbrp,extractplanes=r+g[dnx{k}][dny{k}]")
+                    fc.append(f"[{dn_cur}]gblur=sigma={distort_smooth_sigma:g},format=gbrp,extractplanes=r+g[dnx{k}][dny{k}]")
                 else:
-                    fc.append(f"[dnraw{k}]format=gbrp,extractplanes=r+g[dnx{k}][dny{k}]")
+                    fc.append(f"[{dn_cur}]format=gbrp,extractplanes=r+g[dnx{k}][dny{k}]")
                 fc.append(f"[{cur}b][dnx{k}][dny{k}]displace=edge=smear[oi_b{k}]")
                 cur = f"oi_b{k}"
             # Stage 3 (optional): blur via split + gblur + alpha-modulated overlay
