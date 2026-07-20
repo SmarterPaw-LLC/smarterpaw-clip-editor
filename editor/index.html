@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.74.2</span>
+  <span class="ver" id="appVer">v1.74.3</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -4032,15 +4032,34 @@ document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) ret
   if(!(e.key==='ArrowLeft'||e.key==='ArrowRight'||e.key==='ArrowUp'||e.key==='ArrowDown')) return;
   const ae=document.activeElement, tag=(ae&&ae.tagName||'').toLowerCase(), ty=(ae&&ae.type||'').toLowerCase();
   if(tag==='textarea' || tag==='select' || (tag==='input' && (ty==='text'||ty==='number'||ty==='search'||ty===''))) return;   // let real typing fields keep arrows
-  // nudge ALL selected overlays (multi-selection), else just the single selected one
-  let targets=(_msel||[]).filter(x=>(EDL.overlays||[]).includes(x));
-  if(!targets.length && ovSel){ const o=(EDL.overlays||[]).find(x=>x.id===ovSel); if(o) targets=[o]; }
-  if(!targets.length) return;
-  const step=e.shiftKey?0.04:0.005; let dx=0,dy=0;
+  const step=e.shiftKey?0.04:0.005;
+  let dx=0,dy=0;
   if(e.key==='ArrowLeft')dx=-step; else if(e.key==='ArrowRight')dx=step; else if(e.key==='ArrowUp')dy=-step; else dy=step;
-  e.preventDefault(); histSchedule();
-  targets.forEach(o=>{ o.x=Math.max(-1,Math.min(2,(o.x!=null?o.x:0.5)+dx)); o.y=Math.max(-1,Math.min(2,(o.y!=null?o.y:0.5)+dy)); });
-  renderOverlays(playhead); });
+  // Overlay targets: multi-selection first, else the single selected overlay
+  let ovTargets=(_msel||[]).filter(x=>(EDL.overlays||[]).includes(x));
+  if(!ovTargets.length && ovSel && ovSel!==EC_SENTINEL){
+    const o=(EDL.overlays||[]).find(x=>x.id===ovSel); if(o) ovTargets=[o];
+  }
+  // If _lastPick was a clip AND a clip is selected, arrow keys pan the clip's framing (panX/panY)
+  // — same fractional coord system as overlay x/y, so the same step size feels natural.
+  const segSelected = sel>=0 && EDL.segments && EDL.segments[sel];
+  const preferSeg = (_lastPick==='seg') && segSelected;
+  if(!preferSeg && ovTargets.length){
+    e.preventDefault(); histSchedule();
+    ovTargets.forEach(o=>{ o.x=Math.max(-1,Math.min(2,(o.x!=null?o.x:0.5)+dx)); o.y=Math.max(-1,Math.min(2,(o.y!=null?o.y:0.5)+dy)); });
+    renderOverlays(playhead);
+    return;
+  }
+  if(segSelected){
+    e.preventDefault(); histSchedule();
+    const s=EDL.segments[sel];
+    // Only meaningful when zoomed in — panX/panY move the framing crop within the source frame.
+    s.panX=Math.max(0,Math.min(1,(s.panX!=null?s.panX:0.5)+dx));
+    s.panY=Math.max(0,Math.min(1,(s.panY!=null?s.panY:0.5)+dy));
+    // Don't touch s.anchor — same behavior as drag-to-pan on the stage
+    applyFraming(s);
+  }
+});
 // Delete / Backspace = remove selection: multi-selection first, else last-picked overlay/audio/segment.
 // Ignored while a text field / dropdown / contenteditable has focus so typing isn't hijacked.
 document.addEventListener('keydown', e=>{
