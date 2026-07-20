@@ -1472,10 +1472,12 @@ def apply_overlays(silent, overlays, W, H, tmp):
             # and subsequent larger frames get cropped (the "top of sticker chopped off" bug).
             if sc_factors:
                 combined = "*".join("(%s)" % x for x in sc_factors)
-                # Force EVEN output dimensions so the overlay's `w/2` center position lands on an
-                # integer pixel every frame (odd widths make w/2 = X.5 → rounded → visible 1px jitter).
-                # Lanczos interpolation gives smoother subpixel resampling than bicubic for animation.
-                filt.append("scale=w='2*round(iw*(%s)/2)':h='2*round(ih*(%s)/2)':eval=frame:flags=lanczos"
+                # Plain scale — let ffmpeg round to nearest integer per frame. Earlier attempt to
+                # force even-only dimensions (2*round(x/2)) INTRODUCED jitter: per-frame scale delta
+                # is <1px, so rounding to even meant some frames identical + next jumped 2px = visible
+                # pop. Plain round gives ~1px jumps averaged, which reads much smoother at 60fps.
+                # Lanczos interpolation still smooths the actual pixel content.
+                filt.append("scale=w='round(iw*(%s))':h='round(ih*(%s))':eval=frame:flags=lanczos"
                             % (combined, combined))
             # Blur anim: split into original + pre-blurred branches, alpha-modulate the blurred
             # branch by the pattern time-curve, then overlay them. gblur runs once at max sigma;
