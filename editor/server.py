@@ -1371,26 +1371,36 @@ def apply_overlays(silent, overlays, W, H, tmp):
             # rotation from distort still folds into the in-chain filter list.
             distort = next((a for a in (o.get("anims") or []) if a.get("type") == "distort"), None)
             distort_noise_png = None
+            distort_noise_png_b = None
+            distort_blend_speed = 0.0
+            distort_window = None
             if distort:
                 aS_d = s + max(0.0, float(distort.get("tStart", 0) or 0))
                 aEv_d = distort.get("tEnd"); aE_d = s + min(dur_o, float(aEv_d)) if (aEv_d is not None and float(aEv_d) > 0) else (s + dur_o)
                 if aE_d > aS_d:
                     amp_frac = float(distort.get("amp", 0.025))
                     freq = float(distort.get("freq", 2.5))
+                    dspd = float(distort.get("speed", 1.2))
                     octaves = max(1, min(4, int(round(float(distort.get("octaves", 2))))))
                     # Fixed seed per overlay id — same noise pattern across renders of the same project.
                     seed = abs(hash(o.get("id", "d") + str(freq) + str(octaves))) & 0xffff
-                    # Noise map at moderate resolution (256×256). ffmpeg scale2ref stretches it to
-                    # overlay dims. Displace reads pixel values as offsets IN THE SCALED IMAGE'S
-                    # coord space — so amp_px must be in CANVAS pixel units, NOT noise-map pixels.
-                    # Halved to match SVG feDisplacementMap semantics (scale ⇒ max displacement scale/2).
+                    # Noise maps at moderate resolution (256×256). Two seeds, cross-blended over time
+                    # via ffmpeg blend filter — matches the client SVG's feComposite k2/k3 oscillation
+                    # so the warp FLOWS instead of being frozen for the whole clip. amp_px is in
+                    # canvas pixel units (halved for SVG feDisplacementMap parity).
                     map_size = 256
                     amp_px = amp_frac * W * 0.5
                     try:
-                        distort_noise_png = os.path.join(tmp, f"dnoise_{k}.png")
+                        distort_noise_png = os.path.join(tmp, f"dnoise_{k}_a.png")
                         gen_distort_noise_map(map_size, map_size, amp_px, freq, octaves, seed, distort_noise_png)
+                        distort_noise_png_b = os.path.join(tmp, f"dnoise_{k}_b.png")
+                        gen_distort_noise_map(map_size, map_size, amp_px, freq, octaves, seed ^ 0xA5A5, distort_noise_png_b)
                     except Exception:
                         distort_noise_png = None
+                        distort_noise_png_b = None
+                    # Blend cycle period matches the client's cross-fade: same 'speed' param.
+                    distort_blend_speed = dspd * 0.5
+                    distort_window = (aS_d, aE_d)
                     hspd = float(distort.get("hue", 0.35))
                     if hspd > 0:
                         hexpr = "if(between(t,%g,%g),%g*(t-%g),0)" % (aS_d, aE_d, hspd * 360.0, aS_d)
@@ -1485,21 +1495,31 @@ def apply_overlays(silent, overlays, W, H, tmp):
             # Emit filter graph. Distort applies displace (needs a noise-map input); blur applies
             # split+gblur+overlay. Both are graph stages, not chain filters. Chain: filt → distort? → blur? → [oi{k}]
             noise_ii = None
-            if distort_noise_png:
+            noise_ii_b = None
+            if distort_noise_png and distort_noise_png_b:
                 inputs += ["-loop", "1", "-i", distort_noise_png]
-                noise_ii = ii + 1                                                 # slot for the noise map
+                inputs += ["-loop", "1", "-i", distort_noise_png_b]
+                noise_ii = ii + 1
+                noise_ii_b = ii + 2
             # Stage 1: run the base filter chain, output an intermediate label
             stage_in = f"[{ii}:v]"
             stage_out = f"[oi_a{k}]"
             fc.append(stage_in + ",".join(filt) + stage_out)
             cur = f"oi_a{k}"
-            # Stage 2 (optional): distort via displace filter with the pre-baked noise map
+            # Stage 2 (optional): distort via displace filter — cross-blend two noise maps over time
+            # so the warp FLOWS (matches the client SVG's feComposite k2/k3 oscillation). Without
+            # this the render's warp is frozen for the whole clip while the preview animates.
             if noise_ii is not None:
-                # scale2ref stretches the noise map to the overlay's dimensions so displace can pair them.
-                # extractplanes pulls out R and G as separate grayscale streams — displace reads R
-                # from each, so xmap gets original R (X offset) and ymap gets original G (Y offset).
-                fc.append(f"[{noise_ii}:v][{cur}]scale2ref[dnraw{k}][{cur}b]")
-                fc.append(f"[dnraw{k}]format=rgba,extractplanes=r+g[dnx{k}][dny{k}]")
+                bsp, (bS, bE) = distort_blend_speed, distort_window
+                # blend expression: A * (0.5 + 0.5*sin(2π*bsp*(t-bS))) + B * (0.5 - 0.5*sin(...))
+                # Gated to the anim window; outside it, k=0.5 (half-blend, harmless static).
+                w_arg = "if(between(T,%g,%g),T-%g,0)" % (bS, bE, bS)
+                blend_expr = ("A*(0.5+0.5*sin(2*PI*%g*(%s)))+B*(0.5-0.5*sin(2*PI*%g*(%s)))"
+                              % (bsp, w_arg, bsp, w_arg))
+                # Blend two static noise maps → animated noise map, then scale2ref to overlay dims, then displace.
+                fc.append(f"[{noise_ii}:v][{noise_ii_b}:v]blend=all_expr='{blend_expr}',format=rgba[dnblend{k}]")
+                fc.append(f"[dnblend{k}][{cur}]scale2ref[dnraw{k}][{cur}b]")
+                fc.append(f"[dnraw{k}]format=gbrp,extractplanes=r+g[dnx{k}][dny{k}]")
                 fc.append(f"[{cur}b][dnx{k}][dny{k}]displace=edge=smear[oi_b{k}]")
                 cur = f"oi_b{k}"
             # Stage 3 (optional): blur via split + gblur + alpha-modulated overlay
@@ -1515,7 +1535,8 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 fc.append(f"[{cur}]null[oi{k}]")
             fc.append(f"[{last}][oi{k}]overlay=x='W*{ox}-w/2+({odx})':y='H*{oy}-h/2+({ody})':{en}[v{k}]")
             last = f"v{k}"
-            ii = (noise_ii + 1) if noise_ii is not None else (ii + 1)
+            # Advance ii past the main overlay AND both noise inputs (if any).
+            ii = (noise_ii_b + 1) if noise_ii_b is not None else (ii + 1)
         # sparkle: composite twinkling copies of an emoji (or image) around the overlay center.
         # Iterate ALL sparkle anims (not just the first) so stacked sparkles all render.
         # The emoji can be a single glyph OR a decorative composite string ("˗ˏˋ ✸ ˎˊ˗", "✶⋆.˚").
