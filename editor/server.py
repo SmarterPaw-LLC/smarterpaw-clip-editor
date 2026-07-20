@@ -1002,8 +1002,8 @@ def prerender_piececlip(o, W, H, tmp, k):
     anims = o.get("anims") or []
     n = len(pieces)
     # transparent base (alpha 0) + one shared piece input split n ways (decode once, not n times)
-    inputs = ["-f", "lavfi", "-i", "nullsrc=s=%dx%d:r=30:d=%g,format=rgba,colorchannelmixer=aa=0" % (W, H, dur)]
-    inputs += ["-loop", "1", "-t", str(dur), "-i", p]
+    inputs = ["-f", "lavfi", "-i", "nullsrc=s=%dx%d:r=60:d=%g,format=rgba,colorchannelmixer=aa=0" % (W, H, dur)]
+    inputs += ["-framerate", "60", "-loop", "1", "-t", str(dur), "-i", p]
     fc = ["[0:v]format=rgba[base0]"]
     last = "base0"
     if n > 1:
@@ -1351,7 +1351,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
             if anim_img:
                 inputs += ["-stream_loop", "-1", "-t", str(e), "-i", p]   # play+loop the animation over the timeline
             else:
-                inputs += ["-loop", "1", "-t", str(e), "-i", p]
+                inputs += ["-framerate", "60", "-loop", "1", "-t", str(e), "-i", p]
             filt = []
             if scale_w:
                 filt.append(f"scale={scale_w}:-1")
@@ -1479,6 +1479,11 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 # Lanczos interpolation still smooths the actual pixel content.
                 filt.append("scale=w='round(iw*(%s))':h='round(ih*(%s))':eval=frame:flags=lanczos"
                             % (combined, combined))
+                # Force 60fps AFTER scale so the eval=frame expression is evaluated 60x/sec even if
+                # the image input was decoded at a lower rate. Without this, ffmpeg samples the
+                # still-image loop at its input rate (25fps default), then the encoder duplicates
+                # frames to 60fps — producing exactly the 2:1 alternation pattern users see as jitter.
+                filt.append("fps=60")
             # Blur anim: split into original + pre-blurred branches, alpha-modulate the blurred
             # branch by the pattern time-curve, then overlay them. gblur runs once at max sigma;
             # per-frame alpha lerps between the two branches for pulse/in/out patterns.
@@ -1739,7 +1744,7 @@ def render(edl, out_dir=None, out_name=None, progress=None):
                 d = max(0.05, float(seg.get("dur", 0.1)))
                 gp = os.path.join(tmp, f"blk_{idx:02d}.mp4")
                 r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi",
-                         "-i", f"color=c=black:s={W}x{H}:r=30:d={d}", "-vf", "format=yuv420p"] + ENC + [gp])
+                         "-i", f"color=c=black:s={W}x{H}:r=60:d={d}", "-vf", "format=yuv420p"] + ENC + [gp])
                 if r.returncode != 0:
                     return {"ok": False, "log": f"black {idx} failed:\n{r.stderr[-1500:]}"}
                 lines.append("file '" + gp.replace("\\", "/") + "'")
