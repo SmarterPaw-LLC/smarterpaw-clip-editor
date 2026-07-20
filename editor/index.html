@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.73.3</span>
+  <span class="ver" id="appVer">v1.74.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1686,11 +1686,12 @@ const ANIM_DEFS={
   // Actually displaces pixels (wavy, rippling), not just moves the whole layer around.
   // Optional hue cycle folds in trippy color rotation without needing a separate cycleHue anim.
   distort: {label:'Distort (psychedelic)', png:true,
-    def:{amp:0.025,freq:2.5,speed:1.2,octaves:2,hue:0.35},
+    def:{amp:0.025,freq:2.5,speed:1.2,octaves:2,smooth:0.3,hue:0.35},
     ctrls:[['amp','Warp amount','range',0,0.08,0.005],
            ['freq','Wave density','range',0.5,8,0.5],
            ['speed','Warp speed','range',0.1,4,0.1],
            ['octaves','Waviness detail','range',1,4,1],
+           ['smooth','Smoothness','range',0,1,0.05],
            ['hue','Hue cycle (rev/s)','range',0,2,0.05]]},
   // Blur animation. `amount` = max blur radius (fraction of W). `pattern` shapes it over time:
   //   uniform  — constant blur
@@ -2118,7 +2119,7 @@ function _distortSeeds(oid){
   for(let i=0;i<oid.length;i++){ a=(a*31+oid.charCodeAt(i))|0; b=(b*37+oid.charCodeAt(i))|0; }
   return [Math.abs(a)%9999+1, Math.abs(b)%9999+1];
 }
-function _distortFilterUpdate(oid, ampPx, baseFreq, blendK, octaves){
+function _distortFilterUpdate(oid, ampPx, baseFreq, blendK, octaves, smoothPx){
   const defs = _distortHost();
   let filt = document.getElementById('dist-'+oid);
   const [s1, s2] = _distortSeeds(oid);
@@ -2138,21 +2139,24 @@ function _distortFilterUpdate(oid, ampPx, baseFreq, blendK, octaves){
     mix.setAttribute('in','n1'); mix.setAttribute('in2','n2');
     mix.setAttribute('operator','arithmetic'); mix.setAttribute('k1','0'); mix.setAttribute('k4','0');
     mix.setAttribute('result','noise');
+    // Gaussian blur on the noise map softens sharp displacement transitions — the "smoothness" control.
+    const smooth = document.createElementNS(_NS_SVG, 'feGaussianBlur');
+    smooth.setAttribute('in','noise'); smooth.setAttribute('result','smoothed');
     const disp = document.createElementNS(_NS_SVG, 'feDisplacementMap');
-    disp.setAttribute('in','SourceGraphic'); disp.setAttribute('in2','noise');
+    disp.setAttribute('in','SourceGraphic'); disp.setAttribute('in2','smoothed');
     disp.setAttribute('xChannelSelector','R'); disp.setAttribute('yChannelSelector','G');
-    filt.appendChild(t1); filt.appendChild(t2); filt.appendChild(mix); filt.appendChild(disp);
+    filt.appendChild(t1); filt.appendChild(t2); filt.appendChild(mix); filt.appendChild(smooth); filt.appendChild(disp);
     defs.appendChild(filt);
   }
-  const [t1, t2, mix, disp] = filt.children;
+  const [t1, t2, mix, smooth, disp] = filt.children;
   const bf = baseFreq.toFixed(5);
   t1.setAttribute('baseFrequency', bf);
   t2.setAttribute('baseFrequency', bf);
   t1.setAttribute('numOctaves', String(octaves));
   t2.setAttribute('numOctaves', String(octaves));
-  // k2 * n1 + k3 * n2 with k2+k3=1 → smooth mix
   mix.setAttribute('k2', blendK.toFixed(3));
   mix.setAttribute('k3', (1 - blendK).toFixed(3));
+  smooth.setAttribute('stdDeviation', Math.max(0, smoothPx).toFixed(2));
   disp.setAttribute('scale', ampPx.toFixed(2));
 }
 function _distortFilterRemove(oid){
@@ -2323,6 +2327,7 @@ function renderOverlays(time){
       const baseFreq = freqW / overlayW_px;
       const speed = (+_distortAn.speed||1.2);
       const octaves = Math.max(1, Math.min(4, Math.round(+_distortAn.octaves||2)));
+      const smooth  = Math.max(0, Math.min(1, +_distortAn.smooth!=null ? +_distortAn.smooth : 0.3));
       let Td = Math.max(0, time - o.start);
       if(_distortAn.gifFps && +_distortAn.gifFps>0) Td = Math.floor(Td * +_distortAn.gifFps) / +_distortAn.gifFps;
       // Smooth continuous animation: baseFrequency breathes AND blend k oscillates between the
@@ -2330,7 +2335,9 @@ function renderOverlays(time){
       const breathe = baseFreq * (1 + 0.20*Math.sin(2*Math.PI*speed*0.3*Td));
       const scale   = amp      * (1 + 0.15*Math.sin(2*Math.PI*speed*0.42*Td));
       const blendK  = 0.5 + 0.5*Math.sin(2*Math.PI*speed*0.5*Td);
-      _distortFilterUpdate(o.id, scale, breathe, blendK, octaves);
+      // smoothPx scales with overlay size so the softening feels the same at any resolution.
+      const smoothPx = smooth * overlayW_px * 0.04;
+      _distortFilterUpdate(o.id, scale, breathe, blendK, octaves, smoothPx);
       _distFilt = `url(#dist-${o.id})`;
     } else {
       _distortFilterRemove(o.id);
