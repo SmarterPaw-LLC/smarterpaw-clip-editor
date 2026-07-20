@@ -2395,11 +2395,36 @@ class Handler(BaseHTTPRequestHandler):
             shutil.copyfileobj(f, self.wfile)
 
 
+def _autoreload_watch():
+    """Watch server.py mtime; when it changes, re-exec the current process so the running
+    server picks up code edits without a manual restart. Fixes the recurring 'stale server'
+    trap where a code change wouldn't apply until the user closed and reopened the terminal."""
+    import sys, time
+    path = os.path.join(EDITOR, "server.py")
+    try:
+        orig = os.path.getmtime(path)
+    except Exception:
+        return
+    while True:
+        time.sleep(2)
+        try:
+            cur = os.path.getmtime(path)
+            if cur != orig:
+                print("[autoreload] server.py changed — restarting…", flush=True)
+                # os.execv replaces the current process with a fresh Python + fresh server.py.
+                # Works cross-platform (Windows execv keeps stdin/stdout attached to the terminal).
+                os.execv(sys.executable, [sys.executable, path])
+        except Exception:
+            pass
+
+
 def main():
     os.makedirs(EXPORTS, exist_ok=True)
     if not os.path.exists(EDL_PATH):
         save_edl(default_edl())
     seed_projects()
+    import threading
+    threading.Thread(target=_autoreload_watch, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
     print("SmarterClip editor running at http://127.0.0.1:8765/")
     srv.serve_forever()
