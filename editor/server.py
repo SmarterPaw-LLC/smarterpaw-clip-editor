@@ -1062,36 +1062,47 @@ CF_POLAROID = {"padL": 0.06, "padR": 0.06, "padT": 0.06, "padB": 0.22}
 
 
 def gen_distort_noise_map(w, h, amp_px, freq, octaves, seed, out_path):
-    """Fractal noise displacement PNG matching SVG feTurbulence character (independent R & G channels
-    for X and Y displacement, multi-octave value noise summed). Written as RGBA where R = X-offset,
-    G = Y-offset, both centered at 128 with ±amp_px range. Used by ffmpeg `displace` filter."""
+    """TILEABLE fractal noise displacement PNG. Uses sums of periodic cosines so the pattern wraps
+    seamlessly at the edges — required for flow/swirl motion, which scrolls the map with modulo
+    wraparound. Random noise (previous implementation) produced visible seams at the wrap boundary.
+    R = X-offset noise, G = Y-offset noise, both centered at 128 with ±amp_px range."""
     import numpy as np
     from PIL import Image
     rng = np.random.default_rng(seed)
-    field = np.zeros((h, w, 2), dtype=np.float64)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float64)
+    fx = xx / w                                       # normalized [0, 1)
+    fy = yy / h
+    # Two independent fields (R for X-displacement, G for Y). Each is a sum of random-phase
+    # cosine bumps at increasing spatial frequencies (octaves), each octave with 6 bumps to
+    # look organic without being obviously periodic within the tile.
+    field_r = np.zeros((h, w))
+    field_g = np.zeros((h, w))
     total_amp = 0.0
-    cell = max(4, int(min(w, h) / max(0.5, freq)))
     layer_amp = 1.0
-    for _ in range(max(1, int(octaves))):
-        gw = max(2, w // cell + 2)
-        gh = max(2, h // cell + 2)
-        # Independent random grids for X and Y displacement so the warp has 2D character.
-        grid_r = (rng.random((gh, gw)) * 255).astype(np.uint8)
-        grid_g = (rng.random((gh, gw)) * 255).astype(np.uint8)
-        # Bilinear upscale via PIL (cheap and smooth)
-        up_r = np.array(Image.fromarray(grid_r).resize((w, h), Image.BILINEAR)).astype(np.float64) / 255.0
-        up_g = np.array(Image.fromarray(grid_g).resize((w, h), Image.BILINEAR)).astype(np.float64) / 255.0
-        field[:, :, 0] += up_r * layer_amp
-        field[:, :, 1] += up_g * layer_amp
+    base_freq = max(0.5, float(freq))
+    for oct_i in range(max(1, int(octaves))):
+        f = base_freq * (2 ** oct_i)                  # doubles each octave
+        for _ in range(6):
+            # Integer frequencies + phases → guaranteed periodic on the unit tile.
+            kx = int(rng.integers(1, max(2, int(f)) + 1))
+            ky = int(rng.integers(1, max(2, int(f)) + 1))
+            px = rng.uniform(0, 2 * np.pi)
+            py = rng.uniform(0, 2 * np.pi)
+            field_r += layer_amp * np.cos(2 * np.pi * kx * fx + px) * np.cos(2 * np.pi * ky * fy + py)
+            px2 = rng.uniform(0, 2 * np.pi)
+            py2 = rng.uniform(0, 2 * np.pi)
+            field_g += layer_amp * np.cos(2 * np.pi * kx * fx + px2) * np.cos(2 * np.pi * ky * fy + py2)
         total_amp += layer_amp
         layer_amp *= 0.5
-        cell = max(2, cell // 2)
-    field = field / total_amp                        # normalize to [0, 1]
-    disp = 128.0 + amp_px * (2.0 * field - 1.0)      # center at 128, range ±amp_px
-    disp = np.clip(disp, 0, 255).astype(np.uint8)
+    # Normalize to roughly [-1, 1] then map to displacement pixel values
+    max_abs = max(np.abs(field_r).max(), np.abs(field_g).max(), 1e-6)
+    field_r /= max_abs
+    field_g /= max_abs
+    disp_r = 128.0 + amp_px * field_r
+    disp_g = 128.0 + amp_px * field_g
     rgba = np.zeros((h, w, 4), dtype=np.uint8)
-    rgba[:, :, 0] = disp[:, :, 0]                    # R = X displacement
-    rgba[:, :, 1] = disp[:, :, 1]                    # G = Y displacement
+    rgba[:, :, 0] = np.clip(disp_r, 0, 255).astype(np.uint8)
+    rgba[:, :, 1] = np.clip(disp_g, 0, 255).astype(np.uint8)
     rgba[:, :, 2] = 128
     rgba[:, :, 3] = 255
     Image.fromarray(rgba, "RGBA").save(out_path)
@@ -1538,23 +1549,25 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 # Motion overlay: scroll (flow), circular translate (swirl), or nothing (pulse).
                 # hstack the noise 2× wide/tall so the sliding window wraps seamlessly via `mod`.
                 if mot in ("flow", "swirl"):
-                    # Scroll speeds in map-pixel-per-second (tuned so speed=1 gives visible motion).
-                    sx = dspd_r * 30.0   # px per second in the map's pixel space
+                    # Scroll speeds in map-pixel-per-second. Noise is TILEABLE (generated via
+                    # periodic cosines) so scroll wraps cleanly via mod on hstack'd copies.
                     if mot == "flow":
+                        # Linear horizontal drift — pattern moves through the frame like a river.
+                        sx = dspd_r * 100.0                    # bumped: 30 was barely visible
                         fc.append(f"[{dn_cur}]split=2[fa{k}][fb{k}]")
                         fc.append(f"[fa{k}][fb{k}]hstack[fwide{k}]")
                         fc.append(f"[fwide{k}]crop=iw/2:ih:x='mod({sx:g}*t,iw/2)':y=0[fcrop{k}]")
                         dn_cur = f"fcrop{k}"
-                    else:  # swirl — circular translation in both X and Y
-                        R = dspd_r * 12.0
-                        # Duplicate to 2×2 tile grid so both x AND y can wrap
+                    else:  # swirl — circular translation in both X and Y (whirlpool feel)
+                        R = dspd_r * 60.0                      # circle radius in map px (was 12)
+                        ang_hz = dspd_r * 0.3                  # revolutions per second
                         fc.append(f"[{dn_cur}]split=2[sa{k}][sb{k}]")
                         fc.append(f"[sa{k}][sb{k}]hstack[shw{k}]")
                         fc.append(f"[shw{k}]split=2[st{k}][sbt{k}]")
                         fc.append(f"[st{k}][sbt{k}]vstack[sgrid{k}]")
                         fc.append(f"[sgrid{k}]crop=iw/2:ih/2:"
-                                  f"x='mod(iw/4+{R:g}*cos(2*PI*{dspd_r*0.2:g}*t)+{sx:g}*t,iw/2)':"
-                                  f"y='mod(ih/4+{R:g}*sin(2*PI*{dspd_r*0.2:g}*t),ih/2)'[scrop{k}]")
+                                  f"x='mod(iw/4+{R:g}*cos(2*PI*{ang_hz:g}*t),iw/2)':"
+                                  f"y='mod(ih/4+{R:g}*sin(2*PI*{ang_hz:g}*t),ih/2)'[scrop{k}]")
                         dn_cur = f"scrop{k}"
                 # Optional gblur for smoothness slider, then split R/G planes for displace.
                 if distort_smooth_sigma > 0.5:

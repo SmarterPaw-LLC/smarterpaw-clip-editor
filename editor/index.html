@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.76.0</span>
+  <span class="ver" id="appVer">v1.76.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2381,14 +2381,17 @@ function renderOverlays(time){
       const scale   = amp      * (1 + 0.15*Math.sin(2*Math.PI*speed*0.42*Td));
       // Pulse oscillates blendK for the two-seed shimmer; flow/swirl hold blendK steady so translation is the primary motion.
       const blendK  = (motion==='pulse') ? (0.5 + 0.5*Math.sin(2*Math.PI*speed*0.5*Td)) : 0.5;
-      const flowR = overlayW_px * 0.6;   // translation amplitude in element-px
+      // Linear translation for flow (was sinusoidal — that was just a slower seesaw).
+      // Because feTurbulence uses stitchTiles=stitch, feOffset can shift arbitrarily far and
+      // the noise pattern keeps looking continuous.
       let offX = 0, offY = 0;
       if(motion === 'flow'){
-        offX = flowR * Math.sin(2*Math.PI*speed*0.15*Td);
+        offX = overlayW_px * 0.4 * speed * Td;                 // continuous horizontal drift
       } else if(motion === 'swirl'){
-        const ang = 2*Math.PI*speed*0.2*Td;
-        offX = flowR * 0.5 * Math.cos(ang);
-        offY = flowR * 0.5 * Math.sin(ang);
+        const ang = 2*Math.PI*speed*0.25*Td;                   // circular translation = whirlpool
+        const R = overlayW_px * 0.35;
+        offX = R * Math.cos(ang);
+        offY = R * Math.sin(ang);
       }
       const smoothPx = smooth * overlayW_px * 0.15;
       _distortFilterUpdate(o.id, scale, breathe, blendK, octaves, smoothPx, offX, offY);
