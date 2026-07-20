@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.74.4</span>
+  <span class="ver" id="appVer">v1.74.5</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -4030,11 +4030,14 @@ document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) ret
     if(tag==='textarea'||tag==='select'||(tag==='input'&&(ty==='text'||ty==='number'||ty==='search'||ty===''))) return;
     e.preventDefault(); splitAtPlayhead(sel); return; }
 });
-document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) return;
+// Arrow-key nudge — installed on window in CAPTURE phase so it beats any element that would
+// otherwise consume arrows (sliders, focused controls, browser page-scroll). Skips only when
+// user is actually TYPING (text/textarea/select/contenteditable) so text editing still works.
+const _arrowNudgeHandler = e=>{ if(e.ctrlKey||e.metaKey||e.altKey) return;
   if(!(e.key==='ArrowLeft'||e.key==='ArrowRight'||e.key==='ArrowUp'||e.key==='ArrowDown')) return;
   const ae=document.activeElement, tag=(ae&&ae.tagName||'').toLowerCase(), ty=(ae&&ae.type||'').toLowerCase();
-  // Let native controls handle their own arrows: text/number/search/range/select all consume arrows for their own value editing.
-  if(tag==='textarea' || tag==='select' || (tag==='input' && (ty==='text'||ty==='number'||ty==='search'||ty==='email'||ty==='password'||ty==='range'||ty===''))) return;
+  if(tag==='textarea' || tag==='select' || (ae && ae.isContentEditable) ||
+     (tag==='input' && (ty==='text'||ty==='search'||ty==='email'||ty==='password'||ty===''))) return;
   const step=e.shiftKey?0.04:0.005;
   let dx=0,dy=0;
   if(e.key==='ArrowLeft')dx=-step; else if(e.key==='ArrowRight')dx=step; else if(e.key==='ArrowUp')dy=-step; else dy=step;
@@ -4062,7 +4065,10 @@ document.addEventListener('keydown', e=>{ if(e.ctrlKey||e.metaKey||e.altKey) ret
     // Don't touch s.anchor — same behavior as drag-to-pan on the stage
     applyFraming(s);
   }
-});
+};
+// Register in CAPTURE phase so we beat any focused element (range sliders, buttons, the
+// preview stage's scroll) that would otherwise swallow arrow keys before they bubble.
+window.addEventListener('keydown', _arrowNudgeHandler, true);
 // Delete / Backspace = remove selection: multi-selection first, else last-picked overlay/audio/segment.
 // Ignored while a text field / dropdown / contenteditable has focus so typing isn't hijacked.
 document.addEventListener('keydown', e=>{
