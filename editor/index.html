@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.76.3</span>
+  <span class="ver" id="appVer">v1.76.4</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2368,7 +2368,18 @@ function renderOverlays(time){
       const freqW = (_distortAn.freq!=null?+_distortAn.freq:2.5);       // waves-per-overlay (same unit as server)
       const baseFreq = freqW / overlayW_px;
       const speed = (+_distortAn.speed||1.2);
-      const octaves = Math.max(1, Math.min(4, Math.round(+_distortAn.octaves||2)));
+      // Effective octaves is capped by amp — otherwise adjacent pixels get displaced in opposite
+      // directions and the image tears. Same math as the server. User's setting still saved;
+      // only clipped for actual rendering.
+      const _userOct = Math.max(1, Math.min(4, Math.round(+_distortAn.octaves||2)));
+      const _canvasW = ((typeof CANVAS_PX!=='undefined' && EDL && EDL.settings) ? (CANVAS_PX[EDL.settings.canvas]||[1080,1920])[0] : 1080);
+      const _ampPxCanvas = (+_distortAn.amp||0.025) * _canvasW * 0.5;
+      let _maxOct = 1;
+      for(let n=1; n<=4; n++){
+        const featurePx = (_canvasW / Math.max(0.5, +_distortAn.freq||2.5)) / Math.pow(2, n-1);
+        if(featurePx >= 2.5 * Math.max(1, _ampPxCanvas)) _maxOct = n;
+      }
+      const octaves = Math.min(_userOct, _maxOct);
       const smooth  = Math.max(0, Math.min(1, (_distortAn.smooth != null) ? +_distortAn.smooth : 0.3));
       const motion  = _distortAn.motion || 'flow';
       let Td = Math.max(0, time - o.start);
