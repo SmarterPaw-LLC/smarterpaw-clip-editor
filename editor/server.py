@@ -1472,7 +1472,11 @@ def apply_overlays(silent, overlays, W, H, tmp):
             # and subsequent larger frames get cropped (the "top of sticker chopped off" bug).
             if sc_factors:
                 combined = "*".join("(%s)" % x for x in sc_factors)
-                filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame:flags=bicubic" % (combined, combined))
+                # Force EVEN output dimensions so the overlay's `w/2` center position lands on an
+                # integer pixel every frame (odd widths make w/2 = X.5 → rounded → visible 1px jitter).
+                # Lanczos interpolation gives smoother subpixel resampling than bicubic for animation.
+                filt.append("scale=w='2*round(iw*(%s)/2)':h='2*round(ih*(%s)/2)':eval=frame:flags=lanczos"
+                            % (combined, combined))
             # Blur anim: split into original + pre-blurred branches, alpha-modulate the blurred
             # branch by the pattern time-curve, then overlay them. gblur runs once at max sigma;
             # per-frame alpha lerps between the two branches for pulse/in/out patterns.
@@ -1584,7 +1588,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
         fh.write(";\n".join(fc))
     cmd = ([FFMPEG, "-y", "-loglevel", "error"] + inputs + ["-filter_complex_script", fc_path, "-map", f"[{last}]"]
            + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p",
-              "-r", "30", "-video_track_timescale", "90000", "-an", out])
+              "-r", "60", "-video_track_timescale", "90000", "-an", out])   # 60fps output → smoother scale-pulse / distort animations
     r = run(cmd)
     if r.returncode != 0:
         return None, r.stderr[-1500:]
