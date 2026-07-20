@@ -1062,42 +1062,42 @@ CF_POLAROID = {"padL": 0.06, "padR": 0.06, "padT": 0.06, "padB": 0.22}
 
 
 def gen_distort_noise_map(w, h, amp_px, freq, octaves, seed, out_path):
-    """TILEABLE fractal noise displacement PNG. Uses sums of periodic cosines so the pattern wraps
-    seamlessly at the edges — required for flow/swirl motion, which scrolls the map with modulo
-    wraparound. Random noise (previous implementation) produced visible seams at the wrap boundary.
-    R = X-offset noise, G = Y-offset noise, both centered at 128 with ±amp_px range."""
+    """TILEABLE multi-octave value noise (random grid, bilinear upscaled). Tileability comes from
+    making each octave's random grid PERIODIC — the last row/column duplicates the first — so any
+    horizontal or vertical scroll wraps without a seam. Keeps the sharp, organic character of true
+    random noise (cosine-sum noise was too soft to show visible motion when scrolled)."""
     import numpy as np
     from PIL import Image
     rng = np.random.default_rng(seed)
-    yy, xx = np.mgrid[0:h, 0:w].astype(np.float64)
-    fx = xx / w                                       # normalized [0, 1)
-    fy = yy / h
-    # Two independent fields (R for X-displacement, G for Y). Each is a sum of random-phase
-    # cosine bumps at increasing spatial frequencies (octaves), each octave with 6 bumps to
-    # look organic without being obviously periodic within the tile.
+    def _octave_tileable(gw, gh, w, h):
+        """gw×gh random grid, made periodic (edges match), bilinear-upscaled to w×h. Returns
+        an array in [0, 1]. Because the grid is periodic, the upscaled result is tileable."""
+        # +1 in each dim so the last row/col equals the first (periodic wrap)
+        base = rng.random((gh + 1, gw + 1))
+        base[-1, :] = base[0, :]
+        base[:, -1] = base[:, 0]
+        # Upscale via PIL bilinear (crop off the extra row/col that closed the loop)
+        img = Image.fromarray((base * 255).astype(np.uint8)).resize((w + w // gw, h + h // gh), Image.BILINEAR)
+        arr = np.array(img)[:h, :w].astype(np.float64) / 255.0
+        return arr
+    n_oct = max(1, int(octaves))
     field_r = np.zeros((h, w))
     field_g = np.zeros((h, w))
     total_amp = 0.0
     layer_amp = 1.0
-    base_freq = max(0.5, float(freq))
-    for oct_i in range(max(1, int(octaves))):
-        f = base_freq * (2 ** oct_i)                  # doubles each octave
-        for _ in range(6):
-            # Integer frequencies + phases → guaranteed periodic on the unit tile.
-            kx = int(rng.integers(1, max(2, int(f)) + 1))
-            ky = int(rng.integers(1, max(2, int(f)) + 1))
-            px = rng.uniform(0, 2 * np.pi)
-            py = rng.uniform(0, 2 * np.pi)
-            field_r += layer_amp * np.cos(2 * np.pi * kx * fx + px) * np.cos(2 * np.pi * ky * fy + py)
-            px2 = rng.uniform(0, 2 * np.pi)
-            py2 = rng.uniform(0, 2 * np.pi)
-            field_g += layer_amp * np.cos(2 * np.pi * kx * fx + px2) * np.cos(2 * np.pi * ky * fy + py2)
+    base_cells = max(2, int(round(max(0.5, float(freq)))))   # freq = cells across the tile at octave 0
+    for oct_i in range(n_oct):
+        cells = base_cells * (2 ** oct_i)
+        field_r += layer_amp * (_octave_tileable(cells, cells, w, h) - 0.5)
+        field_g += layer_amp * (_octave_tileable(cells, cells, w, h) - 0.5)
         total_amp += layer_amp
         layer_amp *= 0.5
-    # Normalize to roughly [-1, 1] then map to displacement pixel values
-    max_abs = max(np.abs(field_r).max(), np.abs(field_g).max(), 1e-6)
-    field_r /= max_abs
-    field_g /= max_abs
+    field_r /= total_amp                              # normalize to roughly [-0.5, 0.5]
+    field_g /= total_amp
+    # Scale so max magnitude ≈ 1, then apply amp_px
+    scale = max(np.abs(field_r).max(), np.abs(field_g).max(), 1e-6)
+    field_r /= scale
+    field_g /= scale
     disp_r = 128.0 + amp_px * field_r
     disp_g = 128.0 + amp_px * field_g
     rgba = np.zeros((h, w, 4), dtype=np.uint8)
@@ -1417,8 +1417,11 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     distort_window = (aS_d, aE_d)
                     distort_motion = motion
                     distort_speed_raw = dspd
-                    # gblur sigma on the SCALED noise map (canvas coords). Matches client's smoothPx.
-                    distort_smooth_sigma = smooth * W * 0.15
+                    # gblur sigma on the SCALED noise map (canvas coords). Coefficient dropped
+                    # 0.15 → 0.02 — at smooth=1 the old value gave sigma≈160 which Gaussian-blurred
+                    # the noise into uniform gray = ZERO visible warp. New max (sigma≈22 on 1080)
+                    # softens edges without erasing the noise features that drive the displacement.
+                    distort_smooth_sigma = smooth * W * 0.02
                     hspd = float(distort.get("hue", 0.35))
                     if hspd > 0:
                         hexpr = "if(between(t,%g,%g),%g*(t-%g),0)" % (aS_d, aE_d, hspd * 360.0, aS_d)
@@ -1552,15 +1555,16 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     # Scroll speeds in map-pixel-per-second. Noise is TILEABLE (generated via
                     # periodic cosines) so scroll wraps cleanly via mod on hstack'd copies.
                     if mot == "flow":
-                        # Linear horizontal drift — pattern moves through the frame like a river.
-                        sx = dspd_r * 100.0                    # bumped: 30 was barely visible
+                        # Linear horizontal drift. Speed = map-width crossings per second × dspd_r.
+                        # 0.5 × dspd_r means at dspd=1 we cross the map once every 2s = strong motion.
+                        sx = dspd_r * 0.5 * 256.0              # px/sec on the 256-px map (~128 px/s @ speed=1)
                         fc.append(f"[{dn_cur}]split=2[fa{k}][fb{k}]")
                         fc.append(f"[fa{k}][fb{k}]hstack[fwide{k}]")
                         fc.append(f"[fwide{k}]crop=iw/2:ih:x='mod({sx:g}*t,iw/2)':y=0[fcrop{k}]")
                         dn_cur = f"fcrop{k}"
                     else:  # swirl — circular translation in both X and Y (whirlpool feel)
-                        R = dspd_r * 60.0                      # circle radius in map px (was 12)
-                        ang_hz = dspd_r * 0.3                  # revolutions per second
+                        R = 256.0 * 0.25                       # circle radius = 1/4 of the map width
+                        ang_hz = dspd_r * 0.5                  # revolutions per second (0.5 @ speed=1 = 2s/rev)
                         fc.append(f"[{dn_cur}]split=2[sa{k}][sb{k}]")
                         fc.append(f"[sa{k}][sb{k}]hstack[shw{k}]")
                         fc.append(f"[shw{k}]split=2[st{k}][sbt{k}]")
