@@ -1367,21 +1367,16 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 _srot_pre = float(o.get("rot", 0) or 0)
                 _has_scale_anim = any(a.get("type") in ("scaleBeat","scaleUp","scaleDown","popIn","bubbleUp")
                                       for a in (o.get("anims") or []))
-                # Track the reference dimensions the anim-scale filter will operate on. Used
-                # later to compute a constant peak-canvas size for pad-to-lock-overlay-position.
-                _pre_scale_ref_w = _pre_scale_ref_h = None
-                if not anim_img and _has_scale_anim:
+                if not anim_img and _has_scale_anim and abs(_srot_pre) > 1e-6:
                     from PIL import Image as _RI
                     _im = _RI.open(p).convert("RGBA")
                     if scale_w:
                         _th = max(1, int(_im.height * scale_w / _im.width))
                         _im = _im.resize((scale_w, _th), _RI.LANCZOS)
                         scale_w = None    # baked at target size already
-                    if abs(_srot_pre) > 1e-6:
-                        _im = _im.rotate(-_srot_pre, resample=_RI.BICUBIC, expand=True)
-                        o = dict(o); o["rot"] = 0
-                    _pre_scale_ref_w, _pre_scale_ref_h = _im.size
-                    p = os.path.join(tmp, f"img_prescale_{k}.png"); _im.save(p)
+                    _im = _im.rotate(-_srot_pre, resample=_RI.BICUBIC, expand=True)
+                    p = os.path.join(tmp, f"img_prerot_{k}.png"); _im.save(p)
+                    o = dict(o); o["rot"] = 0   # local copy so orot/rot_terms downstream skip the ffmpeg rotate
             dur_o = float(o.get("dur", 3))
             odx, ody, _, _, orot = _anim_exprs(o, s, dur_o, W, "t", H=H)     # position + rotation (overlay time = t)
             _, _, amT, has_op, _ = _anim_exprs(o, s, dur_o, W, "T", H=H)     # opacity (geq pixel time = T)
@@ -1510,28 +1505,6 @@ def apply_overlays(silent, overlays, W, H, tmp):
             if sc_factors:
                 combined = "*".join("(%s)" % x for x in sc_factors)
                 filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame:flags=bicubic" % (combined, combined))
-                # POSITION-JITTER FIX (v1.78.9): after the animated scale, pad the output to a
-                # CONSTANT peak-sized canvas. Preview vs render frame-by-frame showed the render
-                # visibly slid bottles side-to-side because ffmpeg's overlay filter uses
-                # `x='W*ox-w/2'` and `w` (overlay width) changed ±1px per frame as scale rounded
-                # up/down. Preview uses CSS transform which doesn't shift layout. Fixed canvas
-                # → constant w → stable position. Content centering (ow-iw)/2 shifts subpixel
-                # inside the canvas via eval=frame but that reads much smoother than 1px pops.
-                # Only applies when we have the reference pre-scale dims from PIL.
-                if _pre_scale_ref_w is not None:
-                    peak_sc = 1.0
-                    for a in (o.get("anims") or []):
-                        ty = a.get("type")
-                        if ty == "scaleBeat":  peak_sc *= (1.0 + abs(float(a.get("amp", 0.15))))
-                        elif ty == "popIn":    peak_sc *= 1.15
-                        elif ty == "bubbleUp": peak_sc *= 1.15
-                    pad_w = int(round(_pre_scale_ref_w * peak_sc * 1.04))
-                    pad_h = int(round(_pre_scale_ref_h * peak_sc * 1.04))
-                    pad_w += pad_w % 2   # h264 friendliness
-                    pad_h += pad_h % 2
-                    filt.append(f"pad=w={pad_w}:h={pad_h}:"
-                                f"x='({pad_w}-iw)/2':y='({pad_h}-ih)/2':"
-                                f"color=black@0:eval=frame")
             # Blur anim: split into original + pre-blurred branches, alpha-modulate the blurred
             # branch by the pattern time-curve, then overlay them. gblur runs once at max sigma;
             # per-frame alpha lerps between the two branches for pulse/in/out patterns.
