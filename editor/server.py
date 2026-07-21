@@ -1358,25 +1358,6 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     p = os.path.join(tmp, f"img_{k}.png"); im.save(p); scale_w = None
                 else:
                     scale_w = max(1, int(W * float(o.get("scale", 0.3))))
-                # Pre-bake STATIC rotation into the PNG when the overlay has a per-frame scale
-                # animation. Without this, the ffmpeg chain runs `rotate → scale=eval=frame`,
-                # and the scale filter re-samples the ROTATED diagonal edges every frame at
-                # slightly different pixel positions → visible edge shimmer that reads as jitter.
-                # Baking rotation in PIL once (with expand=True) leaves ffmpeg only doing the
-                # scale on axis-aligned content — no diagonal re-sampling per frame.
-                _srot_pre = float(o.get("rot", 0) or 0)
-                _has_scale_anim = any(a.get("type") in ("scaleBeat","scaleUp","scaleDown","popIn","bubbleUp")
-                                      for a in (o.get("anims") or []))
-                if not anim_img and _has_scale_anim and abs(_srot_pre) > 1e-6:
-                    from PIL import Image as _RI
-                    _im = _RI.open(p).convert("RGBA")
-                    if scale_w:
-                        _th = max(1, int(_im.height * scale_w / _im.width))
-                        _im = _im.resize((scale_w, _th), _RI.LANCZOS)
-                        scale_w = None    # baked at target size already
-                    _im = _im.rotate(-_srot_pre, resample=_RI.BICUBIC, expand=True)
-                    p = os.path.join(tmp, f"img_prerot_{k}.png"); _im.save(p)
-                    o = dict(o); o["rot"] = 0   # local copy so orot/rot_terms downstream skip the ffmpeg rotate
             dur_o = float(o.get("dur", 3))
             odx, ody, _, _, orot = _anim_exprs(o, s, dur_o, W, "t", H=H)     # position + rotation (overlay time = t)
             _, _, amT, has_op, _ = _anim_exprs(o, s, dur_o, W, "T", H=H)     # opacity (geq pixel time = T)
