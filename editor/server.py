@@ -1378,15 +1378,14 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 sp = float(a.get("speed", 0.5)); off = float(a.get("offset", 0))
                 expr = "if(between(t,%g,%g),%g+%g*(t-%g),0)" % (aS, aE, off, sp * 360.0, aS)
                 filt.append("hue=h='%s'" % expr)
-            # Distort (psychedelic warp) — pre-bake a fractal noise displacement PNG (same character
-            # as the client's SVG feTurbulence) and apply via ffmpeg `displace` filter. Emitted as
-            # a graph OUTSIDE the filt chain (see below where the fc entry is built). Only the hue
-            # rotation from distort still folds into the in-chain filter list.
+            # Distort (psychedelic warp) — continuous rotating traveling-wave warp. A low-res (256×256)
+            # displacement map is generated per frame by ffmpeg `geq` with pure sinusoidal traveling
+            # wave expressions (phase advances linearly with T so wave crests FLOW instead of
+            # oscillating in place — no more seesaw). The map's coordinate frame rotates slowly over
+            # time for kaleidoscopic swirl. scale2ref upsamples to sprite dims via bicubic (smooth),
+            # then feeds `displace`. No PNG I/O, no cross-blend, no tearing.
             distort = next((a for a in (o.get("anims") or []) if a.get("type") == "distort"), None)
-            distort_noise_png = None
-            distort_noise_png_b = None
-            distort_blend_speed = 0.0
-            distort_window = None
+            distort_geq = None    # (r_expr, g_expr, dur_o) — emitted below in the filter graph
             if distort:
                 aS_d = s + max(0.0, float(distort.get("tStart", 0) or 0))
                 aEv_d = distort.get("tEnd"); aE_d = s + min(dur_o, float(aEv_d)) if (aEv_d is not None and float(aEv_d) > 0) else (s + dur_o)
@@ -1394,30 +1393,51 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     amp_frac = float(distort.get("amp", 0.025))
                     freq = float(distort.get("freq", 2.5))
                     dspd = float(distort.get("speed", 1.2))
-                    octaves = max(1, min(4, int(round(float(distort.get("octaves", 2))))))
+                    # octaves/smooth kept for back-compat with older projects; smooth reduces the
+                    # secondary harmonic amplitude (higher smooth = smoother, less detailed warp).
                     smooth = max(0.0, min(1.0, float(distort.get("smooth", 0.3))))
-                    # Fixed seed per overlay id — same noise pattern across renders of the same project.
-                    seed = abs(hash(o.get("id", "d") + str(freq) + str(octaves))) & 0xffff
-                    # Noise maps at moderate resolution (256×256). Two seeds, cross-blended over time
-                    # via ffmpeg blend filter — matches the client SVG's feComposite k2/k3 oscillation
-                    # so the warp FLOWS instead of being frozen for the whole clip. amp_px is in
-                    # canvas pixel units (halved for SVG feDisplacementMap parity).
-                    map_size = 256
-                    amp_px = amp_frac * W * 0.5
-                    try:
-                        distort_noise_png = os.path.join(tmp, f"dnoise_{k}_a.png")
-                        gen_distort_noise_map(map_size, map_size, amp_px, freq, octaves, seed, distort_noise_png)
-                        distort_noise_png_b = os.path.join(tmp, f"dnoise_{k}_b.png")
-                        gen_distort_noise_map(map_size, map_size, amp_px, freq, octaves, seed ^ 0xA5A5, distort_noise_png_b)
-                    except Exception:
-                        distort_noise_png = None
-                        distort_noise_png_b = None
-                    # Blend cycle period matches the client's cross-fade: same 'speed' param.
-                    distort_blend_speed = dspd * 0.5
-                    distort_window = (aS_d, aE_d)
-                    # gblur sigma on the SCALED noise map (canvas coords). Matches client's smoothPx.
-                    # Coefficient tuned so smooth=1 produces a clearly liquid warp, not a subtle one.
-                    distort_smooth_sigma = smooth * W * 0.15
+                    # amp_px is the peak pixel offset the displace filter will produce. ffmpeg's
+                    # displace map values are ±127 (u8 minus 128), so clamp there. Sum of sines is
+                    # normalized to max 1.0 so amp_px == real peak displacement.
+                    amp_px = min(120.0, max(0.0, amp_frac * W))
+                    # tS_local / tE_local: local time within the sprite pipeline (color source's T)
+                    tS_local = max(0.0, aS_d - s)
+                    tE_local = min(dur_o, aE_d - s)
+                    # Wave parameters.
+                    #   ROT_SPD: how fast the whole displacement field rotates (rad/sec). Slow.
+                    #   PH_SPD:  wave phase advance (2*PI*speed) — traveling wave rate.
+                    #   base_amp / sec_amp: primary and secondary harmonic weights (sum = 1.0).
+                    rot_spd = 0.30
+                    ph_spd = 2.0 * math.pi * dspd
+                    sec_amp = 0.35 * (1.0 - smooth)
+                    base_amp = 1.0 - sec_amp
+                    # geq expression. st(0..5) cache subexpressions across R/G evals for speed.
+                    # Coordinate normalization: u=(X/W-0.5), v=(Y/H-0.5), both in [-0.5, 0.5].
+                    # Rotate by theta = rot_spd*(T-tS) so the whole field slowly swirls.
+                    # Phase = ph_spd*(T-tS) → traveling waves that never reverse direction.
+                    def _dexpr(main_axis, phase_mul):
+                        # main_axis: 'u' (ld(3)) drives sin(freq*u+phase); 'v' (ld(4)) drives sin(freq*v+phase)
+                        ax_main = "ld(3)" if main_axis == "u" else "ld(4)"
+                        ax_sec  = "ld(4)" if main_axis == "u" else "ld(3)"
+                        return (
+                            "st(0,X/W-0.5);"
+                            "st(1,Y/H-0.5);"
+                            "st(2,%g*(T-%g));"
+                            "st(3,cos(ld(2))*ld(0)+sin(ld(2))*ld(1));"
+                            "st(4,-sin(ld(2))*ld(0)+cos(ld(2))*ld(1));"
+                            "st(5,%g*(T-%g));"
+                            "128+if(between(T,%g,%g),%g*(%g*sin(2*PI*%g*%s+ld(5)*%g)+%g*sin(4*PI*%g*%s+ld(5)*%g)),0)"
+                        ) % (
+                            rot_spd, tS_local,
+                            ph_spd, tS_local,
+                            tS_local, tE_local,
+                            amp_px,
+                            base_amp, freq, ax_main, 1.0,
+                            sec_amp, freq, ax_sec,  0.73,
+                        )
+                    r_expr = _dexpr("u", 1.0)          # X displacement: main wave along rotated-u
+                    g_expr = _dexpr("v", 1.1)          # Y displacement: main wave along rotated-v, slightly faster phase
+                    distort_geq = (r_expr, g_expr, dur_o)
                     hspd = float(distort.get("hue", 0.35))
                     if hspd > 0:
                         hexpr = "if(between(t,%g,%g),%g*(t-%g),0)" % (aS_d, aE_d, hspd * 360.0, aS_d)
@@ -1509,38 +1529,33 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     else:                 k_curve = "(0.5+0.5*sin(2*PI*%g*%s))" % (bspd, lt)
                     kExpr = "if(between(T,%g,%g),%s,0)" % (b_aS, b_aE, k_curve)
                     blur_expr = (maxR, kExpr)
-            # Emit filter graph. Distort applies displace (needs a noise-map input); blur applies
-            # split+gblur+overlay. Both are graph stages, not chain filters. Chain: filt → distort? → blur? → [oi{k}]
-            noise_ii = None
-            noise_ii_b = None
-            if distort_noise_png and distort_noise_png_b:
-                inputs += ["-loop", "1", "-i", distort_noise_png]
-                inputs += ["-loop", "1", "-i", distort_noise_png_b]
-                noise_ii = ii + 1
-                noise_ii_b = ii + 2
+            # Emit filter graph. Distort synthesizes a low-res displacement map with `color` +
+            # `geq` (traveling sine waves, per-frame rotation) → scale2ref upsamples to sprite dims
+            # → displace. Blur applies split+gblur+overlay. All graph stages, not chain filters.
+            # Chain: filt → distort? → blur? → [oi{k}]
+            # Distort requires stable per-frame sampling of the sprite so the color+geq map advances
+            # 1:1 with it. `-loop 1 -i image.png` defaults to 25fps which mismatches the 30fps output
+            # and causes displace to see duplicate frames (~every 6th frame = 0-diff). fps=30 aligns.
+            if distort_geq is not None:
+                filt.append("fps=30")
             # Stage 1: run the base filter chain, output an intermediate label
             stage_in = f"[{ii}:v]"
             stage_out = f"[oi_a{k}]"
             fc.append(stage_in + ",".join(filt) + stage_out)
             cur = f"oi_a{k}"
-            # Stage 2 (optional): distort via displace filter — cross-blend two noise maps over time
-            # so the warp FLOWS (matches the client SVG's feComposite k2/k3 oscillation). Without
-            # this the render's warp is frozen for the whole clip while the preview animates.
-            if noise_ii is not None:
-                bsp, (bS, bE) = distort_blend_speed, distort_window
-                # blend expression: A * (0.5 + 0.5*sin(2π*bsp*(t-bS))) + B * (0.5 - 0.5*sin(...))
-                # Gated to the anim window; outside it, k=0.5 (half-blend, harmless static).
-                w_arg = "if(between(T,%g,%g),T-%g,0)" % (bS, bE, bS)
-                blend_expr = ("A*(0.5+0.5*sin(2*PI*%g*(%s)))+B*(0.5-0.5*sin(2*PI*%g*(%s)))"
-                              % (bsp, w_arg, bsp, w_arg))
-                # Blend two static noise maps → animated noise map, then scale2ref to overlay dims,
-                # optional gblur to soften sharp transitions (smoothness slider), then displace.
-                fc.append(f"[{noise_ii}:v][{noise_ii_b}:v]blend=all_expr='{blend_expr}',format=rgba[dnblend{k}]")
-                fc.append(f"[dnblend{k}][{cur}]scale2ref[dnraw{k}][{cur}b]")
-                if distort_smooth_sigma > 0.5:
-                    fc.append(f"[dnraw{k}]gblur=sigma={distort_smooth_sigma:g},format=gbrp,extractplanes=r+g[dnx{k}][dny{k}]")
-                else:
-                    fc.append(f"[dnraw{k}]format=gbrp,extractplanes=r+g[dnx{k}][dny{k}]")
+            # Stage 2 (optional): distort via displace filter. No external inputs; the map is
+            # generated inline by `color+geq`. Traveling-wave sine expressions produce continuous
+            # flow (never seesaws) with a slow rotation for kaleidoscopic swirl.
+            if distort_geq is not None:
+                r_expr, g_expr, d_dur = distort_geq
+                # Low-res displacement map (256×256), matched to sprite fps by the encoder later.
+                # scale2ref bicubic upsample smooths the wave field to sprite resolution.
+                # rate matches the output encoder's target (30fps) so displace consumes 1:1 with the
+                # sprite input — mismatched input rates cause periodic frame duplication in displace.
+                fc.append(f"color=size=256x256:rate=30:d={d_dur:g}:c=black[dcs{k}]")
+                fc.append(f"[dcs{k}]geq=r='{r_expr}':g='{g_expr}':b='128'[dmlo{k}]")
+                fc.append(f"[dmlo{k}][{cur}]scale2ref=flags=bicubic[dmup{k}][{cur}b]")
+                fc.append(f"[dmup{k}]format=gbrp,extractplanes=r+g[dnx{k}][dny{k}]")
                 fc.append(f"[{cur}b][dnx{k}][dny{k}]displace=edge=smear[oi_b{k}]")
                 cur = f"oi_b{k}"
             # Stage 3 (optional): blur via split + gblur + alpha-modulated overlay
@@ -1556,8 +1571,8 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 fc.append(f"[{cur}]null[oi{k}]")
             fc.append(f"[{last}][oi{k}]overlay=x='W*{ox}-w/2+({odx})':y='H*{oy}-h/2+({ody})':{en}[v{k}]")
             last = f"v{k}"
-            # Advance ii past the main overlay AND both noise inputs (if any).
-            ii = (noise_ii_b + 1) if noise_ii_b is not None else (ii + 1)
+            # Advance ii past the main overlay input (distort no longer adds extra inputs).
+            ii = ii + 1
         # sparkle: composite twinkling copies of an emoji (or image) around the overlay center.
         # Iterate ALL sparkle anims (not just the first) so stacked sparkles all render.
         # The emoji can be a single glyph OR a decorative composite string ("˗ˏˋ ✸ ˎˊ˗", "✶⋆.˚").

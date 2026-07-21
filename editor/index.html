@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.78.10</span>
+  <span class="ver" id="appVer">v1.79.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2116,9 +2116,11 @@ const ovEls={};   // reused DOM nodes per overlay id (so images don't reload eve
 const ovCfVids={}; // clipframe: dedicated <video> element per overlay id (separate from main timeline vids)
 const ovPieces={}; // per-piece sprinkle <img> nodes per overlay id
 // ---- distort: SVG feDisplacementMap filter per overlay id ----
-// Real pixel warp. Two feTurbulence layers with different fixed seeds are cross-faded via
-// feComposite k2/k3 to produce SMOOTH flowing noise instead of the jumpy seed-swap animation
-// the first cut used. baseFrequency also breathes continuously. numOctaves = waviness detail.
+// Continuous swirling warp. Single feTurbulence with stitchTiles="stitch" (tileable noise),
+// then feOffset with per-frame dx/dy driven by an orbiting circle + linear drift produces
+// TRUE continuous flow — the noise pattern sweeps around and never oscillates in place.
+// (Server render uses geq sine traveling waves; preview uses noise for cheap in-browser cost.
+// Both share the "continuous kaleidoscopic swirl" motion feel; per-pixel patterns differ.)
 const _NS_SVG='http://www.w3.org/2000/svg';
 function _distortHost(){
   let h = document.getElementById('_distortHost');
@@ -2132,49 +2134,47 @@ function _distortHost(){
   }
   return h.firstChild;   // <defs>
 }
-// Deterministic seed pair per overlay so noise looks stable across renders yet each overlay differs.
-function _distortSeeds(oid){
-  let a=0, b=0;
-  for(let i=0;i<oid.length;i++){ a=(a*31+oid.charCodeAt(i))|0; b=(b*37+oid.charCodeAt(i))|0; }
-  return [Math.abs(a)%9999+1, Math.abs(b)%9999+1];
+// Deterministic seed per overlay so noise looks stable across sessions yet each overlay differs.
+function _distortSeed(oid){
+  let a=0;
+  for(let i=0;i<oid.length;i++){ a=(a*31+oid.charCodeAt(i))|0; }
+  return Math.abs(a)%9999+1;
 }
-function _distortFilterUpdate(oid, ampPx, baseFreq, blendK, octaves, smoothPx){
+// Update the SVG filter for overlay `oid`. ampPx is the peak pixel displacement, baseFreq is
+// the feTurbulence baseFrequency, offX/offY are the per-frame noise translation (for continuous
+// flow), octaves = numOctaves (waviness detail), smoothPx = feGaussianBlur stdDeviation.
+function _distortFilterUpdate(oid, ampPx, baseFreq, offX, offY, octaves, smoothPx){
   const defs = _distortHost();
   let filt = document.getElementById('dist-'+oid);
-  const [s1, s2] = _distortSeeds(oid);
+  const seed = _distortSeed(oid);
   if(!filt){
     filt = document.createElementNS(_NS_SVG, 'filter');
     filt.id = 'dist-'+oid;
     filt.setAttribute('x','-30%'); filt.setAttribute('y','-30%');
     filt.setAttribute('width','160%'); filt.setAttribute('height','160%');
     filt.setAttribute('color-interpolation-filters','sRGB');
-    // Two turbulence maps + arithmetic composite = smooth interpolation between noise patterns
-    // as blendK cycles 0↔1. Feels like flowing noise, not the twitchy 15-Hz seed swap.
-    const t1 = document.createElementNS(_NS_SVG, 'feTurbulence');
-    t1.setAttribute('type','fractalNoise'); t1.setAttribute('seed', String(s1)); t1.setAttribute('result','n1');
-    const t2 = document.createElementNS(_NS_SVG, 'feTurbulence');
-    t2.setAttribute('type','fractalNoise'); t2.setAttribute('seed', String(s2)); t2.setAttribute('result','n2');
-    const mix = document.createElementNS(_NS_SVG, 'feComposite');
-    mix.setAttribute('in','n1'); mix.setAttribute('in2','n2');
-    mix.setAttribute('operator','arithmetic'); mix.setAttribute('k1','0'); mix.setAttribute('k4','0');
-    mix.setAttribute('result','noise');
-    // Gaussian blur on the noise map softens sharp displacement transitions — the "smoothness" control.
+    // Tileable noise (stitchTiles=stitch) so feOffset can slide through it without seams.
+    const turb = document.createElementNS(_NS_SVG, 'feTurbulence');
+    turb.setAttribute('type','fractalNoise');
+    turb.setAttribute('stitchTiles','stitch');
+    turb.setAttribute('seed', String(seed));
+    turb.setAttribute('result','n0');
+    // feOffset translates the noise per frame — driven by JS to orbit + drift = continuous flow.
+    const off = document.createElementNS(_NS_SVG, 'feOffset');
+    off.setAttribute('in','n0'); off.setAttribute('result','n1');
     const smooth = document.createElementNS(_NS_SVG, 'feGaussianBlur');
-    smooth.setAttribute('in','noise'); smooth.setAttribute('result','smoothed');
+    smooth.setAttribute('in','n1'); smooth.setAttribute('result','smoothed');
     const disp = document.createElementNS(_NS_SVG, 'feDisplacementMap');
     disp.setAttribute('in','SourceGraphic'); disp.setAttribute('in2','smoothed');
     disp.setAttribute('xChannelSelector','R'); disp.setAttribute('yChannelSelector','G');
-    filt.appendChild(t1); filt.appendChild(t2); filt.appendChild(mix); filt.appendChild(smooth); filt.appendChild(disp);
+    filt.appendChild(turb); filt.appendChild(off); filt.appendChild(smooth); filt.appendChild(disp);
     defs.appendChild(filt);
   }
-  const [t1, t2, mix, smooth, disp] = filt.children;
-  const bf = baseFreq.toFixed(5);
-  t1.setAttribute('baseFrequency', bf);
-  t2.setAttribute('baseFrequency', bf);
-  t1.setAttribute('numOctaves', String(octaves));
-  t2.setAttribute('numOctaves', String(octaves));
-  mix.setAttribute('k2', blendK.toFixed(3));
-  mix.setAttribute('k3', (1 - blendK).toFixed(3));
+  const [turb, off, smooth, disp] = filt.children;
+  turb.setAttribute('baseFrequency', baseFreq.toFixed(5));
+  turb.setAttribute('numOctaves', String(octaves));
+  off.setAttribute('dx', offX.toFixed(2));
+  off.setAttribute('dy', offY.toFixed(2));
   smooth.setAttribute('stdDeviation', Math.max(0, smoothPx).toFixed(2));
   disp.setAttribute('scale', ampPx.toFixed(2));
 }
@@ -2336,30 +2336,31 @@ function renderOverlays(time){
     const _distortAn = (o.anims||[]).find(a=>a.type==='distort');
     let _distFilt = '';
     if(_distortAn){
-      // Match server render: `freq` = waves per OVERLAY dimension (server geq does sin(2π·freq·Y/H)).
-      // So SVG baseFrequency (waves per user-unit pixel) = freq / overlayDisplayWidth.
-      // Reading offsetWidth forces layout, but with just a handful of overlays per frame it's cheap
-      // and it's the only way to keep client density in step with render density.
+      // freq = waves per overlay dimension. SVG baseFrequency is waves per user-unit pixel:
+      //   baseFrequency = freq / overlayDisplayWidth.
+      // Reading offsetWidth forces layout, but with just a handful of overlays per frame it's cheap.
       const overlayW_px = Math.max(1, el.offsetWidth || (o.scale||0.3)*W);
-      const amp   = (_distortAn.amp!=null?+_distortAn.amp:0.025) * W;   // in stage/display px; matches server as a % of overlay
-      const freqW = (_distortAn.freq!=null?+_distortAn.freq:2.5);       // waves-per-overlay (same unit as server)
+      const amp   = Math.min(120, (_distortAn.amp!=null?+_distortAn.amp:0.025) * W);   // px; server clamps to 120 too
+      const freqW = (_distortAn.freq!=null?+_distortAn.freq:2.5);
       const baseFreq = freqW / overlayW_px;
       const speed = (+_distortAn.speed||1.2);
       const octaves = Math.max(1, Math.min(4, Math.round(+_distortAn.octaves||2)));
-      // Guard null/undefined BEFORE the `+` conversion — `+undefined` is NaN, not 0, and `NaN != null`
-      // is truthy, so the old form silently propagated NaN and killed the blur for legacy anims.
       const smooth  = Math.max(0, Math.min(1, (_distortAn.smooth != null) ? +_distortAn.smooth : 0.3));
       let Td = Math.max(0, time - o.start);
       if(_distortAn.gifFps && +_distortAn.gifFps>0) Td = Math.floor(Td * +_distortAn.gifFps) / +_distortAn.gifFps;
-      // Smooth continuous animation: baseFrequency breathes AND blend k oscillates between the
-      // two static seed maps. Together they produce genuinely flowing warp, not stepped.
-      const breathe = baseFreq * (1 + 0.20*Math.sin(2*Math.PI*speed*0.3*Td));
-      const scale   = amp      * (1 + 0.15*Math.sin(2*Math.PI*speed*0.42*Td));
-      const blendK  = 0.5 + 0.5*Math.sin(2*Math.PI*speed*0.5*Td);
-      // smoothPx scales with overlay size so the softening feels the same at any resolution.
-      // Coefficient tuned so smooth=1 gives a clearly liquid/dreamy warp (was 0.04 = imperceptible).
-      const smoothPx = smooth * overlayW_px * 0.15;
-      _distortFilterUpdate(o.id, scale, breathe, blendK, octaves, smoothPx);
+      // CONTINUOUS FLOW: feOffset dx/dy orbits in a circle (radius = orbit) plus a linear drift.
+      // The angle of the orbit itself rotates slowly (rot_spd) so the sweep direction changes over
+      // time — matches the server's rotating displacement field, producing kaleidoscopic swirl.
+      // Because feTurbulence uses stitchTiles="stitch", offsets can grow indefinitely without seams.
+      const rot_spd = 0.30;                           // rad/sec — slow overall rotation of the sweep
+      const orbit   = overlayW_px * 0.25;             // circle radius in px (large enough to feel swirly)
+      const drift   = overlayW_px * 0.05 * speed;     // linear px/sec — keeps the loop from ever repeating
+      const th      = rot_spd * Td;
+      const ph      = 2*Math.PI*speed*0.35*Td;        // wave phase — advances linearly (never reverses)
+      const offX    = orbit*Math.cos(ph) + drift*Td*Math.cos(th);
+      const offY    = orbit*Math.sin(ph) + drift*Td*Math.sin(th);
+      const smoothPx = smooth * overlayW_px * 0.05;   // scale with overlay so smoothness feels consistent
+      _distortFilterUpdate(o.id, amp, baseFreq, offX, offY, octaves, smoothPx);
       _distFilt = `url(#dist-${o.id})`;
     } else {
       _distortFilterRemove(o.id);
