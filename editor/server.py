@@ -1404,10 +1404,12 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     tS_local = max(0.0, aS_d - s)
                     tE_local = min(dur_o, aE_d - s)
                     # Wave parameters.
-                    #   ROT_SPD: how fast the whole displacement field rotates (rad/sec). Slow.
+                    #   ROT_SPD: how fast the whole displacement field rotates (rad/sec).
+                    #     Scales with user speed so the Warp-speed slider visibly changes swirl rate.
+                    #     At speed=1.2 this is 1.8 rad/s → one full swirl per ~3.5s (visible in 7s clip).
                     #   PH_SPD:  wave phase advance (2*PI*speed) — traveling wave rate.
                     #   base_amp / sec_amp: primary and secondary harmonic weights (sum = 1.0).
-                    rot_spd = 0.30
+                    rot_spd = 1.5 * dspd
                     ph_spd = 2.0 * math.pi * dspd
                     sec_amp = 0.35 * (1.0 - smooth)
                     base_amp = 1.0 - sec_amp

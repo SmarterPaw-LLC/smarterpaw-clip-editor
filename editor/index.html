@@ -306,7 +306,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.79.0</span>
+  <span class="ver" id="appVer">v1.79.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2352,11 +2352,13 @@ function renderOverlays(time){
       // The angle of the orbit itself rotates slowly (rot_spd) so the sweep direction changes over
       // time — matches the server's rotating displacement field, producing kaleidoscopic swirl.
       // Because feTurbulence uses stitchTiles="stitch", offsets can grow indefinitely without seams.
-      const rot_spd = 0.30;                           // rad/sec — slow overall rotation of the sweep
-      const orbit   = overlayW_px * 0.25;             // circle radius in px (large enough to feel swirly)
-      const drift   = overlayW_px * 0.05 * speed;     // linear px/sec — keeps the loop from ever repeating
+      // Scale rotation with the user's Warp-speed slider so the effect visibly reacts to it.
+      // At speed=1.2 this is 1.8 rad/s → one full field rotation every ~3.5s (obvious swirl in a 7s clip).
+      const rot_spd = 1.5 * speed;                    // rad/sec
+      const orbit   = overlayW_px * 0.5;              // circle radius in px — bigger sweep = more visible motion
+      const drift   = overlayW_px * 0.15 * speed;     // linear px/sec — keeps the loop from ever repeating
       const th      = rot_spd * Td;
-      const ph      = 2*Math.PI*speed*0.35*Td;        // wave phase — advances linearly (never reverses)
+      const ph      = 2*Math.PI*speed*Td;             // wave phase — advances linearly (never reverses)
       const offX    = orbit*Math.cos(ph) + drift*Td*Math.cos(th);
       const offY    = orbit*Math.sin(ph) + drift*Td*Math.sin(th);
       const smoothPx = smooth * overlayW_px * 0.05;   // scale with overlay so smoothness feels consistent
