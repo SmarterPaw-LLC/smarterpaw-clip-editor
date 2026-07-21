@@ -1220,6 +1220,120 @@ def prerender_clipframe(o, W, H, tmp, k):
     return out
 
 
+def prerender_scale_pulse(o, W, H, tmp, ov_idx, seg_dur, fps=30):
+    """Pre-render an image overlay's scale animation as a MOV with subpixel-accurate content
+    scaling — ffmpeg's scale filter is integer-pixel-only, so small-amp pulses (amp<0.08) show
+    visible 1-2px stepping. PIL supersample → downscale gives smooth fractional-pixel motion:
+    every frame renders on a supersampled canvas at integer pixel res, then downscales to output
+    resolution via LANCZOS which interpolates content edges to subpixel accuracy.
+    Returns (mov_path, canvas_w, canvas_h) or None if not applicable / no scale anims."""
+    if o.get("type") != "image":
+        return None
+    scale_anims = [a for a in (o.get("anims") or [])
+                   if a.get("type") in ("scaleBeat", "scaleUp", "scaleDown", "popIn", "bubbleUp")]
+    if not scale_anims:
+        return None
+    # Animated rotation isn't baked in — fall back to ffmpeg filter path so orot expressions
+    # still animate correctly (wobble / spin / orbit types produce rotation).
+    if any(a.get("type") in ("wobble", "spin", "orbit") for a in (o.get("anims") or [])):
+        return None
+    p = os.path.join(PROJ, *o["src"].split("/"))
+    if not os.path.exists(p):
+        return None
+    if os.path.splitext(p)[1].lower() in (".gif", ".webp", ".apng"):
+        return None   # animated formats already have their own frame sequence
+    from PIL import Image
+    src = Image.open(p).convert("RGBA")
+    if (o.get("shadow") or {}).get("on"):
+        # bake shadow into the source so it scales with the sprite (matches non-pulse path)
+        target_w0 = max(1, int(W * float(o.get("scale", 0.3))))
+        target_h0 = max(1, int(src.height * target_w0 / src.width))
+        src = _with_shadow(src.resize((target_w0, target_h0), Image.LANCZOS), o, W)
+    # Bake static rotation into the source too — we skip ffmpeg's rotate filter when using
+    # the pre-render path. Animated rotation (orot) isn't supported here yet; overlays that
+    # need it still take the ffmpeg filter path (prerender_scale_pulse returns None for anim rot).
+    srot0 = float(o.get("rot", 0) or 0)
+    if abs(srot0) > 1e-6:
+        # match ffmpeg's rotate=ow='hypot(iw,ih)' behavior: enlarge canvas to fit rotated bounds
+        src = src.rotate(-srot0, resample=Image.BICUBIC, expand=True)
+    iw0, ih0 = src.size
+    target_w = max(1, int(W * float(o.get("scale", 0.3))))
+    target_h = max(1, int(ih0 * target_w / iw0))
+    # peak_sc: biggest combined scale factor the sprite can hit — used to size the fixed canvas
+    peak_sc = 1.0
+    for a in scale_anims:
+        ty = a.get("type")
+        if ty == "scaleBeat":  peak_sc *= (1.0 + abs(float(a.get("amp", 0.15))))
+        elif ty == "popIn":    peak_sc *= 1.15    # ease-out-back overshoot
+        elif ty == "bubbleUp": peak_sc *= 1.15
+    canvas_w = int(round(target_w * peak_sc * 1.04))
+    canvas_h = int(round(target_h * peak_sc * 1.04))
+    canvas_w += canvas_w % 2   # h264 needs even dims
+    canvas_h += canvas_h % 2
+    ss = 2                     # supersample factor: content edges become 1/2-pixel accurate
+    # Do the supersample once — every frame reuses this buffer. LANCZOS here (once) for quality.
+    src_ss = src.resize((iw0 * ss, ih0 * ss), Image.LANCZOS)
+    frames_dir = os.path.join(tmp, f"pulse_frames_{ov_idx}")
+    os.makedirs(frames_dir, exist_ok=True)
+    n_frames = max(1, int(round(seg_dur * fps)))
+    for fi in range(n_frames):
+        t = fi / fps
+        sc = 1.0
+        for a in scale_anims:
+            ty = a.get("type")
+            aS = max(0.0, float(a.get("tStart", 0) or 0))
+            aEv = a.get("tEnd")
+            aE = min(seg_dur, float(aEv)) if (aEv is not None and float(aEv) > 0) else seg_dur
+            if not (aS <= t <= aE): continue
+            lt = t - aS
+            if ty == "scaleBeat":
+                amp = float(a.get("amp", 0.15)); sp = float(a.get("speed", 1.5))
+                sc *= max(0.05, 1 + amp * math.sin(2 * math.pi * sp * lt))
+            elif ty == "popIn":
+                d = max(0.01, float(a.get("d", 0.45)))
+                if lt < d:
+                    k = lt / d
+                    eb = 1 + 2.70158 * (k - 1) ** 3 + 1.70158 * (k - 1) ** 2
+                    sc *= max(0.05, eb)
+            elif ty == "scaleUp":
+                d = max(0.01, float(a.get("d", 0.5))); fr = float(a.get("from", 0.3))
+                if lt < d:
+                    k = lt / d; ease = 1 - (1 - k) ** 3
+                    sc *= fr + (1 - fr) * ease
+            elif ty == "scaleDown":
+                d = max(0.01, float(a.get("d", 0.5))); to = float(a.get("to", 0))
+                if lt > aE - d:
+                    k = (aE - t) / d; ease = 1 - (1 - k) ** 3
+                    sc *= to + (1 - to) * ease
+            elif ty == "bubbleUp":
+                d = max(0.01, float(a.get("d", 0.7)))
+                if lt < d:
+                    k = lt / d
+                    eb = 1 + 2.70158 * (k - 1) ** 3 + 1.70158 * (k - 1) ** 2
+                    sc *= max(0.05, eb)
+        cw_ss = max(1, int(round(target_w * ss * sc)))
+        ch_ss = max(1, int(round(target_h * ss * sc)))
+        # BILINEAR here (per-frame hot path) — LANCZOS was 10x slower. Downscale to output
+        # size is done by the SAME resize (chaining resizes doubles PIL cost); paste onto a
+        # supersampled canvas then a single final downscale.
+        content_ss = src_ss.resize((cw_ss, ch_ss), Image.BILINEAR)
+        canvas_ss = Image.new("RGBA", (canvas_w * ss, canvas_h * ss), (0, 0, 0, 0))
+        px_ss = (canvas_w * ss - cw_ss) // 2
+        py_ss = (canvas_h * ss - ch_ss) // 2
+        canvas_ss.alpha_composite(content_ss, (px_ss, py_ss))
+        # BILINEAR downscale (fast); the supersample already gave us the subpixel accuracy.
+        canvas = canvas_ss.resize((canvas_w, canvas_h), Image.BILINEAR)
+        canvas.save(os.path.join(frames_dir, f"f{fi:05d}.png"), compress_level=1)
+    mov = os.path.join(tmp, f"pulse_{ov_idx}.mov")
+    r = run([FFMPEG, "-y", "-loglevel", "error",
+             "-framerate", str(fps),
+             "-i", os.path.join(frames_dir, "f%05d.png"),
+             "-c:v", "qtrle", "-pix_fmt", "argb", mov])
+    if r.returncode != 0 or not os.path.exists(mov):
+        return None
+    return (mov, canvas_w, canvas_h)
+
+
 def apply_overlays(silent, overlays, W, H, tmp):
     """Composite free-floating text/image/shape overlays over the full timeline (global time),
     preserving list order as z-order (later = on top)."""
@@ -1330,20 +1444,30 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 build_shape_png(o, W, H, p)
                 scale_w = None
             anim_img = False
+            pulse_prerendered = False   # if True, `p` is a MOV with scale-anims baked in; skip scale/pad/rotate
             if t == "image":
                 p = os.path.join(PROJ, *o["src"].split("/"))
                 if not os.path.exists(p):
                     continue
                 anim_img = os.path.splitext(p)[1].lower() in (".gif", ".webp", ".apng")   # animated overlay → loop it
-                if anim_img:
+                # Pre-render scale animations with PIL subpixel scaling — see prerender_scale_pulse.
+                # ffmpeg's scale filter is integer-pixel-only so small-amp pulses jitter visibly on render.
+                if not anim_img:
+                    _pre = prerender_scale_pulse(o, W, H, tmp, k, float(o.get("dur", 3)))
+                    if _pre:
+                        p, _cw, _ch = _pre
+                        pulse_prerendered = True
+                        anim_img = True                 # treat MOV like an animated source: -stream_loop
+                        scale_w = None                  # dims are already baked in — don't touch
+                if anim_img and not pulse_prerendered:
                     scale_w = max(1, int(W * float(o.get("scale", 0.3))))   # shadow PIL would freeze frame 1; skip for animated
-                elif (o.get("shadow") or {}).get("on"):
+                elif not pulse_prerendered and (o.get("shadow") or {}).get("on"):
                     from PIL import Image
                     im = Image.open(p).convert("RGBA")
                     tw = max(1, int(W * float(o.get("scale", 0.3)))); th = max(1, int(im.height * tw / im.width))
                     im = _with_shadow(im.resize((tw, th)), o, W)
                     p = os.path.join(tmp, f"img_{k}.png"); im.save(p); scale_w = None
-                else:
+                elif not pulse_prerendered:
                     scale_w = max(1, int(W * float(o.get("scale", 0.3))))
             dur_o = float(o.get("dur", 3))
             odx, ody, _, _, orot = _anim_exprs(o, s, dur_o, W, "t", H=H)     # position + rotation (overlay time = t)
@@ -1467,23 +1591,18 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     sc_factors.append("if(between(t,%g,%g),max(0.05,%s),1)" % (aS, aS + d, eb))
             srot = float(o.get("rot", 0) or 0)                          # static rotation (degrees) + any anim rotation
             rot_terms = ([orot] if orot else []) + ([f"{math.radians(srot):.6f}"] if abs(srot) > 1e-6 else [])
-            if rot_terms:
+            if rot_terms and not pulse_prerendered:
                 rexpr = "+".join(f"({r})" for r in rot_terms)
                 # transparent margin first so the rotate doesn't smear edge pixels of overlays
                 # whose content touches the PNG boundary (caused ghost streaks on wobble/spin)
                 filt.append("pad=ceil(iw*1.08):ceil(ih*1.08):(ow-iw)/2:(oh-ih)/2:color=black@0")
                 filt.append(f"rotate='{rexpr}':c=none:ow='hypot(iw,ih)':oh='hypot(iw,ih)'")
             # Anim scale (popIn / scaleUp / scaleDown / scaleBeat / bubbleUp) goes LAST so its
-            # eval=frame dimension changes don't fight pad's/rotate's static output sizes —
-            # otherwise pad caps the output box at the first frame's tiny size (e.g. bubble at scale 0.05)
-            # and subsequent larger frames get cropped (the "top of sticker chopped off" bug).
-            if sc_factors:
+            # eval=frame dimension changes don't fight pad's/rotate's static output sizes.
+            # Skipped entirely when pulse_prerendered — the MOV already has scale baked in with
+            # PIL subpixel accuracy that ffmpeg's integer-only scale filter can't produce.
+            if sc_factors and not pulse_prerendered:
                 combined = "*".join("(%s)" % x for x in sc_factors)
-                # Original working form: plain iw*sc without round(), no explicit flags (default
-                # bicubic), no fps filter. Attempts to "improve" this (lanczos, 2*round, fps=60,
-                # constant pad canvas) each made small-amp pulses visibly worse — sharper filters
-                # and higher output rates make single-pixel integer steps easier for the eye to
-                # catch. Bicubic's softer edges hide the quantization.
                 filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame"
                             % (combined, combined))
             # Blur anim: split into original + pre-blurred branches, alpha-modulate the blurred
