@@ -1334,7 +1334,20 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 p = os.path.join(PROJ, *o["src"].split("/"))
                 if not os.path.exists(p):
                     continue
-                anim_img = os.path.splitext(p)[1].lower() in (".gif", ".webp", ".apng")   # animated overlay → loop it
+                # ONLY treat as animated if the file actually has multiple frames. Extension alone
+                # is misleading — most .webp files in our library are STATIC single-frame. When
+                # extension-alone triggered anim_img=True for static webp, the resulting
+                # `-stream_loop -1` delivered frames irregularly to `scale=eval=frame`, producing
+                # visible per-frame jitter on scale-pulse animations. Probe n_frames instead.
+                ext = os.path.splitext(p)[1].lower()
+                anim_img = False
+                if ext in (".gif", ".webp", ".apng"):
+                    try:
+                        from PIL import Image as _AI
+                        with _AI.open(p) as _im:
+                            anim_img = getattr(_im, "n_frames", 1) > 1
+                    except Exception:
+                        anim_img = ext == ".gif"   # safest fallback: only GIF assumed animated
                 if anim_img:
                     scale_w = max(1, int(W * float(o.get("scale", 0.3))))   # shadow PIL would freeze frame 1; skip for animated
                 elif (o.get("shadow") or {}).get("on"):
