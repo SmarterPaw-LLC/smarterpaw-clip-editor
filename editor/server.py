@@ -38,7 +38,7 @@ if not os.path.exists(FFMPEG):
 
 FONT = "C\\:/Windows/Fonts/arialbd.ttf"
 ENC = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p",
-       "-r", "60", "-video_track_timescale", "90000", "-an"]
+       "-video_track_timescale", "90000", "-an"]
 ENDCARD_DUR = 2.6
 ID_RE = re.compile(r"\[([A-Za-z0-9_-]{11})\]")
 
@@ -1002,8 +1002,8 @@ def prerender_piececlip(o, W, H, tmp, k):
     anims = o.get("anims") or []
     n = len(pieces)
     # transparent base (alpha 0) + one shared piece input split n ways (decode once, not n times)
-    inputs = ["-f", "lavfi", "-i", "nullsrc=s=%dx%d:r=60:d=%g,format=rgba,colorchannelmixer=aa=0" % (W, H, dur)]
-    inputs += ["-framerate", "60", "-loop", "1", "-t", str(dur), "-i", p]
+    inputs = ["-f", "lavfi", "-i", "nullsrc=s=%dx%d:r=30:d=%g,format=rgba,colorchannelmixer=aa=0" % (W, H, dur)]
+    inputs += ["-loop", "1", "-t", str(dur), "-i", p]
     fc = ["[0:v]format=rgba[base0]"]
     last = "base0"
     if n > 1:
@@ -1043,7 +1043,7 @@ def prerender_piececlip(o, W, H, tmp, k):
             d = max(0.01, float(pop.get("d", 0.45)))
             kk = "(t/%g)" % d; eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (kk, kk)
             pops = "if(between(t,0,%g),max(0.05,%s),1)" % (d, eb)
-            filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame:flags=bicubic" % (pops, pops))   # per-piece sprinkle popIn — bicubic for clean per-frame resizing
+            filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame" % (pops, pops))
         fc.append("[%s]%s[oi%d]" % (srcs[i], ",".join(filt), i))
         fc.append("[%s][oi%d]overlay=x='W*%g-w/2+(%s)':y='H*%g-h/2+(%s)'[v%d]" % (last, i, ox, odx, oy, ody, i))
         last = "v%d" % i
@@ -1261,7 +1261,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
     # Normalize the base to clean CFR/timestamps first. The concatenated video can carry
     # duplicate/irregular timestamps from tpad freeze-fill, which makes the overlay+geq
     # compositing pass pathologically slow (minutes). fps=60 + reset PTS fixes that.
-    fc.append("[0:v]fps=60,setpts=PTS-STARTPTS[base0]")
+    fc.append("[0:v]fps=30,setpts=PTS-STARTPTS[base0]")
     last = "base0"
     ii = 1  # next ffmpeg input index for image/shape files
     for k, o in enumerate(overlays):
@@ -1351,7 +1351,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
             if anim_img:
                 inputs += ["-stream_loop", "-1", "-t", str(e), "-i", p]   # play+loop the animation over the timeline
             else:
-                inputs += ["-framerate", "60", "-loop", "1", "-t", str(e), "-i", p]
+                inputs += ["-loop", "1", "-t", str(e), "-i", p]
             filt = []
             if scale_w:
                 filt.append(f"scale={scale_w}:-1")
@@ -1479,14 +1479,13 @@ def apply_overlays(silent, overlays, W, H, tmp):
             # and subsequent larger frames get cropped (the "top of sticker chopped off" bug).
             if sc_factors:
                 combined = "*".join("(%s)" % x for x in sc_factors)
-                # Plain scale with lanczos + explicit 60fps. The visible "jitter" some users
-                # perceive on small-amplitude pulses (amp <0.08) is a fundamental ffmpeg limitation:
-                # scale outputs are integer pixels only, so a smoothly-varying scale factor lands
-                # on discrete integer sizes with ~1-2 pixel jumps per frame. Larger amps (0.1+)
-                # hide it because per-frame motion swamps the quantization step.
-                filt.append("scale=w='round(iw*(%s))':h='round(ih*(%s))':eval=frame:flags=lanczos"
+                # Original working form: plain iw*sc without round(), no explicit flags (default
+                # bicubic), no fps filter. Attempts to "improve" this (lanczos, 2*round, fps=60,
+                # constant pad canvas) each made small-amp pulses visibly worse — sharper filters
+                # and higher output rates make single-pixel integer steps easier for the eye to
+                # catch. Bicubic's softer edges hide the quantization.
+                filt.append("scale=w='iw*(%s)':h='ih*(%s)':eval=frame"
                             % (combined, combined))
-                filt.append("fps=60")
             # Blur anim: split into original + pre-blurred branches, alpha-modulate the blurred
             # branch by the pattern time-curve, then overlay them. gblur runs once at max sigma;
             # per-frame alpha lerps between the two branches for pulse/in/out patterns.
@@ -1598,7 +1597,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
         fh.write(";\n".join(fc))
     cmd = ([FFMPEG, "-y", "-loglevel", "error"] + inputs + ["-filter_complex_script", fc_path, "-map", f"[{last}]"]
            + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p",
-              "-r", "60", "-video_track_timescale", "90000", "-an", out])   # 60fps output → smoother scale-pulse / distort animations
+              "-video_track_timescale", "90000", "-an", out])
     r = run(cmd)
     if r.returncode != 0:
         return None, r.stderr[-1500:]
@@ -1730,7 +1729,7 @@ def render(edl, out_dir=None, out_name=None, progress=None):
             base_end = _content_end(edl)
             blk = os.path.join(tmp, "blk_overlay_only.mp4")
             r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi",
-                     "-i", f"color=black:s={W}x{H}:r=60:d={base_end:g}",
+                     "-i", f"color=black:s={W}x{H}:r=30:d={base_end:g}",
                      "-vf", "format=yuv420p"] + ENC + [blk])
             if r.returncode != 0:
                 return {"ok": False, "log": f"overlay-only base failed:\n{r.stderr[-1500:]}"}
@@ -1747,7 +1746,7 @@ def render(edl, out_dir=None, out_name=None, progress=None):
                 d = max(0.05, float(seg.get("dur", 0.1)))
                 gp = os.path.join(tmp, f"blk_{idx:02d}.mp4")
                 r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi",
-                         "-i", f"color=c=black:s={W}x{H}:r=60:d={d}", "-vf", "format=yuv420p"] + ENC + [gp])
+                         "-i", f"color=c=black:s={W}x{H}:r=30:d={d}", "-vf", "format=yuv420p"] + ENC + [gp])
                 if r.returncode != 0:
                     return {"ok": False, "log": f"black {idx} failed:\n{r.stderr[-1500:]}"}
                 lines.append("file '" + gp.replace("\\", "/") + "'")
@@ -1765,7 +1764,7 @@ def render(edl, out_dir=None, out_name=None, progress=None):
                 cx, cy = f"(iw-{W})*{px:.5f}", f"(ih-{H})*{py:.5f}"
             else:
                 cx, cy = crop_xy(seg.get("anchor", "center"), W, H)
-            base = f"scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={W}:{H}:{cx}:{cy},setsar=1,fps=60,format=yuv420p"
+            base = f"scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={W}:{H}:{cx}:{cy},setsar=1,fps=30,format=yuv420p"
             dur = float(seg["dur"])                     # dur = SOURCE seconds consumed
             spd = min(10.0, max(0.1, float(seg.get("speed", 1) or 1)))
             outlen = dur / spd                          # timeline (output) seconds
@@ -1830,7 +1829,7 @@ def render(edl, out_dir=None, out_name=None, progress=None):
         # that plays fine but is filter-HOSTILE — the overlay/geq pass crawls (90s+ vs 3s). A clean
         # CFR re-encode here makes the overlay compositing fast again.
         r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", listf,
-                 "-vf", "fps=60,format=yuv420p"] + ENC + [silent])
+                 "-vf", "fps=30,format=yuv420p"] + ENC + [silent])
         if r.returncode != 0:
             return {"ok": False, "log": f"concat failed:\n{r.stderr[-1500:]}"}
         # free-floating overlays (text/images) over the whole timeline
