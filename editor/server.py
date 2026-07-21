@@ -1429,7 +1429,11 @@ def apply_overlays(silent, overlays, W, H, tmp):
             # Combine ALL scale-related anims (popIn / scaleUp / scaleDown / scaleBeat) into one
             # multiplied expression and emit a single scale=eval=frame filter. Each anim respects
             # its own tStart/tEnd window; outside the window the factor is 1 (identity).
+            # Track peak_sc = biggest scale factor this overlay can hit — used to pad the scaled
+            # output to a CONSTANT size so the overlay filter's position doesn't jitter as the
+            # scaled dimensions change by ±1px per frame (the real cause of "scale-pulse jitter").
             sc_factors = []
+            peak_sc = 1.0
             for a in (o.get("anims") or []):
                 ty = a.get("type")
                 if ty not in ("popIn", "scaleUp", "scaleDown", "scaleBeat", "bubbleUp"): continue
@@ -1437,6 +1441,9 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 aEv = a.get("tEnd"); aE = s + min(dur_o, float(aEv)) if (aEv is not None and float(aEv) > 0) else (s + dur_o)
                 if aE <= aS: continue
                 lt = "(t-%g)" % aS; dw = aE - aS
+                if ty == "scaleBeat":     peak_sc *= (1.0 + abs(float(a.get("amp", 0.15))))
+                elif ty == "popIn":       peak_sc *= 1.15   # ease-out-back overshoot
+                elif ty == "bubbleUp":    peak_sc *= 1.15   # same easing family
                 if ty == "popIn":
                     d = max(0.01, float(a.get("d", 0.45)))
                     kk = "(%s/%g)" % (lt, d); eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (kk, kk)
@@ -1472,17 +1479,36 @@ def apply_overlays(silent, overlays, W, H, tmp):
             # and subsequent larger frames get cropped (the "top of sticker chopped off" bug).
             if sc_factors:
                 combined = "*".join("(%s)" % x for x in sc_factors)
-                # Plain scale — let ffmpeg round to nearest integer per frame. Earlier attempt to
-                # force even-only dimensions (2*round(x/2)) INTRODUCED jitter: per-frame scale delta
-                # is <1px, so rounding to even meant some frames identical + next jumped 2px = visible
-                # pop. Plain round gives ~1px jumps averaged, which reads much smoother at 60fps.
-                # Lanczos interpolation still smooths the actual pixel content.
+                # Probe original PNG dims + account for the pad+rotate chain that runs before scale
+                # (only when rot_terms is non-empty). Compute a STATIC peak-canvas size in Python —
+                # pad's expression parser can't handle if/sin/between, so we can't reference the
+                # animation math there.
+                try:
+                    from PIL import Image as _PIL_Image
+                    with _PIL_Image.open(p) as _im:
+                        _iw0, _ih0 = _im.size
+                except Exception:
+                    _iw0 = _ih0 = 512
+                if rot_terms:
+                    # matches lines above: pad=ceil(iw*1.08) then rotate=ow='hypot(iw,ih)'
+                    _iwp = int(math.ceil(_iw0 * 1.08)); _ihp = int(math.ceil(_ih0 * 1.08))
+                    pre_scale_w = pre_scale_h = int(round(math.hypot(_iwp, _ihp)))
+                else:
+                    pre_scale_w, pre_scale_h = _iw0, _ih0
+                pad_w = int(round(pre_scale_w * peak_sc * 1.02))
+                pad_h = int(round(pre_scale_h * peak_sc * 1.02))
+                # Scale the CONTENT per frame (varies ±1px), then pad to a CONSTANT peak-sized
+                # canvas so the overlay filter's `x='W*ox-w/2'` sees the same w every frame — no
+                # 1px position pops as scale rounds up/down. Content stays centered; the transparent
+                # margin around it varies subpixel via eval=frame on pad's centering math.
                 filt.append("scale=w='round(iw*(%s))':h='round(ih*(%s))':eval=frame:flags=lanczos"
                             % (combined, combined))
+                filt.append("pad=w=%d:h=%d:x='(%d-iw)/2':y='(%d-ih)/2':color=black@0:eval=frame"
+                            % (pad_w, pad_h, pad_w, pad_h))
                 # Force 60fps AFTER scale so the eval=frame expression is evaluated 60x/sec even if
                 # the image input was decoded at a lower rate. Without this, ffmpeg samples the
                 # still-image loop at its input rate (25fps default), then the encoder duplicates
-                # frames to 60fps — producing exactly the 2:1 alternation pattern users see as jitter.
+                # frames to 60fps — producing a 2:1 alternation pattern that reads as choppiness.
                 filt.append("fps=60")
             # Blur anim: split into original + pre-blurred branches, alpha-modulate the blurred
             # branch by the pattern time-curve, then overlay them. gblur runs once at max sigma;
