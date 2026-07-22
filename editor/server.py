@@ -72,6 +72,27 @@ _probe_cache_load()
 # --- Clip tags (free-form, comma-separated, persisted in editor/clip_tags.json) ---
 CLIP_TAGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clip_tags.json")
 _clip_tags_cache = None
+CUSTOM_TAGS_FILE = os.path.join(EDITOR if 'EDITOR' in dir() else os.path.dirname(__file__), "custom_tags.json")
+def load_custom_tags():
+    """User-defined tag names that appear in the tag picker even before any clip carries them.
+    Persisted so 'New tag' from the Manage-clips dialog seeds the shared picker vocabulary."""
+    try:
+        if os.path.exists(CUSTOM_TAGS_FILE):
+            d = json.load(open(CUSTOM_TAGS_FILE, encoding="utf-8"))
+            if isinstance(d, list):
+                return sorted({str(t).strip() for t in d if str(t).strip()})
+    except Exception:
+        pass
+    return []
+def save_custom_tags(lst):
+    lst = sorted({str(t).strip() for t in (lst or []) if str(t).strip()})
+    tmp = CUSTOM_TAGS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(lst, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, CUSTOM_TAGS_FILE)
+    return lst
+
+
 def load_clip_tags():
     global _clip_tags_cache
     if _clip_tags_cache is not None: return _clip_tags_cache
@@ -227,6 +248,23 @@ def _cleanup_empty_dirs(path):
             _cleanup_empty_dirs(parent)
     except OSError:
         pass
+
+
+def list_all_categories():
+    """Return every category (product) folder name under SRC_ROOT, whether it has clips or not.
+    Used so 'New category' creations show up as move targets in the Manage Clips dropdown even
+    while the folder is still empty."""
+    seen = set()
+    if not os.path.isdir(SRC_ROOT):
+        return []
+    for brand_entry in os.listdir(SRC_ROOT):
+        brand_path = os.path.join(SRC_ROOT, brand_entry)
+        if not os.path.isdir(brand_path):
+            continue
+        for sub in os.listdir(brand_path):
+            if os.path.isdir(os.path.join(brand_path, sub)):
+                seen.add(sub)
+    return sorted(seen)
 
 
 def scan_sources():
@@ -2158,7 +2196,9 @@ class Handler(BaseHTTPRequestHandler):
                     break
             return self._json({"clips": clips, "music": list_music(), "sfx": list_sfx(),
                                "canvases": list(CANVAS.keys()), "logo": logo, "assets": list_assets(),
-                               "exportsDir": EXPORTS})
+                               "exportsDir": EXPORTS,
+                               "customTags": load_custom_tags(),
+                               "allCategories": list_all_categories()})
         if path == "/api/edl":
             return self._json(load_edl())
         if path == "/api/version":
@@ -2219,6 +2259,32 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True})
             _schedule_restart()
             return
+        if path == "/api/category/create":
+            # Create an empty <SRC_ROOT>/<brand>/<cat>/ folder so the Manage Clips UI can offer
+            # it as a move target before any clip lives there. Idempotent — creating an existing
+            # category is a no-op success.
+            brand = re.sub(r"[^A-Za-z0-9_-]", "", (data.get("brand") or "").lower())
+            cat = re.sub(r"[^A-Za-z0-9_-]", "", (data.get("category") or "").lower())
+            if not brand or not cat:
+                return self._json({"ok": False, "log": "brand and category required"}, 400)
+            dest_dir = os.path.join(SRC_ROOT, brand, cat)
+            try:
+                os.makedirs(dest_dir, exist_ok=True)
+            except Exception as e:
+                return self._json({"ok": False, "log": repr(e)}, 500)
+            bm = load_brand_map(); bm[cat] = brand; save_brand_map(bm)
+            return self._json({"ok": True, "brand": brand, "category": cat})
+        if path == "/api/tag/create":
+            # Add a tag name to the shared custom-tags list so the tag picker shows it even when
+            # no clip carries it yet. Returns the full updated list.
+            tag = str(data.get("tag") or "").strip()
+            if not tag:
+                return self._json({"ok": False, "log": "tag name required"}, 400)
+            existing = load_custom_tags()
+            if tag not in existing:
+                existing.append(tag)
+                save_custom_tags(existing)
+            return self._json({"ok": True, "customTags": load_custom_tags()})
         if path == "/api/clip/recat":
             cid = (data.get("id") or "").strip()
             cat = re.sub(r"[^A-Za-z0-9_-]", "", (data.get("category") or "").lower())
