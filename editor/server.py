@@ -1096,6 +1096,78 @@ def gen_distort_noise_map(w, h, amp_px, freq, octaves, seed, out_path):
     rgba[:, :, 3] = 255
     Image.fromarray(rgba, "RGBA").save(out_path)
 
+def gen_animated_noise_mov(w, h, dur, amp_px, freq, speed, octaves, seed, out_mov, tmp_dir, fps=30):
+    """Pre-render an animated displacement source as a MOV. This is what makes distort look
+    smooth: instead of live-computed sines (rigid/glitchy) or 2-map crossfade (seesaw), we
+    generate a 3D noise volume (X, Y, T) with proper Gaussian smoothing on all three axes,
+    slice per-frame maps out, encode as a MOV, and let ffmpeg's `displace` filter consume it
+    frame-by-frame. Because the noise VOLUME is smooth in time, adjacent output frames differ
+    subtly (smooth motion); because it's smooth in space, nearby pixels move together
+    (coherent warp, not scrambled). This is functionally what SVG's feTurbulence + feOffset
+    do in the preview — matched pipeline.
+    Cost: ~1-3s per render for a 7s clip at 256x256. R channel = X displacement, G = Y.
+    Returns the mov path on success, or None on failure."""
+    try:
+        import numpy as np
+        from scipy.ndimage import gaussian_filter
+        from PIL import Image
+    except Exception:
+        return None
+    n_frames = max(2, int(round(dur * fps)))
+    # Spatial smoothness (sigma_xy): higher freq → smaller sigma → sharper features.
+    # Temporal smoothness (sigma_t): higher speed → smaller sigma → faster motion.
+    # Constants tuned so at freq=2.5 speed=1.2 the pattern reads as slow liquid swirl.
+    sigma_xy_base = max(2.0, w / (max(0.5, freq) * 6.0))
+    sigma_t_base  = max(1.0, 5.0 / max(0.2, speed))   # smaller = faster visible motion; user speed scales this
+    rng = np.random.default_rng(seed)
+    r_vol = np.zeros((n_frames, h, w), dtype=np.float32)
+    g_vol = np.zeros((n_frames, h, w), dtype=np.float32)
+    weight_sum = 0.0
+    for oct in range(max(1, min(4, int(octaves)))):
+        wt = 1.0 / (2 ** oct)
+        s_xy = max(1.0, sigma_xy_base / (2 ** oct))
+        s_t  = max(0.6, sigma_t_base  / (2 ** oct))
+        # `mode='wrap'` on all axes so filter edges don't produce dark/bright borders.
+        r_rand = rng.random((n_frames, h, w), dtype=np.float32)
+        g_rand = rng.random((n_frames, h, w), dtype=np.float32)
+        r_vol += wt * gaussian_filter(r_rand, sigma=[s_t, s_xy, s_xy], mode='wrap')
+        g_vol += wt * gaussian_filter(g_rand, sigma=[s_t, s_xy, s_xy], mode='wrap')
+        weight_sum += wt
+    r_vol /= weight_sum
+    g_vol /= weight_sum
+    # Normalize each channel so max absolute deviation from mean maps to amp_px.
+    # displace expects: value 128 = no shift, 128±v = shift by v pixels.
+    def _to_disp_bytes(vol):
+        v = vol - vol.mean()
+        v /= max(1e-6, float(np.abs(v).max()))     # v now in [-1, 1]
+        return np.clip(128.0 + amp_px * v, 0, 255).astype(np.uint8)
+    r_bytes = _to_disp_bytes(r_vol)
+    g_bytes = _to_disp_bytes(g_vol)
+    # Write PNG sequence and encode as MOV. Using PNG (lossless) so displacement values aren't
+    # smeared by video codec compression, then re-encoding to h264 for compact storage.
+    frames_dir = os.path.join(tmp_dir, f"noise_frames_{seed}")
+    os.makedirs(frames_dir, exist_ok=True)
+    b_plane = np.full((h, w), 128, dtype=np.uint8)
+    for i in range(n_frames):
+        rgb = np.stack([r_bytes[i], g_bytes[i], b_plane], axis=-1)
+        Image.fromarray(rgb, 'RGB').save(os.path.join(frames_dir, f"f{i:05d}.png"))
+    r = run([FFMPEG, "-y", "-loglevel", "error",
+             "-framerate", str(fps),
+             "-i", os.path.join(frames_dir, "f%05d.png"),
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "12",
+             "-pix_fmt", "yuv420p",
+             out_mov])
+    # Best-effort cleanup — leftover frames are harmless in a per-render tmp dir.
+    try:
+        import shutil
+        shutil.rmtree(frames_dir, ignore_errors=True)
+    except Exception:
+        pass
+    if r.returncode != 0 or not os.path.exists(out_mov):
+        return None
+    return out_mov
+
+
 def _cf_mask_png(frame, out_w, out_h, path):
     """Draw an alpha mask for a clipframe shape (white where content, transparent elsewhere).
     Frame is one of 'polaroid'|'circle'|'roundrect'|'rect'|'star'. Path is the mask PNG output."""
@@ -1385,7 +1457,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
             # time for kaleidoscopic swirl. scale2ref upsamples to sprite dims via bicubic (smooth),
             # then feeds `displace`. No PNG I/O, no cross-blend, no tearing.
             distort = next((a for a in (o.get("anims") or []) if a.get("type") == "distort"), None)
-            distort_geq = None    # (r_expr, g_expr, dur_o) — emitted below in the filter graph
+            distort_mov = None      # path to the pre-rendered noise MOV, added as an ffmpeg input below
             if distort:
                 aS_d = s + max(0.0, float(distort.get("tStart", 0) or 0))
                 aEv_d = distort.get("tEnd"); aE_d = s + min(dur_o, float(aEv_d)) if (aEv_d is not None and float(aEv_d) > 0) else (s + dur_o)
@@ -1393,53 +1465,19 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     amp_frac = float(distort.get("amp", 0.025))
                     freq = float(distort.get("freq", 2.5))
                     dspd = float(distort.get("speed", 1.2))
-                    # octaves/smooth kept for back-compat with older projects; smooth reduces the
-                    # secondary harmonic amplitude (higher smooth = smoother, less detailed warp).
-                    smooth = max(0.0, min(1.0, float(distort.get("smooth", 0.3))))
-                    # amp_px is the peak pixel offset the displace filter will produce. ffmpeg's
-                    # displace map values are ±127 (u8 minus 128), so clamp there. Sum of sines is
-                    # normalized to max 1.0 so amp_px == real peak displacement.
+                    octaves = max(1, min(4, int(distort.get("octaves", 2))))
                     amp_px = min(120.0, max(0.0, amp_frac * W))
-                    # tS_local / tE_local: local time within the sprite pipeline (color source's T)
-                    tS_local = max(0.0, aS_d - s)
-                    tE_local = min(dur_o, aE_d - s)
-                    # Wave parameters.
-                    #   ROT_SPD: how fast the whole displacement field rotates (rad/sec).
-                    #     Scales with user speed so the Warp-speed slider visibly changes swirl rate.
-                    #     At speed=1.2 this is 1.8 rad/s → one full swirl per ~3.5s (visible in 7s clip).
-                    #   PH_SPD:  wave phase advance (2*PI*speed) — traveling wave rate.
-                    #   base_amp / sec_amp: primary and secondary harmonic weights (sum = 1.0).
-                    rot_spd = 1.5 * dspd
-                    ph_spd = 2.0 * math.pi * dspd
-                    sec_amp = 0.35 * (1.0 - smooth)
-                    base_amp = 1.0 - sec_amp
-                    # geq expression. st(0..5) cache subexpressions across R/G evals for speed.
-                    # Coordinate normalization: u=(X/W-0.5), v=(Y/H-0.5), both in [-0.5, 0.5].
-                    # Rotate by theta = rot_spd*(T-tS) so the whole field slowly swirls.
-                    # Phase = ph_spd*(T-tS) → traveling waves that never reverse direction.
-                    def _dexpr(main_axis, phase_mul):
-                        # main_axis: 'u' (ld(3)) drives sin(freq*u+phase); 'v' (ld(4)) drives sin(freq*v+phase)
-                        ax_main = "ld(3)" if main_axis == "u" else "ld(4)"
-                        ax_sec  = "ld(4)" if main_axis == "u" else "ld(3)"
-                        return (
-                            "st(0,X/W-0.5);"
-                            "st(1,Y/H-0.5);"
-                            "st(2,%g*(T-%g));"
-                            "st(3,cos(ld(2))*ld(0)+sin(ld(2))*ld(1));"
-                            "st(4,-sin(ld(2))*ld(0)+cos(ld(2))*ld(1));"
-                            "st(5,%g*(T-%g));"
-                            "128+if(between(T,%g,%g),%g*(%g*sin(2*PI*%g*%s+ld(5)*%g)+%g*sin(4*PI*%g*%s+ld(5)*%g)),0)"
-                        ) % (
-                            rot_spd, tS_local,
-                            ph_spd, tS_local,
-                            tS_local, tE_local,
-                            amp_px,
-                            base_amp, freq, ax_main, 1.0,
-                            sec_amp, freq, ax_sec,  0.73,
-                        )
-                    r_expr = _dexpr("u", 1.0)          # X displacement: main wave along rotated-u
-                    g_expr = _dexpr("v", 1.1)          # Y displacement: main wave along rotated-v, slightly faster phase
-                    distort_geq = (r_expr, g_expr, dur_o)
+                    # Pre-render a 3D-smoothed noise volume as a MOV. This is the only approach
+                    # that gets us smooth, coherent, non-glitchy warp: displace consumes real video
+                    # frames whose smoothness is baked in by numpy+scipy, not by live-computed math
+                    # that can't guarantee frame-to-frame continuity. Seed derived from overlay id.
+                    seed = (hash(o.get("id", "d")) & 0x7fffffff)
+                    _mov_dur = max(0.1, aE_d - aS_d)
+                    _out_mov = os.path.join(tmp, f"dnoise_{k}.mov")
+                    distort_mov = gen_animated_noise_mov(
+                        256, 256, _mov_dur, amp_px, freq, dspd, octaves, seed,
+                        _out_mov, tmp, fps=30
+                    )
                     hspd = float(distort.get("hue", 0.35))
                     if hspd > 0:
                         hexpr = "if(between(t,%g,%g),%g*(t-%g),0)" % (aS_d, aE_d, hspd * 360.0, aS_d)
@@ -1535,28 +1573,24 @@ def apply_overlays(silent, overlays, W, H, tmp):
             # `geq` (traveling sine waves, per-frame rotation) → scale2ref upsamples to sprite dims
             # → displace. Blur applies split+gblur+overlay. All graph stages, not chain filters.
             # Chain: filt → distort? → blur? → [oi{k}]
-            # Distort requires stable per-frame sampling of the sprite so the color+geq map advances
-            # 1:1 with it. `-loop 1 -i image.png` defaults to 25fps which mismatches the 30fps output
-            # and causes displace to see duplicate frames (~every 6th frame = 0-diff). fps=30 aligns.
-            if distort_geq is not None:
+            # Distort needs the sprite frame rate to match the noise MOV (30fps) so displace
+            # consumes them 1:1. `-loop 1 -i image.png` defaults to 25fps otherwise.
+            noise_ii = None
+            if distort_mov is not None:
                 filt.append("fps=30")
+                inputs += ["-i", distort_mov]
+                noise_ii = ii + 1
             # Stage 1: run the base filter chain, output an intermediate label
             stage_in = f"[{ii}:v]"
             stage_out = f"[oi_a{k}]"
             fc.append(stage_in + ",".join(filt) + stage_out)
             cur = f"oi_a{k}"
-            # Stage 2 (optional): distort via displace filter. No external inputs; the map is
-            # generated inline by `color+geq`. Traveling-wave sine expressions produce continuous
-            # flow (never seesaws) with a slow rotation for kaleidoscopic swirl.
-            if distort_geq is not None:
-                r_expr, g_expr, d_dur = distort_geq
-                # Low-res displacement map (256×256), matched to sprite fps by the encoder later.
-                # scale2ref bicubic upsample smooths the wave field to sprite resolution.
-                # rate matches the output encoder's target (30fps) so displace consumes 1:1 with the
-                # sprite input — mismatched input rates cause periodic frame duplication in displace.
-                fc.append(f"color=size=256x256:rate=30:d={d_dur:g}:c=black[dcs{k}]")
-                fc.append(f"[dcs{k}]geq=r='{r_expr}':g='{g_expr}':b='128'[dmlo{k}]")
-                fc.append(f"[dmlo{k}][{cur}]scale2ref=flags=bicubic[dmup{k}][{cur}b]")
+            # Stage 2 (optional): distort via displace filter, fed by the pre-rendered noise MOV.
+            # scale2ref bicubic upsamples the low-res noise field to sprite resolution.
+            # Because the MOV was generated with 3D-smoothed noise (space AND time), motion is
+            # guaranteed continuous — no glitches, no seesaw, no rigid math patterns.
+            if noise_ii is not None:
+                fc.append(f"[{noise_ii}:v][{cur}]scale2ref=flags=bicubic[dmup{k}][{cur}b]")
                 fc.append(f"[dmup{k}]format=gbrp,extractplanes=r+g[dnx{k}][dny{k}]")
                 fc.append(f"[{cur}b][dnx{k}][dny{k}]displace=edge=smear[oi_b{k}]")
                 cur = f"oi_b{k}"
@@ -1573,8 +1607,8 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 fc.append(f"[{cur}]null[oi{k}]")
             fc.append(f"[{last}][oi{k}]overlay=x='W*{ox}-w/2+({odx})':y='H*{oy}-h/2+({ody})':{en}[v{k}]")
             last = f"v{k}"
-            # Advance ii past the main overlay input (distort no longer adds extra inputs).
-            ii = ii + 1
+            # Advance ii past the main overlay input plus the optional noise MOV (distort).
+            ii = ii + (2 if noise_ii is not None else 1)
         # sparkle: composite twinkling copies of an emoji (or image) around the overlay center.
         # Iterate ALL sparkle anims (not just the first) so stacked sparkles all render.
         # The emoji can be a single glyph OR a decorative composite string ("˗ˏˋ ✸ ˎˊ˗", "✶⋆.˚").
@@ -1699,11 +1733,40 @@ def flatten_segments(edl):
     return flat, vid_total
 
 
+def _resolve_variants(edl):
+    """Mirror the client's resolveOverlay(): when the render canvas differs from primaryAspect,
+    merge each overlay's per-aspect override (EDL.variants[canvas].overlays[id]) into the base
+    overlay dict. Without this, overlays position/scale correctly in the preview but stack at
+    base coordinates in the render — visible as "bottles all squished to center" when the user
+    laid them out for a 1x1 canvas but primary was 9x16."""
+    canvas = (edl.get("settings") or {}).get("canvas") or "9x16"
+    primary = edl.get("primaryAspect") or canvas
+    if canvas == primary:
+        return edl
+    bag = ((edl.get("variants") or {}).get(canvas) or {}).get("overlays") or {}
+    if not bag:
+        return edl
+    # Return a shallow-copied edl with overlays list replaced by variant-merged copies.
+    new_overlays = []
+    for o in (edl.get("overlays") or []):
+        if not isinstance(o, dict):
+            new_overlays.append(o); continue
+        override = bag.get(o.get("id")) or {}
+        if override:
+            merged = dict(o); merged.update(override)
+            new_overlays.append(merged)
+        else:
+            new_overlays.append(o)
+    new_edl = dict(edl); new_edl["overlays"] = new_overlays
+    return new_edl
+
+
 def render(edl, out_dir=None, out_name=None, progress=None):
     def prog(stage, pct):
         if progress is not None:
             progress["stage"] = stage; progress["pct"] = int(pct)
     prog("Preparing…", 2)
+    edl = _resolve_variants(edl)   # apply per-canvas overlay overrides (matches client preview)
     s = edl.get("settings", {})
     canvas = s.get("canvas", "9x16")
     W, H = CANVAS.get(canvas, CANVAS["9x16"])
