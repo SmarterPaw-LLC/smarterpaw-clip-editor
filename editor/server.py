@@ -808,7 +808,10 @@ def _anim_exprs(o, s, dur, W, tv="t", H=None):
         elif ty == "bounce":
             amp = float(a.get("amp", 0.05)) * W; sp = float(a.get("speed", 1)); add_dy("-%g*abs(sin(PI*%g*%s))" % (amp, sp, lt))
         elif ty == "slideIn":
-            d = max(0.01, float(a.get("d", 0.5))); dist = float(a.get("dist", 0.2)) * W; dr = a.get("dir", "left")
+            d = max(0.01, float(a.get("d", 0.5))); dr = a.get("dir", "left")
+            # Use H for up/down so distance scales with the actual travel axis (matches preview).
+            axis = H if dr in ("up", "down") else W
+            dist = float(a.get("dist", 0.2)) * axis
             term = "if(lt(%s,%g),pow(1-%s/%g,2)*%g,0)" % (lt, d, lt, d, dist)
             term = ("-" if dr in ("left", "up") else "") + term
             (add_dx if dr in ("left", "right") else add_dy)(term)
