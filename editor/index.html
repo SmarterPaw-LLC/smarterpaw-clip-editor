@@ -307,7 +307,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.80.2</span>
+  <span class="ver" id="appVer">v1.80.3</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1547,35 +1547,59 @@ function audSyncEditor(){
     audSyncPreview(); renderTracks(); };
   _in.oninput = e => _setIn(e.target.value);
   _inNum.oninput = e => _setIn(e.target.value);
-  // Preview button — play a chunk of the source from srcIn so user can hear their in-point
-  // AND see the live playback position (audE_prevPos) so they know where to set srcIn.
-  // The '⤓ Set start here' button copies the current preview time back into the srcIn slider.
-  let _prevAud = null, _prevRaf = null;
+  // Preview button — plays a chunk of the source from wherever we last paused (or srcIn on first
+  // press), shows the live time in `audE_prevPos`, and keeps '⤓ Set start here' visible even
+  // AFTER pause so the user can capture the exact spot they stopped on.
+  let _prevAud = null, _prevRaf = null, _prevLastTime = null;
   const _posEl = $('#audE_prevPos'), _setHereBtn = $('#audE_setHere');
-  const _stopPrev = ()=>{
-    if(_prevAud){ try{_prevAud.pause();}catch(_){} _prevAud=null; }
+  const _fmtPos = t => (t == null ? '' : t.toFixed(1) + 's');
+  const _pausePrev = ()=>{
+    if(_prevAud){
+      _prevLastTime = _prevAud.currentTime;
+      try{_prevAud.pause();}catch(_){}
+    }
     if(_prevRaf){ cancelAnimationFrame(_prevRaf); _prevRaf=null; }
-    if(_posEl) _posEl.textContent = '';
-    if(_setHereBtn) _setHereBtn.style.display = 'none';
-    $('#audE_prev').textContent = '▶ Preview';
+    if(_posEl) _posEl.textContent = _fmtPos(_prevLastTime) + ' (paused)';
+    // Button stays visible so user can grab the paused position with '⤓ Set start here'.
+    $('#audE_prev').textContent = '▶ Resume';
   };
-  const _tickPrev = ()=>{ if(!_prevAud) return;
-    if(_posEl) _posEl.textContent = _prevAud.currentTime.toFixed(1) + 's';
+  const _tickPrev = ()=>{ if(!_prevAud || _prevAud.paused) return;
+    _prevLastTime = _prevAud.currentTime;
+    if(_posEl) _posEl.textContent = _fmtPos(_prevLastTime);
     _prevRaf = requestAnimationFrame(_tickPrev); };
   $('#audE_prev').onclick = ()=>{
-    if(_prevAud){ _stopPrev(); return; }
+    // Resume path: audio exists but paused — restart from where we left off.
+    if(_prevAud && _prevAud.paused){
+      try{ _prevAud.currentTime = _prevLastTime != null ? _prevLastTime : (a.srcIn||0); }catch(_){}
+      _prevAud.play().catch(()=>{});
+      $('#audE_prev').textContent = '❚❚ Pause';
+      _tickPrev();
+      return;
+    }
+    // Playing → pause (keeps button visible so user can capture the pause spot).
+    if(_prevAud){ _pausePrev(); return; }
+    // Fresh start — new Audio object seeded at srcIn.
     _prevAud = new Audio('/'+encodeURI(a.src||''));
     _prevAud.volume = 0.7;
-    _prevAud.onloadedmetadata = ()=>{ try{ _prevAud.currentTime = a.srcIn||0; }catch(_){} _prevAud.play().catch(()=>{}); };
-    $('#audE_prev').textContent = '■ Stop';
+    _prevLastTime = a.srcIn || 0;
+    _prevAud.onloadedmetadata = ()=>{ try{ _prevAud.currentTime = _prevLastTime; }catch(_){} _prevAud.play().catch(()=>{}); };
+    $('#audE_prev').textContent = '❚❚ Pause';
     if(_setHereBtn) _setHereBtn.style.display = '';
     _tickPrev();
-    _prevAud.onended = _stopPrev;
+    _prevAud.onended = ()=>{
+      // Playback finished — reset UI back to fresh state (no last-time to capture).
+      _prevAud = null;
+      if(_prevRaf){ cancelAnimationFrame(_prevRaf); _prevRaf=null; }
+      if(_posEl) _posEl.textContent = '';
+      if(_setHereBtn) _setHereBtn.style.display = 'none';
+      $('#audE_prev').textContent = '▶ Preview';
+    };
   };
   if(_setHereBtn) _setHereBtn.onclick = ()=>{
-    if(!_prevAud) return;
-    _setIn(_prevAud.currentTime);   // reuses the same handler as the slider so srcIn value + live-mix stay in sync
-    toast('srcIn set to '+_prevAud.currentTime.toFixed(2)+'s');
+    const t = (_prevAud ? _prevAud.currentTime : _prevLastTime);
+    if(t == null) return;
+    _setIn(t);
+    toast('srcIn set to '+t.toFixed(2)+'s');
   };
 }
 // Build the on-timeline bar for one audio clip (drag-to-move, resize handles, hide/lock/delete icons)
@@ -3726,12 +3750,14 @@ function renderClipMgr(){
     brandBox.appendChild(brandHd);
     const brandBody = document.createElement('div'); brandBody.className = 'grpbody'; brandBox.appendChild(brandBody);
     Object.keys(prods).sort().forEach(prod=>{
-      const arr = prods[prod]; const c0 = arr[0];   // representative clip for product-level metadata
+      const arr = prods[prod]; const c0 = arr[0];   // representative clip; null for empty categories
       const pk = 'mb:'+br+'/p:'+prod;
       const prodBox = document.createElement('div'); prodBox.className = 'prodbox'+((!filterActive && collapsed.has(pk))?' collapsed':'');
       // Product header: collapsible chevron + name + ✏ rename + brand dropdown + 📁 update folder + count
       const expectedPrefix = '/sources/clips/'+br+'/'+prod+'/';
-      const inPlace = (c0.url||'').indexOf(expectedPrefix) === 0;
+      // Empty category (no clips yet) → treat as in-place. Guard against undefined c0 which
+      // otherwise crashed renderClipMgr and left the whole modal blank.
+      const inPlace = c0 ? ((c0.url||'').indexOf(expectedPrefix) === 0) : true;
       const prodHd = document.createElement('div'); prodHd.className = 'grp'; prodHd.style.cursor = 'pointer';
       prodHd.style.cssText += ';display:flex;align-items:center;gap:8px;padding:6px 4px;font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.4px';
       prodHd.innerHTML = `<span class="cr">▾</span><span style="color:var(--acc)">${prod}</span><span class="ct" style="margin-left:auto;background:var(--panel2);padding:0 6px;border-radius:8px">${arr.length}</span>`;
