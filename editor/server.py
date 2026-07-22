@@ -251,20 +251,20 @@ def _cleanup_empty_dirs(path):
 
 
 def list_all_categories():
-    """Return every category (product) folder name under SRC_ROOT, whether it has clips or not.
-    Used so 'New category' creations show up as move targets in the Manage Clips dropdown even
-    while the folder is still empty."""
-    seen = set()
+    """Return every category folder under SRC_ROOT as {brand, name} pairs — including EMPTY ones,
+    so 'New category' creations show up in the Manage Clips view even before any clip lives there.
+    (Older clients treat this as a flat list of names — kept working via a legacy shim below.)"""
+    out = []
     if not os.path.isdir(SRC_ROOT):
-        return []
-    for brand_entry in os.listdir(SRC_ROOT):
+        return out
+    for brand_entry in sorted(os.listdir(SRC_ROOT)):
         brand_path = os.path.join(SRC_ROOT, brand_entry)
         if not os.path.isdir(brand_path):
             continue
-        for sub in os.listdir(brand_path):
+        for sub in sorted(os.listdir(brand_path)):
             if os.path.isdir(os.path.join(brand_path, sub)):
-                seen.add(sub)
-    return sorted(seen)
+                out.append({"brand": brand_entry, "name": sub})
+    return out
 
 
 def scan_sources():

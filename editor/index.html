@@ -307,7 +307,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.80.1</span>
+  <span class="ver" id="appVer">v1.80.2</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -3640,7 +3640,7 @@ let _acFiles=null;
 function openAddClip(files){
   files=[...files].filter(isVideoFile); if(!files.length) return toast('No video files');
   _acFiles=files;
-  const cats=[...new Set([...(MAN.clips.map(c=>c.product)), ...(MAN.allCategories||[])])].sort();
+  const cats=[...new Set([...(MAN.clips.map(c=>c.product)), ...((MAN.allCategories||[]).map(c=>typeof c==='string'?c:c.name))])].sort();
   const sel=$('#acCat'); sel.innerHTML='';
   cats.forEach(c=>{ const o=document.createElement('option'); o.value=c; o.textContent=c; sel.appendChild(o); });
   const nw=document.createElement('option'); nw.value='__new__'; nw.textContent='➕ New category…'; sel.appendChild(nw);
@@ -3695,7 +3695,7 @@ async function setProductBrand(product, brand){
 }
 function renderClipMgr(){
   const box=$('#mgrList'); if(!box) return; const q=($('#mgrFilter').value||'').trim().toLowerCase();
-  const cats=[...new Set([...(MAN.clips.map(c=>c.product)), ...(MAN.allCategories||[])])].sort();
+  const cats=[...new Set([...(MAN.clips.map(c=>c.product)), ...((MAN.allCategories||[]).map(c=>typeof c==='string'?c:c.name))])].sort();
   const list=MAN.clips.filter(c=>_clipMatchesQuery(c, q));
   $('#mgrCount').textContent=list.length+' / '+MAN.clips.length;
   box.innerHTML='';
@@ -3703,6 +3703,18 @@ function renderClipMgr(){
   // Pre-group by brand → product → clips so headers can show counts
   const byBrand = {};
   list.forEach(c=>{ const br=clipBrand(c); (byBrand[br]=byBrand[br]||{}); (byBrand[br][c.product]=byBrand[br][c.product]||[]).push(c); });
+  // Ensure EMPTY category folders (from MAN.allCategories) show up as visible empty boxes so
+  // users see their '+ New category' creations landed — otherwise the modal looks unchanged
+  // because renderClipMgr previously only iterated categories that had at least one clip.
+  // Skips when a filter is active (empty categories can't match a text search).
+  if(!filterActive){
+    (MAN.allCategories || []).forEach(entry => {
+      if(typeof entry !== 'object' || !entry.brand || !entry.name) return;
+      const br = entry.brand, prod = entry.name;
+      byBrand[br] = byBrand[br] || {};
+      byBrand[br][prod] = byBrand[br][prod] || [];
+    });
+  }
   const brandOrder = BRAND_ORDER.concat(Object.keys(byBrand).filter(b=>!BRAND_ORDER.includes(b)));
   brandOrder.forEach(br=>{
     const prods = byBrand[br]; if(!prods) return;
@@ -3938,7 +3950,7 @@ function importJSON(file){ const r=new FileReader();
 let aiSel=[];   // selected clip ids, in pick order
 function openAiBuild(){ stop(); aiSel=[]; $('#aiName').value=''; $('#aiBrief').value=''; $('#aiStatus').textContent='';
   $('#aiCanvas').value=EDL.settings.canvas||'9x16';
-  const cats=[...new Set([...(MAN.clips.map(c=>c.product)), ...(MAN.allCategories||[])])].sort();
+  const cats=[...new Set([...(MAN.clips.map(c=>c.product)), ...((MAN.allCategories||[]).map(c=>typeof c==='string'?c:c.name))])].sort();
   $('#aiCat').innerHTML='<option value="">All categories</option>'
     +BRAND_ORDER.map(b=>{ const opts=cats.filter(p=>(MAN.clips.find(c=>c.product===p)||{}).brand===b); return opts.length?`<optgroup label="${BRAND_LABELS[b]||b}">`+opts.map(p=>`<option value="${p}">${p}</option>`).join('')+`</optgroup>`:''; }).join('');
   $('#aiFilter').value='';
