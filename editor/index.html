@@ -307,7 +307,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.80.0</span>
+  <span class="ver" id="appVer">v1.80.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1513,6 +1513,8 @@ function audSyncEditor(){
     <div style="margin-top:6px"><label>Start in track at <input type="range" id="audE_in" min="0" step="0.05" style="width:140px" value="${a.srcIn||0}">
       <input type="number" id="audE_inNum" min="0" step="0.1" style="width:60px" value="${(a.srcIn||0).toFixed(1)}"> s</label>
       <button class="mini" id="audE_prev">▶ Preview</button>
+      <span id="audE_prevPos" style="font-family:monospace;font-size:11px;color:var(--acc,#f0a830);min-width:44px;display:inline-block;text-align:center"></span>
+      <button class="mini" id="audE_setHere" title="Copy the live preview position into the Start-in-track-at slider" style="display:none">⤓ Set start here</button>
       <span id="audE_srcLen" style="font-size:11px;color:var(--mut)"></span></div>
     <div style="margin-top:6px"><label>Volume <input type="range" id="audE_vol" min="0" max="2" step="0.05" value="${a.volume!=null?a.volume:1}" style="width:160px"> <span id="audE_volV" style="font-size:11px;color:var(--mut)">${Math.round((a.volume!=null?a.volume:1)*100)}%</span></label></div>
     <div><label>Fade in <input type="range" id="audE_fi" min="0" max="5" step="0.1" value="${a.fadeIn||0}" style="width:160px"> <span id="audE_fiV" style="font-size:11px;color:var(--mut)">${(a.fadeIn||0).toFixed(1)}s</span></label></div>
@@ -1545,15 +1547,35 @@ function audSyncEditor(){
     audSyncPreview(); renderTracks(); };
   _in.oninput = e => _setIn(e.target.value);
   _inNum.oninput = e => _setIn(e.target.value);
-  // Preview button — play a short chunk of the source from srcIn so user can hear their in-point
-  let _prevAud = null;
+  // Preview button — play a chunk of the source from srcIn so user can hear their in-point
+  // AND see the live playback position (audE_prevPos) so they know where to set srcIn.
+  // The '⤓ Set start here' button copies the current preview time back into the srcIn slider.
+  let _prevAud = null, _prevRaf = null;
+  const _posEl = $('#audE_prevPos'), _setHereBtn = $('#audE_setHere');
+  const _stopPrev = ()=>{
+    if(_prevAud){ try{_prevAud.pause();}catch(_){} _prevAud=null; }
+    if(_prevRaf){ cancelAnimationFrame(_prevRaf); _prevRaf=null; }
+    if(_posEl) _posEl.textContent = '';
+    if(_setHereBtn) _setHereBtn.style.display = 'none';
+    $('#audE_prev').textContent = '▶ Preview';
+  };
+  const _tickPrev = ()=>{ if(!_prevAud) return;
+    if(_posEl) _posEl.textContent = _prevAud.currentTime.toFixed(1) + 's';
+    _prevRaf = requestAnimationFrame(_tickPrev); };
   $('#audE_prev').onclick = ()=>{
-    if(_prevAud){ try{_prevAud.pause();}catch(_){} _prevAud=null; $('#audE_prev').textContent='▶ Preview'; return; }
+    if(_prevAud){ _stopPrev(); return; }
     _prevAud = new Audio('/'+encodeURI(a.src||''));
     _prevAud.volume = 0.7;
     _prevAud.onloadedmetadata = ()=>{ try{ _prevAud.currentTime = a.srcIn||0; }catch(_){} _prevAud.play().catch(()=>{}); };
     $('#audE_prev').textContent = '■ Stop';
-    _prevAud.onended = ()=>{ _prevAud=null; $('#audE_prev').textContent='▶ Preview'; };
+    if(_setHereBtn) _setHereBtn.style.display = '';
+    _tickPrev();
+    _prevAud.onended = _stopPrev;
+  };
+  if(_setHereBtn) _setHereBtn.onclick = ()=>{
+    if(!_prevAud) return;
+    _setIn(_prevAud.currentTime);   // reuses the same handler as the slider so srcIn value + live-mix stay in sync
+    toast('srcIn set to '+_prevAud.currentTime.toFixed(2)+'s');
   };
 }
 // Build the on-timeline bar for one audio clip (drag-to-move, resize handles, hide/lock/delete icons)
