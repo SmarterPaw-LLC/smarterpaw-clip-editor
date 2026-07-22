@@ -307,7 +307,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.79.5</span>
+  <span class="ver" id="appVer">v1.79.6</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -3210,7 +3210,11 @@ function renderTracks(){
 // Build one overlay bar element on its channel lane (drag to move/retime/change channel).
 function buildOverlayBar(o,total){ const b=document.createElement('div'); b.dataset.ovid=o.id; b.className='blk ov-'+o.type+(o.id===ovSel?' sel':'')+(_msel.includes(o)?' msel':'')+(o.hidden?' clhidden':'')+(o.locked?' cllocked':'');
   b.style.left=((+o.start||0)/total*100)+'%'; b.style.width=((+o.dur||0)/total*100)+'%';
-  b.appendChild(document.createTextNode(o.type==='image'?'🖼 image':(o.type==='shape'?'▭ shape':(o.type==='sprinkle'?'✨ sprinkle':(o.type==='arrow'?('➴ '+(o.subtype||'arrow')):(o.type==='clipframe'?('🎞 '+(o.frame||'polaroid')):('🅣 '+(o.text||'text'))))))));
+  // Show the source filename for image/sprinkle bars so stacks are distinguishable at a glance —
+  // strip extension and any lib_ prefix from library assets for readability.
+  const _imgName = (o)=>{ const raw = (o.src||'').split('/').pop() || 'image';
+    return raw.replace(/^lib_/,'').replace(/\.(webp|png|jpe?g|gif|apng)$/i,''); };
+  b.appendChild(document.createTextNode(o.type==='image'?('🖼 '+_imgName(o)):(o.type==='shape'?'▭ shape':(o.type==='sprinkle'?('✨ '+_imgName(o)):(o.type==='arrow'?('➴ '+(o.subtype||'arrow')):(o.type==='clipframe'?('🎞 '+(o.frame||'polaroid')):('🅣 '+(o.text||'text'))))))));
   const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR'; b.appendChild(hL); b.appendChild(hR);
   // hide / lock / split icons (same UX as clip blocks)
   const ic=document.createElement('div'); ic.className='clipicons';
