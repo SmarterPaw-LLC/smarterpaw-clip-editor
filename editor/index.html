@@ -307,7 +307,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.79.7</span>
+  <span class="ver" id="appVer">v1.79.8</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1344,9 +1344,24 @@ $('#btnAddSel').onclick=()=>{ const id=$('#btnAddSel').dataset.id || (sel>=0&&ED
 
 /* ---------- settings ---------- */
 const CANVAS_PX={'9x16':[1080,1920],'4x5':[1080,1350],'1x1':[1080,1080],'16x9':[1920,1080]};
-function chooseCanvas(c){ EDL.settings.canvas=c; if($('#setCanvas')) $('#setCanvas').value=c;
+function chooseCanvas(c){
+  const prevAspect = EDL.settings.canvas;
+  EDL.settings.canvas=c; if($('#setCanvas')) $('#setCanvas').value=c;
   document.querySelectorAll('.arbtn').forEach(b=>b.classList.toggle('on', b.dataset.ar===c));
   const px=CANVAS_PX[c]||[1080,1920]; if($('#arDim')) $('#arDim').textContent=px[0]+'×'+px[1];
+  // If switching to a variant aspect that has NO layout of its own, seed it with a copy of the
+  // previous aspect's layout (whichever had variants — or from the primary's base positions if
+  // the previous was primary). Otherwise 1x1 → 4:5 collapses everything to base-9x16 positions
+  // which typically means overlays stack in the center. User can Undo to get bare base behavior.
+  if(c !== primaryAspect() && !((EDL.variants||{})[c]||{}).overlays){
+    const srcBag = prevAspect && prevAspect !== c ? ((EDL.variants||{})[prevAspect]||{}).overlays : null;
+    if(srcBag && Object.keys(srcBag).length){
+      histCommit();
+      EDL.variants = EDL.variants || {};
+      EDL.variants[c] = {overlays: JSON.parse(JSON.stringify(srcBag))};
+      toast('Seeded '+c+' layout from '+prevAspect+' — adjust or Undo');
+    }
+  }
   sizeStage(); updateTotal(); if(sel>=0&&EDL.segments[sel]) applyFraming(EDL.segments[sel]); renderOverlays(playhead); renderTracks(); updateAspectBadge(); }
 function updateAspectBadge(){
   const b=$('#aspectBadge'), btn=$('#aspectReset'); if(!b||!EDL) return;
