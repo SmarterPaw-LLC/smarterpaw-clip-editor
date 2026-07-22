@@ -307,7 +307,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.79.8</span>
+  <span class="ver" id="appVer">v1.79.9</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2646,7 +2646,7 @@ function buildOvEditor(){
         <button class="mini" id="ovRepClip" title="Pick a new clip-art icon or emoji">🎨 Clip art…</button>
         <button class="mini" id="ovRepLib" title="Pick from the shared image library">📚 Library…</button>
       </div>
-      <div style="margin-top:6px"><label>Size <input type="range" id="ovScale" min="0.05" max="1" step="0.01" value="${o.scale}"></label>
+      <div style="margin-top:6px"><label>Size <input type="range" id="ovScale" min="0.05" max="3" step="0.01" value="${o.scale}"></label>
       <label>Opacity <input type="range" id="ovImgOp" min="0" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label></div>`;
   }
   h+=`<div class="sec">Transform</div>
