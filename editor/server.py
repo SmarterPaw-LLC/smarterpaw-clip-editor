@@ -1800,30 +1800,37 @@ def flatten_segments(edl):
 
 
 def _resolve_variants(edl):
-    """Mirror the client's resolveOverlay(): when the render canvas differs from primaryAspect,
-    merge each overlay's per-aspect override (EDL.variants[canvas].overlays[id]) into the base
-    overlay dict. Without this, overlays position/scale correctly in the preview but stack at
-    base coordinates in the render — visible as "bottles all squished to center" when the user
-    laid them out for a 1x1 canvas but primary was 9x16."""
+    """Mirror the client's resolveOverlay() + resolveSegment(): when the render canvas differs
+    from primaryAspect, merge each overlay's / segment's per-aspect override into the base dict.
+    Overlays key on `id`. Segments key on `_suid` (per-segment stable id, backfilled on load).
+    Without this the render collapses to base-aspect positions/framing even though the preview
+    was correctly rendered from variants."""
     canvas = (edl.get("settings") or {}).get("canvas") or "9x16"
     primary = edl.get("primaryAspect") or canvas
     if canvas == primary:
         return edl
-    bag = ((edl.get("variants") or {}).get(canvas) or {}).get("overlays") or {}
-    if not bag:
+    variants = (edl.get("variants") or {}).get(canvas) or {}
+    ov_bag = variants.get("overlays") or {}
+    seg_bag = variants.get("segments") or {}
+    if not ov_bag and not seg_bag:
         return edl
-    # Return a shallow-copied edl with overlays list replaced by variant-merged copies.
-    new_overlays = []
-    for o in (edl.get("overlays") or []):
-        if not isinstance(o, dict):
-            new_overlays.append(o); continue
-        override = bag.get(o.get("id")) or {}
-        if override:
-            merged = dict(o); merged.update(override)
-            new_overlays.append(merged)
-        else:
-            new_overlays.append(o)
-    new_edl = dict(edl); new_edl["overlays"] = new_overlays
+    new_edl = dict(edl)
+    if ov_bag:
+        new_overlays = []
+        for o in (edl.get("overlays") or []):
+            if not isinstance(o, dict):
+                new_overlays.append(o); continue
+            override = ov_bag.get(o.get("id")) or {}
+            new_overlays.append({**o, **override} if override else o)
+        new_edl["overlays"] = new_overlays
+    if seg_bag:
+        new_segments = []
+        for s in (edl.get("segments") or []):
+            if not isinstance(s, dict):
+                new_segments.append(s); continue
+            override = seg_bag.get(s.get("_suid")) or {}
+            new_segments.append({**s, **override} if override else s)
+        new_edl["segments"] = new_segments
     return new_edl
 
 
