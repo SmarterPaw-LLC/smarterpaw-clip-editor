@@ -2014,7 +2014,8 @@ def render(edl, out_dir=None, out_name=None, progress=None):
             if st >= total: continue
             if st + du > total: du = total - st
             src_in = max(0.0, float(a.get("srcIn", 0) or 0))   # skip N seconds into the source file
-            tracks.append((ap, st, du, vol, fi, fo, src_in, 1.0))
+            spd = max(0.25, min(4.0, float(a.get("speed", 1) or 1)))   # atempo-safe range
+            tracks.append((ap, st, du, vol, fi, fo, src_in, spd))
         # Framed-clip (picture-in-picture) source audio — one track per clipframe with srcAudio=true.
         # Reuse id_to_file lookup to resolve the source file path.
         cf_i2f = None

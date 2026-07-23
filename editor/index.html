@@ -307,7 +307,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.80.7</span>
+  <span class="ver" id="appVer">v1.81.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1549,6 +1549,7 @@ function audSyncEditor(){
     <div style="margin-top:6px"><label>Volume <input type="range" id="audE_vol" min="0" max="2" step="0.05" value="${a.volume!=null?a.volume:1}" style="width:160px"> <span id="audE_volV" style="font-size:11px;color:var(--mut)">${Math.round((a.volume!=null?a.volume:1)*100)}%</span></label></div>
     <div><label>Fade in <input type="range" id="audE_fi" min="0" max="5" step="0.1" value="${a.fadeIn||0}" style="width:160px"> <span id="audE_fiV" style="font-size:11px;color:var(--mut)">${(a.fadeIn||0).toFixed(1)}s</span></label></div>
     <div><label>Fade out <input type="range" id="audE_fo" min="0" max="5" step="0.1" value="${a.fadeOut||0}" style="width:160px"> <span id="audE_foV" style="font-size:11px;color:var(--mut)">${(a.fadeOut||0).toFixed(1)}s</span></label></div>
+    <div style="margin-top:6px"><label title="Playback rate — atempo shifts pitch. 0.5× = half speed, deeper. 2× = double speed, higher.">Speed <select id="audE_spd">${[0.25,0.5,0.75,1,1.25,1.5,2,3,4].map(sp=>`<option value="${sp}" ${(+a.speed||1)===sp?'selected':''}>${sp}×</option>`).join('')}</select></label></div>
     <div style="margin-top:6px"><button class="mini" id="audE_del">✕ Delete</button></div>`;
   const upd=(k,v)=>{ a[k]=v; audSyncPreview(); renderTracks(); };
   $('#audE_start').oninput=e=>{ upd('start', Math.max(0, parseFloat(e.target.value)||0)); };
@@ -1557,6 +1558,13 @@ function audSyncEditor(){
   $('#audE_vol').oninput=e=>{ const v=parseFloat(e.target.value)||0; a.volume=v; $('#audE_volV').textContent=Math.round(v*100)+'%'; audSyncPreview(); };
   $('#audE_fi').oninput=e=>{ const v=parseFloat(e.target.value)||0; a.fadeIn=v; $('#audE_fiV').textContent=v.toFixed(1)+'s'; audSyncPreview(); };
   $('#audE_fo').oninput=e=>{ const v=parseFloat(e.target.value)||0; a.fadeOut=v; $('#audE_foV').textContent=v.toFixed(1)+'s'; audSyncPreview(); };
+  // Speed applies to (a) the timeline live-mix Audio element for this clip, and (b) the isolated
+  // Preview audio if one is currently open — matches how server render treats speed via atempo.
+  if($('#audE_spd')) $('#audE_spd').onchange=e=>{ const v=parseFloat(e.target.value)||1;
+    a.speed = v;
+    const el = _audEls[a.id]; if(el){ try{ el.playbackRate = v; }catch(_){} }
+    if(typeof _prevAud !== 'undefined' && _prevAud){ try{ _prevAud.playbackRate = v; }catch(_){} }
+    audSyncPreview(); renderTracks(); };
   $('#audE_del').onclick=()=>removeAudio(a.id);
   // Load source duration so the srcIn slider can cap at (source-length − clip.dur)
   const _srcLen = $('#audE_srcLen'), _in = $('#audE_in'), _inNum = $('#audE_inNum');
@@ -1614,6 +1622,7 @@ function audSyncEditor(){
     // Not playing → create/reuse audio and start from CURRENT SLIDER VALUE. Every time.
     if(!_prevAud){
       _prevAud = new Audio('/'+encodeURI(a.src||''));
+      try{ _prevAud.playbackRate = +a.speed || 1; }catch(_){}   // preview at the same tempo the render will use
       _prevAud.volume = 0.7;
       _prevAud.onended = ()=>{ _stopPrev(); if(_posEl) _posEl.textContent = 'end reached'; };
     }
@@ -1649,6 +1658,7 @@ function buildAudioBar(a, total){
     ()=>{ histCommit(); a.hidden=!a.hidden; renderTracks(); audSyncPreview(); }));
   ic.appendChild(mk(a.locked?'🔒':'🔓', a.locked?'Locked':'Click to lock (prevents drag/resize)',
     ()=>{ histCommit(); a.locked=!a.locked; renderTracks(); }));
+  ic.appendChild(mk('⎇','Split this audio track at the playhead', ()=>splitAudioAtPlayhead(a)));
   ic.appendChild(mk('✕','Delete', ()=>removeAudio(a.id)));
   b.appendChild(ic);
   b.onclick=ev=>{ ev.stopPropagation(); audSel=a.id; _lastPick='aud'; if($('#audModal').style.display!=='flex'){ $('#audModal').style.display='flex'; renderAudPickList(); }
@@ -1701,6 +1711,7 @@ function audSyncPreview(){
     if(el._url !== url){ el.src = url; el._url = url; }
     if(a.hidden){ el.volume=0; try{el.pause();}catch(_){} return; }
     el.volume = Math.max(0, Math.min(1, _audEnv(a, playhead||0)));
+    try{ el.playbackRate = +a.speed || 1; }catch(_){}   // match render-time atempo
   });
   Object.keys(_audEls).forEach(id=>{ if(!seen.has(id)){ try{_audEls[id].pause();}catch(_){} _audEls[id].src=''; delete _audEls[id]; } });
 }
@@ -3330,6 +3341,24 @@ function splitOverlayAtPlayhead(o){
   const second=JSON.parse(JSON.stringify(o)); second.id=uid(); second.start=ph; second.dur=(s+d)-ph;
   o.dur=ph-s;
   EDL.overlays.push(second); ovSel=o.id; renderTimeline(); renderOvList(); buildOvEditor(); renderOverlays(playhead); toast('Overlay split at playhead');
+}
+// Split an audio track at the playhead. The second half's srcIn advances by the pre-split length
+// (accounting for speed) so both halves continue reading the same source material — no seam.
+function splitAudioAtPlayhead(a){
+  if(!a) return; if(a.locked){ toast('Unlock the audio track first (🔒)'); return; }
+  const s=+a.start||0, d=+a.dur||0, ph=playhead||0, eps=0.06;
+  if(ph<=s+eps || ph>=s+d-eps){ toast('Move the playhead inside this audio track, then split'); return; }
+  histCommit();
+  const spd = +a.speed || 1;
+  const firstLen = ph - s;
+  const second = JSON.parse(JSON.stringify(a));
+  second.id = uidA();
+  second.start = ph;
+  second.dur = (s + d) - ph;
+  // srcIn continues where the first half left off — source seconds consumed = timeline seconds * speed
+  second.srcIn = (+a.srcIn || 0) + firstLen * spd;
+  a.dur = firstLen;
+  EDL.audio.push(second); audSel = a.id; renderTracks(); audSyncEditor(); audSyncPreview(); toast('Audio split at playhead');
 }
 // Build one clip block element for a layout entry `o` (handles base vs upper-channel behavior).
 function buildClipBlock(o,total){ const i=o.idx, sg=o.seg;
