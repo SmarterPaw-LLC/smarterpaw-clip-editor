@@ -287,10 +287,13 @@ def scan_sources():
             if m:
                 label = fn[:m.start()].strip().strip("｜|").strip()
             label = re.sub(r"\s+", " ", label)[:60] or fn
+            try: mtime = int(os.path.getmtime(full))
+            except Exception: mtime = 0
             clips.append({"id": cid, "label": label, "product": product,
                           "brand": _brand_from_path(full, product, bm),
                           "url": "/" + urllib.parse.quote(rel), "file": full,
                           "dur": round(dur, 2), "w": w, "h": h,
+                          "mtime": mtime,      # file's last-modified epoch — proxy for "date added"
                           "tags": tags_map.get(cid, [])})
     # sort by brand → product → label so the bin groups naturally
     brand_ord = {b: i for i, b in enumerate(BRAND_KEYS)}

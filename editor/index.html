@@ -307,7 +307,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.80.3</span>
+  <span class="ver" id="appVer">v1.80.4</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -3799,7 +3799,13 @@ function renderClipMgr(){
 function _buildMgrRow(c, cats){
   const row = document.createElement('div'); row.className = 'mgrrow';
   const tagsHtml = (c.tags||[]).map(t=>`<span class="tag" data-t="${t.replace(/"/g,'&quot;')}" title="Click to remove">${t}</span>`).join('');
-  row.innerHTML = `<span class="thumbwrap"><img src="${c.thumb}" loading="lazy"></span><div class="meta"><b>${(c.label||c.id).replace(/</g,'&lt;')}</b><span>${c.product} · ${fmt(c.dur)}s · ${c.w}×${c.h}</span>
+  // Date added = file mtime (server sends epoch seconds). Format as short local date; tooltip full.
+  const _fmtAdded = m => { if(!m) return ''; const d = new Date(m*1000);
+    return d.toLocaleDateString(undefined, {year:'2-digit', month:'short', day:'numeric'}); };
+  const _fmtAddedFull = m => m ? new Date(m*1000).toLocaleString() : '';
+  const addedShort = c.mtime ? _fmtAdded(c.mtime) : '';
+  const addedTip = c.mtime ? _fmtAddedFull(c.mtime) : '';
+  row.innerHTML = `<span class="thumbwrap"><img src="${c.thumb}" loading="lazy"></span><div class="meta"><b>${(c.label||c.id).replace(/</g,'&lt;')}</b><span>${c.product} · ${fmt(c.dur)}s · ${c.w}×${c.h}${addedShort?(' · <span title="'+addedTip+'" style="color:var(--acc,#f0a830)">added '+addedShort+'</span>'):''}</span>
     <div class="tags">${tagsHtml}<span class="tagadd" title="Add tag">+ tag</span></div></div>`;
   wirePreviewableThumb(row.querySelector('.thumbwrap'), c);
   row.querySelectorAll('.tag').forEach(chip=>{ chip.onclick=ev=>{ ev.stopPropagation(); const tag=chip.dataset.t; saveClipTags(c.id, (c.tags||[]).filter(t=>t!==tag)); }; });
@@ -3823,6 +3829,11 @@ function _appendMgrRowControls(row, c, cats){
     else { $('#mgrStatus').textContent='Move failed: '+((r&&r.log)||'error'); renderClipMgr(); }
   };
   row.appendChild(sel);
+  // Quick add-to-timeline — reuses the same helper the source-bin drag/drop uses so the clip
+  // lands with the same defaults (channel + placement at playhead).
+  const addTl=document.createElement('button'); addTl.className='mini'; addTl.textContent='＋ Timeline'; addTl.title='Add this clip to the current project timeline at the playhead';
+  addTl.onclick=()=>{ addClipToTimeline(c.id); toast('Added '+(c.label||c.id)+' to timeline'); };
+  row.appendChild(addTl);
   const del=document.createElement('button'); del.className='mini'; del.textContent='🗑'; del.title='Delete clip (permanent)';
   del.onclick=async()=>{ if(!confirm('Delete “'+(c.label||c.id)+'” permanently? This removes the file from disk.')) return;
     $('#mgrStatus').textContent='Deleting…';
