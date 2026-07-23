@@ -307,7 +307,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.81.0</span>
+  <span class="ver" id="appVer">v1.81.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -434,7 +434,8 @@
         <select id="setCanvas"><option value="9x16">9:16 Reels/Stories</option>
           <option value="4x5">4:5 Meta feed</option><option value="1x1">1:1 Square</option><option value="16x9">16:9 YouTube</option></select>
         <span id="aspectBadge" style="font-size:10px;color:var(--mut);margin-left:6px" title="Overlay positions/sizes can differ per aspect. The 'primary' aspect's values live on the base; other aspects store sparse overrides."></span>
-        <button class="mini" id="aspectReset" title="Drop variant overrides for this aspect — revert overlays to primary values" style="display:none;margin-left:4px;font-size:10px">⟲ Reset variant</button></div>
+        <button class="mini" id="aspectReset" title="Drop variant overrides for this aspect — revert overlays to primary values" style="display:none;margin-left:4px;font-size:10px">⟲ Reset variant</button>
+        <button class="mini" id="aspectCopyFrom" title="Copy overlay positions from another aspect's layout into this one" style="margin-left:4px;font-size:10px">📋 Copy layout from…</button></div>
       <div class="row"><label>End card</label><button class="mini" id="btnEndcard" title="Opens the Overlays panel with the end card selected">🎬 Edit end card…</button></div>
     </div>
     <div class="status" id="status">Loading…</div>
@@ -1393,6 +1394,49 @@ $('#aspectReset').onclick=()=>{
   if(!confirm('Drop all overlay overrides for '+curAspect()+'? Overlays will revert to the primary ('+primaryAspect()+') positions.')) return;
   histCommit(); if(EDL.variants && EDL.variants[curAspect()]) delete EDL.variants[curAspect()];
   renderOverlays(playhead); updateAspectBadge(); toast('Variant overrides cleared for '+curAspect());
+};
+$('#aspectCopyFrom').onclick=()=>{
+  // List every aspect that has an actual layout (variant overrides OR is primary with real base
+  // positions). User picks one; we copy its positions into the CURRENT aspect. If current is
+  // primary, positions land on the base overlay objects (all aspects inherit). If current is a
+  // variant, positions land in EDL.variants[cur].overlays.
+  const cur = curAspect(), pri = primaryAspect();
+  const options = [];
+  Object.keys(CANVAS_PX).forEach(a => {
+    if(a === cur) return;
+    const isPri = a === pri;
+    const bag = isPri ? null : ((EDL.variants||{})[a]||{}).overlays;
+    const overrideCount = bag ? Object.keys(bag).length : 0;
+    if(isPri || overrideCount > 0) options.push({a, isPri, overrideCount});
+  });
+  if(!options.length){ toast('No other aspect has a layout to copy from'); return; }
+  const menu = options.map((o,i) => `  ${i+1}. ${o.a}${o.isPri?' (primary base)':(' ('+o.overrideCount+' override'+(o.overrideCount!==1?'s':'')+')')}`).join('\n');
+  const pick = prompt('Copy overlay layout FROM which aspect?\n\n' + menu + '\n\nType 1-'+options.length+':', '1');
+  const idx = parseInt(pick||'',10) - 1;
+  if(!(idx >= 0 && idx < options.length)) return;
+  const src = options[idx];
+  histCommit();
+  const copyPos = (o, xy) => { o.x = xy.x != null ? xy.x : o.x; if(xy.y != null) o.y = xy.y; if(xy.scale != null) o.scale = xy.scale; if(xy.w != null) o.w = xy.w; if(xy.h != null) o.h = xy.h; };
+  const readSrc = (oid) => {
+    if(src.isPri){
+      const o = (EDL.overlays||[]).find(x => x.id === oid);
+      return o ? {x:o.x, y:o.y, scale:o.scale, w:o.w, h:o.h} : null;
+    }
+    return ((EDL.variants||{})[src.a]||{}).overlays?.[oid] || null;
+  };
+  let touched = 0;
+  (EDL.overlays||[]).forEach(o => {
+    const xy = readSrc(o.id); if(!xy) return;
+    if(cur === pri){                                 // writing to base — overwrites all aspects that don't have overrides
+      copyPos(o, xy); touched++;
+    } else {                                         // writing to this aspect's variant bag
+      EDL.variants = EDL.variants || {}; EDL.variants[cur] = EDL.variants[cur] || {overlays:{}};
+      EDL.variants[cur].overlays[o.id] = Object.assign(EDL.variants[cur].overlays[o.id] || {}, xy);
+      touched++;
+    }
+  });
+  renderOverlays(playhead); renderTracks(); updateAspectBadge();
+  toast('Copied '+touched+' overlay position'+(touched!==1?'s':'')+' from '+src.a+' → '+cur);
 };
 if($('#setProjBrand')) $('#setProjBrand').onchange=e=>{ histCommit(); EDL.settings.brand=e.target.value; toast('Brand: '+(BRAND_LABELS[e.target.value]||e.target.value)+'. New overlays use this brand’s gradient.'); };
 document.querySelectorAll('.arbtn').forEach(b=>b.onclick=()=>chooseCanvas(b.dataset.ar));
