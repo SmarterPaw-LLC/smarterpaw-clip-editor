@@ -72,6 +72,28 @@ _probe_cache_load()
 # --- Clip tags (free-form, comma-separated, persisted in editor/clip_tags.json) ---
 CLIP_TAGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clip_tags.json")
 _clip_tags_cache = None
+MUSIC_RATINGS_FILE = os.path.join(EDITOR if 'EDITOR' in dir() else os.path.dirname(__file__), "music_ratings.json")
+def load_music_ratings():
+    """Per-track thumbs {name: 'up'|'down'}. Down-rated tracks stay in the picker but greyed out
+    with a strikethrough; up-rated tracks show a highlighted star so Jason can spot the ones he
+    wants me to source more of."""
+    try:
+        if os.path.exists(MUSIC_RATINGS_FILE):
+            d = json.load(open(MUSIC_RATINGS_FILE, encoding="utf-8"))
+            if isinstance(d, dict):
+                return {str(k): str(v) for k, v in d.items() if v in ("up", "down")}
+    except Exception:
+        pass
+    return {}
+def save_music_ratings(d):
+    d = {str(k): str(v) for k, v in (d or {}).items() if v in ("up", "down")}
+    tmp = MUSIC_RATINGS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=2, sort_keys=True)
+    os.replace(tmp, MUSIC_RATINGS_FILE)
+    return d
+
+
 CUSTOM_TAGS_FILE = os.path.join(EDITOR if 'EDITOR' in dir() else os.path.dirname(__file__), "custom_tags.json")
 def load_custom_tags():
     """User-defined tag names that appear in the tag picker even before any clip carries them.
@@ -2201,7 +2223,8 @@ class Handler(BaseHTTPRequestHandler):
                                "canvases": list(CANVAS.keys()), "logo": logo, "assets": list_assets(),
                                "exportsDir": EXPORTS,
                                "customTags": load_custom_tags(),
-                               "allCategories": list_all_categories()})
+                               "allCategories": list_all_categories(),
+                               "musicRatings": load_music_ratings()})
         if path == "/api/edl":
             return self._json(load_edl())
         if path == "/api/version":
@@ -2277,6 +2300,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "log": repr(e)}, 500)
             bm = load_brand_map(); bm[cat] = brand; save_brand_map(bm)
             return self._json({"ok": True, "brand": brand, "category": cat})
+        if path == "/api/music/rate":
+            # Body: {name: str, rating: 'up' | 'down' | null}. null clears the rating.
+            name = str(data.get("name") or "").strip()
+            rating = data.get("rating")
+            if not name:
+                return self._json({"ok": False, "log": "name required"}, 400)
+            d = load_music_ratings()
+            if rating in ("up", "down"):
+                d[name] = rating
+            else:
+                d.pop(name, None)
+            save_music_ratings(d)
+            return self._json({"ok": True, "musicRatings": d})
         if path == "/api/tag/create":
             # Add a tag name to the shared custom-tags list so the tag picker shows it even when
             # no clip carries it yet. Returns the full updated list.
