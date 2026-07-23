@@ -307,7 +307,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.81.2</span>
+  <span class="ver" id="appVer">v1.81.3</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1671,7 +1671,8 @@ function audSyncEditor(){
     // Not playing → create/reuse audio and start from CURRENT SLIDER VALUE. Every time.
     if(!_prevAud){
       _prevAud = new Audio('/'+encodeURI(a.src||''));
-      try{ _prevAud.playbackRate = +a.speed || 1; }catch(_){}   // preview at the same tempo the render will use
+      try{ _prevAud.preservesPitch = false; _prevAud.mozPreservesPitch = false; _prevAud.webkitPreservesPitch = false; }catch(_){}
+      try{ _prevAud.playbackRate = +a.speed || 1; }catch(_){}   // vinyl pitch-shift matches server asetrate
       _prevAud.volume = 0.7;
       _prevAud.onended = ()=>{ _stopPrev(); if(_posEl) _posEl.textContent = 'end reached'; };
     }
@@ -1760,7 +1761,8 @@ function audSyncPreview(){
     if(el._url !== url){ el.src = url; el._url = url; }
     if(a.hidden){ el.volume=0; try{el.pause();}catch(_){} return; }
     el.volume = Math.max(0, Math.min(1, _audEnv(a, playhead||0)));
-    try{ el.playbackRate = +a.speed || 1; }catch(_){}   // match render-time atempo
+    try{ el.preservesPitch = false; el.mozPreservesPitch = false; el.webkitPreservesPitch = false; }catch(_){}
+    try{ el.playbackRate = +a.speed || 1; }catch(_){}   // pitch-shift (vinyl-style), matches server asetrate
   });
   Object.keys(_audEls).forEach(id=>{ if(!seen.has(id)){ try{_audEls[id].pause();}catch(_){} _audEls[id].src=''; delete _audEls[id]; } });
 }

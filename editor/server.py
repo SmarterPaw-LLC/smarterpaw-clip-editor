@@ -2048,14 +2048,16 @@ def render(edl, out_dir=None, out_name=None, progress=None):
             chains = []
             outs = []
             def _atempo_chain(spd):
-                # atempo supports 0.5..100.0 per invocation on modern ffmpeg, but 0.5..2.0 is the
-                # portable safe range. Chain factors so their product = spd.
-                out = []
-                x = spd
-                while x > 2.0:  out.append("atempo=2.0"); x /= 2.0
-                while x < 0.5:  out.append("atempo=0.5"); x /= 0.5
-                if abs(x - 1.0) > 1e-3: out.append("atempo=%.4f" % x)
-                return ",".join(out) if out else ""
+                # Vinyl-style pitch-shift: asetrate changes the sample rate (higher rate → faster
+                # playback + higher pitch; lower rate → slower + deeper), aresample brings it
+                # back to a standard rate so downstream filters work. Matches the classic
+                # slow-down/speed-up sound (no time-stretch artifacts that atempo produces at
+                # extreme speeds like 0.5× or 2×).
+                if abs(spd - 1.0) < 1e-3:
+                    return ""
+                # Use 48kHz as a common intermediate; aresample back to 44.1k after.
+                base_sr = 48000
+                return "asetrate=%d,aresample=44100" % int(round(base_sr * spd))
             for i, (p, st, du, vol, fi, fo, src_in, spd) in enumerate(tracks, start=1):
                 # Seek into source (framed-clip audio) uses -ss BEFORE -i for accurate keyframe seek.
                 if src_in > 0.001:
