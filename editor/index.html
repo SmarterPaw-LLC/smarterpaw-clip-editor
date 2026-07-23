@@ -307,7 +307,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.80.6</span>
+  <span class="ver" id="appVer">v1.80.7</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1540,12 +1540,12 @@ function audSyncEditor(){
     <div><label>Start <input type="number" id="audE_start" step="0.1" style="width:64px" value="${a.start}"> s</label>
       <label>Dur <input type="number" id="audE_dur" step="0.1" min="0.1" style="width:64px" value="${a.dur}"> s</label>
       <button class="mini" id="audE_here">⤓ at playhead</button></div>
-    <div style="margin-top:6px"><label>Start in track at <input type="range" id="audE_in" min="0" step="0.05" style="width:140px" value="${a.srcIn||0}">
+    <div style="margin-top:6px"><label>Start in track at <input type="range" id="audE_in" min="0" step="0.05" style="width:200px" value="${a.srcIn||0}">
       <input type="number" id="audE_inNum" min="0" step="0.1" style="width:60px" value="${(a.srcIn||0).toFixed(1)}"> s</label>
-      <button class="mini" id="audE_prev">▶ Preview</button>
-      <span id="audE_prevPos" style="font-family:monospace;font-size:11px;color:var(--acc,#f0a830);min-width:44px;display:inline-block;text-align:center"></span>
-      <button class="mini" id="audE_setHere" title="Copy the live preview position into the Start-in-track-at slider" style="display:none">⤓ Set start here</button>
+      <button class="mini" id="audE_prev" title="Play / pause preview from the slider position">▶ Preview</button>
+      <span id="audE_prevPos" style="font-family:monospace;font-size:11px;color:var(--mut);min-width:56px;display:inline-block;text-align:center"></span>
       <span id="audE_srcLen" style="font-size:11px;color:var(--mut)"></span></div>
+    <div style="font-size:11px;color:var(--mut);margin-top:2px;padding-left:8px">The slider IS the start position. Drag it to pick a spot; the preview plays from there. Playing preview also advances the slider so you can pause where you like it.</div>
     <div style="margin-top:6px"><label>Volume <input type="range" id="audE_vol" min="0" max="2" step="0.05" value="${a.volume!=null?a.volume:1}" style="width:160px"> <span id="audE_volV" style="font-size:11px;color:var(--mut)">${Math.round((a.volume!=null?a.volume:1)*100)}%</span></label></div>
     <div><label>Fade in <input type="range" id="audE_fi" min="0" max="5" step="0.1" value="${a.fadeIn||0}" style="width:160px"> <span id="audE_fiV" style="font-size:11px;color:var(--mut)">${(a.fadeIn||0).toFixed(1)}s</span></label></div>
     <div><label>Fade out <input type="range" id="audE_fo" min="0" max="5" step="0.1" value="${a.fadeOut||0}" style="width:160px"> <span id="audE_foV" style="font-size:11px;color:var(--mut)">${(a.fadeOut||0).toFixed(1)}s</span></label></div>
@@ -1569,67 +1569,57 @@ function audSyncEditor(){
       _srcLen.textContent = `(source ${sd.toFixed(1)}s · max ${maxIn.toFixed(1)}s)`;
     }
   };
-  const _setIn = v=>{ v = Math.max(0, parseFloat(v)||0);
+  // Unified model: THE SLIDER IS THE SOURCE OF TRUTH for srcIn AND for the preview playhead.
+  //   - Dragging slider: seeks _prevAud (if exists) + writes a.srcIn + re-mixes timeline preview
+  //   - Playing preview: advances the slider in real time so you can pause where you like it
+  //   - Play → Pause → Play: always resumes from wherever the slider is (which is where you
+  //     paused, unless you moved the slider between)
+  // No more "Set start here" button — the slider IS the start, so there's nothing to capture.
+  let _prevAud = null, _prevRaf = null, _draggingSlider = false;
+  const _posEl = $('#audE_prevPos');
+  const _fmtPos = t => (t == null ? '' : t.toFixed(1) + 's');
+  const _setIn = (v, syncPrev)=>{
+    v = Math.max(0, parseFloat(v)||0);
     a.srcIn = v; _in.value = v.toFixed(2); _inNum.value = v.toFixed(1);
-    // Re-seek the live preview audio so what plays reflects the new offset immediately.
+    // Update the timeline preview (the live per-clip Audio in _audEls) so what's playing reflects
+    // the new offset immediately.
     const el = _audEls[a.id]; if(el){ const ls = (playhead||0) - (+a.start||0);
       if(ls >= 0 && ls < (+a.dur||0)) { try{ el.currentTime = Math.max(0, ls + v); }catch(_){} } }
-    audSyncPreview(); renderTracks(); };
-  _in.oninput = e => _setIn(e.target.value);
-  _inNum.oninput = e => _setIn(e.target.value);
-  // Preview button — plays a chunk of the source from wherever we last paused (or srcIn on first
-  // press), shows the live time in `audE_prevPos`, and keeps '⤓ Set start here' visible even
-  // AFTER pause so the user can capture the exact spot they stopped on.
-  let _prevAud = null, _prevRaf = null, _prevLastTime = null;
-  const _posEl = $('#audE_prevPos'), _setHereBtn = $('#audE_setHere');
-  const _fmtPos = t => (t == null ? '' : t.toFixed(1) + 's');
-  const _pausePrev = ()=>{
-    if(_prevAud){
-      _prevLastTime = _prevAud.currentTime;
-      try{_prevAud.pause();}catch(_){}
-    }
+    // Also seek the isolated PREVIEW audio if the user's actively scrubbing it — that's the fix
+    // for "drag → Resume plays from wrong spot". Skip during natural playback progression (syncPrev=false).
+    if(syncPrev && _prevAud){ try{ _prevAud.currentTime = v; }catch(_){} }
+    audSyncPreview(); renderTracks();
+  };
+  _in.oninput  = e => { _draggingSlider = true;  _setIn(e.target.value, true); };
+  _in.onchange = () => { _draggingSlider = false; };
+  _inNum.oninput = e => _setIn(e.target.value, true);
+  const _tickPrev = ()=>{
+    if(!_prevAud || _prevAud.paused) return;
+    const t = _prevAud.currentTime;
+    // Advance the slider in lockstep so pausing leaves it at the audible position. Skip while
+    // the user is actively dragging (otherwise their drag fights the tick).
+    if(!_draggingSlider){ _setIn(t, false); }
+    if(_posEl) _posEl.textContent = _fmtPos(t);
+    _prevRaf = requestAnimationFrame(_tickPrev);
+  };
+  const _stopPrev = ()=>{
+    if(_prevAud){ try{_prevAud.pause();}catch(_){} }
     if(_prevRaf){ cancelAnimationFrame(_prevRaf); _prevRaf=null; }
-    if(_posEl) _posEl.textContent = _fmtPos(_prevLastTime) + ' (paused)';
-    // Button stays visible so user can grab the paused position with '⤓ Set start here'.
-    $('#audE_prev').textContent = '▶ Resume';
+    if(_posEl) _posEl.textContent = _prevAud ? (_fmtPos(_prevAud.currentTime)+' · paused') : '';
+    $('#audE_prev').textContent = '▶ Preview';
   };
-  const _tickPrev = ()=>{ if(!_prevAud || _prevAud.paused) return;
-    _prevLastTime = _prevAud.currentTime;
-    if(_posEl) _posEl.textContent = _fmtPos(_prevLastTime);
-    _prevRaf = requestAnimationFrame(_tickPrev); };
   $('#audE_prev').onclick = ()=>{
-    // Resume path: audio exists but paused — restart from where we left off.
-    if(_prevAud && _prevAud.paused){
-      try{ _prevAud.currentTime = _prevLastTime != null ? _prevLastTime : (a.srcIn||0); }catch(_){}
-      _prevAud.play().catch(()=>{});
-      $('#audE_prev').textContent = '❚❚ Pause';
-      _tickPrev();
-      return;
+    // If already playing → pause. Slider stays where playback got to.
+    if(_prevAud && !_prevAud.paused){ _stopPrev(); return; }
+    // Not playing → create/reuse audio and start from CURRENT SLIDER VALUE. Every time.
+    if(!_prevAud){
+      _prevAud = new Audio('/'+encodeURI(a.src||''));
+      _prevAud.volume = 0.7;
+      _prevAud.onended = ()=>{ _stopPrev(); if(_posEl) _posEl.textContent = 'end reached'; };
     }
-    // Playing → pause (keeps button visible so user can capture the pause spot).
-    if(_prevAud){ _pausePrev(); return; }
-    // Fresh start — new Audio object seeded at srcIn.
-    _prevAud = new Audio('/'+encodeURI(a.src||''));
-    _prevAud.volume = 0.7;
-    _prevLastTime = a.srcIn || 0;
-    _prevAud.onloadedmetadata = ()=>{ try{ _prevAud.currentTime = _prevLastTime; }catch(_){} _prevAud.play().catch(()=>{}); };
-    $('#audE_prev').textContent = '❚❚ Pause';
-    if(_setHereBtn) _setHereBtn.style.display = '';
-    _tickPrev();
-    _prevAud.onended = ()=>{
-      // Playback finished — reset UI back to fresh state (no last-time to capture).
-      _prevAud = null;
-      if(_prevRaf){ cancelAnimationFrame(_prevRaf); _prevRaf=null; }
-      if(_posEl) _posEl.textContent = '';
-      if(_setHereBtn) _setHereBtn.style.display = 'none';
-      $('#audE_prev').textContent = '▶ Preview';
-    };
-  };
-  if(_setHereBtn) _setHereBtn.onclick = ()=>{
-    const t = (_prevAud ? _prevAud.currentTime : _prevLastTime);
-    if(t == null) return;
-    _setIn(t);
-    toast('srcIn set to '+t.toFixed(2)+'s');
+    const seedT = +a.srcIn || 0;
+    const kick = ()=>{ try{ _prevAud.currentTime = seedT; }catch(_){} _prevAud.play().catch(()=>{}); $('#audE_prev').textContent = '❚❚ Pause'; _tickPrev(); };
+    if(_prevAud.readyState >= 1) kick(); else _prevAud.addEventListener('loadedmetadata', kick, {once:true});
   };
 }
 // Build the on-timeline bar for one audio clip (drag-to-move, resize handles, hide/lock/delete icons)
