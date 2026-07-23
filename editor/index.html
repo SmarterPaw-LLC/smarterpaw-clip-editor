@@ -307,7 +307,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.80.5</span>
+  <span class="ver" id="appVer">v1.80.6</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1098,6 +1098,7 @@ function renderTimeline(){
     el.innerHTML=`
       <div class="top"><span class="hd">${i+1}. ${name}</span>
         <div class="ctl">
+          <button class="mini" data-a="view" title="Open the full source clip in the preview modal (same as ▶ in the source bin)">🔍</button>
           <button class="mini modebtn${s.editMode==='free'?' on':''}" data-a="mode" title="${s.editMode==='free'?'Edge-drag: Independent — resizing this clip opens/closes gaps (click to link to neighbor)':'Edge-drag: Linked — neighbor absorbs the resize, total length fixed (click to make independent)'}">${s.editMode==='free'?'✂':'🔗'}</button>
           <button class="mini" data-a="up">↑</button><button class="mini" data-a="down">↓</button>
           <button class="mini" data-a="dup">⎘</button><button class="mini" data-a="del">✕</button>
@@ -1153,6 +1154,9 @@ function updateTotal(){ const t=totalDur(); $('#totalPill').textContent=fmt(t)+'
   if(playhead>t) playhead=0;
   if(!tlPlaying){ $('#tlTime').textContent=fmt(Math.min(playhead,t))+' / '+fmt(t)+'s'; $('#scrub').max=t; $('#scrub').value=Math.min(playhead,t); } }
 function segAction(a,i){
+  // 'view' opens the full source clip in the preview modal — same as the ▶ hover in the source
+  // bin. No state change, no history entry, no re-render.
+  if(a==='view'){ const c = MAN.byId[EDL.segments[i]?.id]; if(c) openClipPreviewModal(c); else toast('Source clip not found in bin'); return; }
   histCommit();   // seal prior state so this discrete action is its own undo step
   _msel=[];       // single-clip action clears any multi-selection
   if(a==='up'&&i>0){ [EDL.segments[i-1],EDL.segments[i]]=[EDL.segments[i],EDL.segments[i-1]]; sel=i-1; }
