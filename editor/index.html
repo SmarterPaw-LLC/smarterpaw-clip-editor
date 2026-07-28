@@ -307,7 +307,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.81.3</span>
+  <span class="ver" id="appVer">v1.81.4</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1213,7 +1213,18 @@ function seekToPlayhead(){
     const hit=topAt(playhead);
     if(!hit){ showVid(null); showCap(''); $('#endcard').style.display='none'; renderOverlays(playhead); positionPlayhead(); return; }  // black gap
     const s=hit.seg, off=hit.off, v=getVid(s.id);
-    if(v){ showVid(s.id); applyFraming(s,v); try{v.currentTime=(+s.in||0)+off*segSpeed(s);}catch(e){}
+    if(v){ showVid(s.id); applyFraming(s,v);
+      // Force a decode even when the target time matches current (Chrome/Firefox won't fire
+      // seeked when currentTime is set to an equal value, so the frame stays stale — visible as
+      // "clip freezes when I scrub to its start" since scrubbing back-to-zero on a fresh video
+      // is the canonical repro). Setting currentTime twice with a tiny nudge triggers the seek.
+      const target = (+s.in||0) + off*segSpeed(s);
+      try{
+        if(Math.abs(v.currentTime - target) < 0.02 || v.readyState < 2){
+          v.currentTime = target + 0.05;
+        }
+        v.currentTime = target;
+      }catch(e){}
       let op=1; const fi=+s.fadeIn||0, fo=+s.fadeOut||0, dd=hit.dur;   // show clip fade while scrubbing
       if(fi>0 && off<fi) op=Math.max(0,off/fi);
       if(fo>0 && off>dd-fo) op=Math.min(op,Math.max(0,(dd-off)/fo));
