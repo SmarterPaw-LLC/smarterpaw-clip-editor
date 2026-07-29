@@ -54,3 +54,4 @@ ai-builds/
 
 # web launcher build output (large zips)
 webdist/release/
+editor/openai_key.txt

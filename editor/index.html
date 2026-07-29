@@ -307,7 +307,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.81.4</span>
+  <span class="ver" id="appVer">v1.82.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -557,7 +557,33 @@
     <div class="modal-hd"><b>🎵 Audio tracks</b><button class="mini" id="audClose">✕ Done</button></div>
     <div class="modal-body">
       <div style="font-size:11px;color:var(--mut);margin-bottom:6px">Add music + sound effects on separate lanes. Drag clips on the timeline to move/retime. Click a clip to edit its volume + fades.</div>
-      <div class="sec">＋ Add at playhead</div>
+      <div class="sec" style="display:flex;align-items:center;gap:8px">＋ Add at playhead
+        <button class="mini" id="audTtsOpen" title="Generate an AI voiceover with OpenAI TTS — saved to sources/sfx/ and added to the list below" style="margin-left:auto">🎤 Generate voiceover…</button></div>
+      <div id="audTtsPanel" style="display:none;background:var(--panel2,#232732);border:1px solid var(--line);border-radius:6px;padding:8px;margin-bottom:6px;font-size:12px">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+          <b>🎤 Generate voiceover (OpenAI TTS)</b>
+          <button class="mini" id="audTtsClose" style="margin-left:auto">✕</button>
+        </div>
+        <textarea id="audTtsText" rows="3" style="width:100%;box-sizing:border-box;background:#191b21;color:#eee;border:1px solid #333;border-radius:4px;padding:6px" placeholder="Type what the voice should say (max 4000 chars)" spellcheck="true"></textarea>
+        <div class="row" style="gap:8px;margin-top:6px;flex-wrap:wrap">
+          <label>Voice <select id="audTtsVoice">
+            <option value="alloy">Alloy — neutral</option>
+            <option value="echo">Echo — deep male</option>
+            <option value="fable">Fable — warm British</option>
+            <option value="onyx">Onyx — authoritative male</option>
+            <option value="nova" selected>Nova — upbeat female</option>
+            <option value="shimmer">Shimmer — expressive female</option>
+          </select></label>
+          <label>Quality <select id="audTtsModel">
+            <option value="tts-1" selected>Standard (faster)</option>
+            <option value="tts-1-hd">HD (higher fidelity)</option>
+          </select></label>
+          <label>Filename <input type="text" id="audTtsName" placeholder="auto" style="width:120px"></label>
+          <button class="mini primary" id="audTtsGo">Generate</button>
+        </div>
+        <div id="audTtsStatus" style="font-size:11px;color:var(--mut);min-height:14px;margin-top:6px"></div>
+        <div id="audTtsHint" style="font-size:10px;color:var(--mut);margin-top:4px">Needs an OpenAI API key. Put it in <code>editor/openai_key.txt</code> (single line) or set <code>OPENAI_API_KEY</code>.</div>
+      </div>
       <div class="row" style="gap:8px;margin-bottom:6px"><input type="text" id="audFilter" placeholder="🔍 filter…" style="flex:1" spellcheck="false">
         <label class="ck"><input type="checkbox" id="audShowMusic" checked> Music</label>
         <label class="ck"><input type="checkbox" id="audShowSfx" checked> SFX</label></div>
@@ -3190,6 +3216,45 @@ function renderCfPickGrid(){
 $('#btnOverlays').onclick=openOvModal; $('#ovClose').onclick=closeOvModal;
 $('#btnAudio').onclick=openAudModal; $('#audClose').onclick=closeAudModal;
 $('#audFilter').oninput=renderAudPickList; $('#audShowMusic').onchange=renderAudPickList; $('#audShowSfx').onchange=renderAudPickList;
+// TTS panel: toggle open/close, refresh key-availability hint every time it opens so the user
+// gets accurate guidance if they just added editor/openai_key.txt without restarting.
+$('#audTtsOpen').onclick = async () => {
+  const p = $('#audTtsPanel');
+  if(p.style.display !== 'none'){ p.style.display = 'none'; return; }
+  p.style.display = 'block';
+  $('#audTtsText').focus();
+  // Refresh manifest quickly to check ttsAvailable (in case the user just added the key file)
+  try{ const m = await api('/api/manifest?_=' + Date.now()); MAN.ttsAvailable = !!m.ttsAvailable; }catch(_){}
+  const hint = $('#audTtsHint');
+  if(MAN.ttsAvailable){
+    hint.textContent = '✓ OpenAI key detected. Approx cost: ~$0.015 per 1k chars (tts-1) or $0.030 (tts-1-hd).';
+    hint.style.color = 'var(--acc, #f0a830)';
+  } else {
+    hint.innerHTML = '⚠ No OpenAI key. Create <code>editor/openai_key.txt</code> (single line, key only) or set <code>OPENAI_API_KEY</code> env var. Restart isn\'t needed — key is read on each request.';
+    hint.style.color = 'var(--mut)';
+  }
+};
+$('#audTtsClose').onclick = () => { $('#audTtsPanel').style.display = 'none'; };
+$('#audTtsGo').onclick = async () => {
+  const text = $('#audTtsText').value.trim();
+  if(!text){ $('#audTtsStatus').textContent = 'Enter some text first.'; return; }
+  const voice = $('#audTtsVoice').value, model = $('#audTtsModel').value, filename = $('#audTtsName').value.trim();
+  const btn = $('#audTtsGo'); const stat = $('#audTtsStatus');
+  btn.disabled = true; btn.textContent = 'Generating…'; stat.textContent = 'Calling OpenAI TTS ('+voice+' / '+model+')…';
+  const t0 = Date.now();
+  const r = await api('/api/tts/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text, voice, model, filename})});
+  const elapsed = ((Date.now()-t0)/1000).toFixed(1);
+  btn.disabled = false; btn.textContent = 'Generate';
+  if(r && r.ok){
+    // Reload manifest so the new SFX file shows up in the picker, then optionally add at playhead.
+    await boot(true);
+    renderAudPickList();
+    stat.innerHTML = '✓ Saved <b>'+r.filename+'</b> to sources/sfx/ ('+elapsed+'s). It now appears in the list below — click ＋ Add at playhead when ready.';
+    toast('Voiceover generated: '+r.filename);
+  } else {
+    stat.textContent = '❌ '+((r && r.log) || 'generation failed after '+elapsed+'s');
+  }
+};
 $('#ovAddText').onclick=addTextOverlay; $('#ovAddShape').onclick=addShapeOverlay; $('#ovAddArrow').onclick=addArrowOverlay;
 $('#ovAddClipFrame').onclick=addClipFrameOverlay;
 $('#cfPickClose').onclick=closeCfPicker;

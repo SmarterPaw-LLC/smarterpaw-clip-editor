@@ -72,6 +72,60 @@ _probe_cache_load()
 # --- Clip tags (free-form, comma-separated, persisted in editor/clip_tags.json) ---
 CLIP_TAGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clip_tags.json")
 _clip_tags_cache = None
+OPENAI_KEY_FILE = os.path.join(EDITOR if 'EDITOR' in dir() else os.path.dirname(__file__), "openai_key.txt")
+def load_openai_key():
+    """Look for the key in env var first (OPENAI_API_KEY), then editor/openai_key.txt.
+    The file is single-line, key only, and is gitignored — do NOT commit it. Returns None
+    if no key configured; the client shows a helpful message in that case."""
+    k = os.environ.get("OPENAI_API_KEY", "").strip()
+    if k: return k
+    try:
+        if os.path.exists(OPENAI_KEY_FILE):
+            with open(OPENAI_KEY_FILE, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        return line
+    except Exception:
+        pass
+    return None
+
+
+def _openai_tts(text, voice, model, out_path):
+    """Call OpenAI /v1/audio/speech and save the mp3 response to out_path. Returns (ok, error).
+    Kept dependency-free — uses urllib.request so no `openai` package install needed."""
+    key = load_openai_key()
+    if not key:
+        return False, "No OpenAI API key. Create editor/openai_key.txt with your key, or set OPENAI_API_KEY env var."
+    payload = json.dumps({
+        "model": model or "tts-1",
+        "input": text,
+        "voice": voice or "alloy",
+        "response_format": "mp3",
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/audio/speech",
+        data=payload,
+        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            audio = resp.read()
+    except urllib.error.HTTPError as he:
+        try: err = he.read().decode("utf-8", errors="replace")[:400]
+        except Exception: err = str(he)
+        return False, f"OpenAI {he.code}: {err}"
+    except Exception as e:
+        return False, f"OpenAI request failed: {e!r}"
+    if not audio:
+        return False, "Empty response from OpenAI"
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "wb") as fh:
+        fh.write(audio)
+    return True, None
+
+
 MUSIC_RATINGS_FILE = os.path.join(EDITOR if 'EDITOR' in dir() else os.path.dirname(__file__), "music_ratings.json")
 def load_music_ratings():
     """Per-track thumbs {name: 'up'|'down'}. Down-rated tracks stay in the picker but greyed out
@@ -2234,7 +2288,8 @@ class Handler(BaseHTTPRequestHandler):
                                "exportsDir": EXPORTS,
                                "customTags": load_custom_tags(),
                                "allCategories": list_all_categories(),
-                               "musicRatings": load_music_ratings()})
+                               "musicRatings": load_music_ratings(),
+                               "ttsAvailable": bool(load_openai_key())})
         if path == "/api/edl":
             return self._json(load_edl())
         if path == "/api/version":
@@ -2310,6 +2365,40 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "log": repr(e)}, 500)
             bm = load_brand_map(); bm[cat] = brand; save_brand_map(bm)
             return self._json({"ok": True, "brand": brand, "category": cat})
+        if path == "/api/tts/generate":
+            # Body: {text, voice, model, filename?}. voice ∈ alloy/echo/fable/onyx/nova/shimmer;
+            # model ∈ tts-1 | tts-1-hd. Saves the mp3 to sources/sfx/<filename>.mp3 so it appears
+            # in the Audio picker on the next manifest reload. Filename optional; auto-generated
+            # from voice + a short slug of the text if omitted.
+            text = (data.get("text") or "").strip()
+            voice = (data.get("voice") or "alloy").strip().lower()
+            model = (data.get("model") or "tts-1").strip().lower()
+            raw_name = (data.get("filename") or "").strip()
+            if not text:
+                return self._json({"ok": False, "log": "text required"}, 400)
+            if len(text) > 4000:
+                return self._json({"ok": False, "log": "text too long (max 4000 chars per OpenAI limit)"}, 400)
+            if voice not in {"alloy","echo","fable","onyx","nova","shimmer"}:
+                return self._json({"ok": False, "log": f"unknown voice: {voice}"}, 400)
+            # Sanitize/derive filename
+            if raw_name:
+                base = re.sub(r"[^A-Za-z0-9_-]+", "_", raw_name).strip("_")[:60]
+            else:
+                slug = re.sub(r"[^a-z0-9]+", "_", text.lower())[:30].strip("_") or "voiceover"
+                stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+                base = f"tts_{voice}_{slug}_{stamp}"
+            if not base.lower().endswith(".mp3"):
+                base += ".mp3"
+            out_path = os.path.join(SFX_DIR, base)
+            if os.path.exists(out_path):
+                # Uniquify with a numeric suffix so we never overwrite an existing file.
+                stem, ext = os.path.splitext(base); n = 2
+                while os.path.exists(os.path.join(SFX_DIR, f"{stem}_{n}{ext}")): n += 1
+                base = f"{stem}_{n}{ext}"; out_path = os.path.join(SFX_DIR, base)
+            ok, err = _openai_tts(text, voice, model, out_path)
+            if not ok:
+                return self._json({"ok": False, "log": err}, 502)
+            return self._json({"ok": True, "filename": base, "src": "sources/sfx/" + base})
         if path == "/api/music/rate":
             # Body: {name: str, rating: 'up' | 'down' | null}. null clears the rating.
             name = str(data.get("name") or "").strip()
