@@ -23,6 +23,7 @@ THUMBS = os.path.join(EDITOR, "thumbs")
 SRC_ROOT = os.path.join(PROJ, "sources", "clips")   # the clip repository (was 'sources/youtube'; renamed v1.62.5 for clarity)
 MUSIC_DIR = os.path.join(PROJ, "sources", "music")
 SFX_DIR   = os.path.join(PROJ, "sources", "sfx")
+VOICEOVER_DIR = os.path.join(PROJ, "sources", "voiceover")   # AI-generated voiceovers land here (separate kind from SFX for filtering)
 EXPORTS = os.path.join(PROJ, "exports")
 EDL_PATH = os.path.join(PROJ, "edl.json")
 PROJECTS = os.path.join(PROJ, "projects")
@@ -455,6 +456,11 @@ def list_sfx():
         os.makedirs(SFX_DIR, exist_ok=True)
         return []
     return sorted(f for f in os.listdir(SFX_DIR) if f.lower().endswith(_AUDIO_EXTS))
+def list_voiceover():
+    if not os.path.isdir(VOICEOVER_DIR):
+        os.makedirs(VOICEOVER_DIR, exist_ok=True)
+        return []
+    return sorted(f for f in os.listdir(VOICEOVER_DIR) if f.lower().endswith(_AUDIO_EXTS))
 
 
 def default_edl():
@@ -2065,7 +2071,17 @@ def render(edl, out_dir=None, out_name=None, progress=None):
             src_rel = (a.get("src") or "").lstrip("/")
             if not src_rel: continue
             ap = os.path.join(PROJ, src_rel.replace("/", os.sep))
-            if not os.path.exists(ap): continue
+            if not os.path.exists(ap):
+                # Legacy fallback: a src pointing to sources/sfx/<name> may have been moved to
+                # sources/voiceover/ (or vice versa) after being added to the timeline. Try the
+                # sibling dirs before giving up.
+                _base = os.path.basename(src_rel)
+                for _alt in (VOICEOVER_DIR, SFX_DIR, MUSIC_DIR):
+                    _cand = os.path.join(_alt, _base)
+                    if os.path.exists(_cand):
+                        ap = _cand; break
+                else:
+                    continue
             st = max(0.0, float(a.get("start", 0) or 0))
             du = max(0.05, float(a.get("dur", 0) or 0))
             vol = max(0.0, min(2.0, float(a.get("volume", 1) if a.get("volume") is not None else 1)))
@@ -2283,7 +2299,7 @@ class Handler(BaseHTTPRequestHandler):
                 if os.path.exists(os.path.join(PROJ, cand)):
                     logo = "/" + cand
                     break
-            return self._json({"clips": clips, "music": list_music(), "sfx": list_sfx(),
+            return self._json({"clips": clips, "music": list_music(), "sfx": list_sfx(), "voiceover": list_voiceover(),
                                "canvases": list(CANVAS.keys()), "logo": logo, "assets": list_assets(),
                                "exportsDir": EXPORTS,
                                "customTags": load_custom_tags(),
@@ -2367,9 +2383,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "brand": brand, "category": cat})
         if path == "/api/tts/generate":
             # Body: {text, voice, model, filename?}. voice ∈ alloy/echo/fable/onyx/nova/shimmer;
-            # model ∈ tts-1 | tts-1-hd. Saves the mp3 to sources/sfx/<filename>.mp3 so it appears
-            # in the Audio picker on the next manifest reload. Filename optional; auto-generated
-            # from voice + a short slug of the text if omitted.
+            # model ∈ tts-1 | tts-1-hd. Saves the mp3 to sources/voiceover/<filename>.mp3 so it
+            # appears in the Audio picker (under the Voiceover filter) on the next manifest reload.
+            # Filename optional; auto-generated from voice + text slug if omitted.
             text = (data.get("text") or "").strip()
             voice = (data.get("voice") or "alloy").strip().lower()
             model = (data.get("model") or "tts-1").strip().lower()
@@ -2389,16 +2405,17 @@ class Handler(BaseHTTPRequestHandler):
                 base = f"tts_{voice}_{slug}_{stamp}"
             if not base.lower().endswith(".mp3"):
                 base += ".mp3"
-            out_path = os.path.join(SFX_DIR, base)
+            os.makedirs(VOICEOVER_DIR, exist_ok=True)
+            out_path = os.path.join(VOICEOVER_DIR, base)
             if os.path.exists(out_path):
                 # Uniquify with a numeric suffix so we never overwrite an existing file.
                 stem, ext = os.path.splitext(base); n = 2
-                while os.path.exists(os.path.join(SFX_DIR, f"{stem}_{n}{ext}")): n += 1
-                base = f"{stem}_{n}{ext}"; out_path = os.path.join(SFX_DIR, base)
+                while os.path.exists(os.path.join(VOICEOVER_DIR, f"{stem}_{n}{ext}")): n += 1
+                base = f"{stem}_{n}{ext}"; out_path = os.path.join(VOICEOVER_DIR, base)
             ok, err = _openai_tts(text, voice, model, out_path)
             if not ok:
                 return self._json({"ok": False, "log": err}, 502)
-            return self._json({"ok": True, "filename": base, "src": "sources/sfx/" + base})
+            return self._json({"ok": True, "filename": base, "src": "sources/voiceover/" + base})
         if path == "/api/music/rate":
             # Body: {name: str, rating: 'up' | 'down' | null}. null clears the rating.
             name = str(data.get("name") or "").strip()

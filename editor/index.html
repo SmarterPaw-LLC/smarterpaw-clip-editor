@@ -73,6 +73,7 @@
   /* Multi-track audio overlays: per-clip blocks on dedicated audio lanes */
   .blk.audclip { background:#1f5b46; box-shadow:inset 0 0 0 1px #3fae7e88; cursor:grab; }
   .blk.audclip.sfx { background:#5b461f; box-shadow:inset 0 0 0 1px #ae7e3f88; }
+  .blk.audclip.voice { background:#3a2b5e; box-shadow:inset 0 0 0 1px #6e5eae88; }   /* AI voiceovers — purple to stand apart from music/sfx */
   .blk.audclip.sel { outline:2px solid #f0a830; outline-offset:1px; z-index:5; }
   .blk.audclip.clhidden { opacity:0.4; }
   .blk.audclip.cllocked { cursor:not-allowed; }
@@ -88,6 +89,7 @@
   #audPickList .audrow .kind { font-size:10px; padding:1px 5px; border-radius:3px; color:#fff; }
   #audPickList .audrow .kind.m { background:#1f5b46; }
   #audPickList .audrow .kind.s { background:#5b461f; }
+  #audPickList .audrow .kind.v { background:#3a2b5e; }   /* voiceover chip — purple */
   .blk.sel { box-shadow:0 0 0 2px var(--acc2); z-index:2; }
   .blk.msel { box-shadow:0 0 0 2px var(--acc,#8ab81d); outline:1px solid var(--acc,#8ab81d); z-index:2; }
   .blk .hL,.blk .hR { position:absolute; top:0; bottom:0; width:7px; cursor:ew-resize; background:rgba(255,255,255,.18); z-index:6; } .blk .hL{left:0} .blk .hR{right:0}
@@ -307,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.82.0</span>
+  <span class="ver" id="appVer">v1.82.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -558,7 +560,7 @@
     <div class="modal-body">
       <div style="font-size:11px;color:var(--mut);margin-bottom:6px">Add music + sound effects on separate lanes. Drag clips on the timeline to move/retime. Click a clip to edit its volume + fades.</div>
       <div class="sec" style="display:flex;align-items:center;gap:8px">＋ Add at playhead
-        <button class="mini" id="audTtsOpen" title="Generate an AI voiceover with OpenAI TTS — saved to sources/sfx/ and added to the list below" style="margin-left:auto">🎤 Generate voiceover…</button></div>
+        <button class="mini" id="audTtsOpen" title="Generate an AI voiceover with OpenAI TTS — saved to sources/voiceover/ and added to the list below" style="margin-left:auto">🎤 Generate voiceover…</button></div>
       <div id="audTtsPanel" style="display:none;background:var(--panel2,#232732);border:1px solid var(--line);border-radius:6px;padding:8px;margin-bottom:6px;font-size:12px">
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
           <b>🎤 Generate voiceover (OpenAI TTS)</b>
@@ -584,9 +586,10 @@
         <div id="audTtsStatus" style="font-size:11px;color:var(--mut);min-height:14px;margin-top:6px"></div>
         <div id="audTtsHint" style="font-size:10px;color:var(--mut);margin-top:4px">Needs an OpenAI API key. Put it in <code>editor/openai_key.txt</code> (single line) or set <code>OPENAI_API_KEY</code>.</div>
       </div>
-      <div class="row" style="gap:8px;margin-bottom:6px"><input type="text" id="audFilter" placeholder="🔍 filter…" style="flex:1" spellcheck="false">
+      <div class="row" style="gap:8px;margin-bottom:6px;flex-wrap:wrap"><input type="text" id="audFilter" placeholder="🔍 filter…" style="flex:1;min-width:120px" spellcheck="false">
         <label class="ck"><input type="checkbox" id="audShowMusic" checked> Music</label>
-        <label class="ck"><input type="checkbox" id="audShowSfx" checked> SFX</label></div>
+        <label class="ck"><input type="checkbox" id="audShowSfx" checked> SFX</label>
+        <label class="ck"><input type="checkbox" id="audShowVoiceover" checked> Voiceover</label></div>
       <div id="audPickList" style="max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:6px"></div>
       <hr>
       <div id="audEditor"><div style="color:var(--mut);font-size:11px">Select an audio clip on the timeline to edit it.</div></div>
@@ -1545,7 +1548,7 @@ function removeAudChannel(){ histCommit();
   let used=0; audList().forEach(a=>{ used=Math.max(used,(+a.ach||0)); });
   EDL.audioChannels=Math.max(1, used+1); renderTracks(); }
 function _audSrcInLib(src){            // resolve src to {kind, name} for the picker UI
-  const m=src.match(/^sources\/(music|sfx)\/(.+)$/i);
+  const m=src.match(/^sources\/(music|sfx|voiceover)\/(.+)$/i);
   return m?{kind:m[1].toLowerCase(), name:m[2]}:{kind:'?', name:src.split('/').pop()};
 }
 function _audDurForFile(src){          // probe duration client-side; returns Promise<seconds>
@@ -1580,10 +1583,12 @@ function renderAudPickList(){
   const box=$('#audPickList'); if(!box) return; box.innerHTML='';
   const q=(($('#audFilter')||{}).value||'').trim().toLowerCase();
   const showM=$('#audShowMusic').checked, showS=$('#audShowSfx').checked;
+  const showV = ($('#audShowVoiceover')||{}).checked !== false;
   const items=[]; if(showM) (MAN.music||[]).forEach(n=>items.push({kind:'m', name:n, src:'sources/music/'+n}));
   if(showS) (MAN.sfx||[]).forEach(n=>items.push({kind:'s', name:n, src:'sources/sfx/'+n}));
+  if(showV) (MAN.voiceover||[]).forEach(n=>items.push({kind:'v', name:n, src:'sources/voiceover/'+n}));
   const list=items.filter(it=>!q||it.name.toLowerCase().includes(q));
-  if(!list.length){ box.innerHTML='<div style="color:var(--mut);font-size:11px;padding:10px;text-align:center">No audio files. Drop .mp3/.wav into <code>sources/music/</code> or <code>sources/sfx/</code> then click Reload.</div>'; return; }
+  if(!list.length){ box.innerHTML='<div style="color:var(--mut);font-size:11px;padding:10px;text-align:center">No audio files. Drop .mp3/.wav into <code>sources/music/</code>, <code>sources/sfx/</code>, or generate a voiceover above.</div>'; return; }
   const ratings = MAN.musicRatings || {};
   list.forEach(it=>{ const row=document.createElement('div'); row.className='audrow';
     const myRating = it.kind==='m' ? (ratings[it.name] || '') : '';
@@ -1596,7 +1601,8 @@ function renderAudPickList(){
       ? `<button class="mini" data-act="up" title="I like this — flag for me to source similar tracks" style="${upActive?'background:var(--acc, #f0a830);color:#1b1d22;font-weight:600':''}">👍</button>
          <button class="mini" data-act="dn" title="I don't like this — flag for removal / replacement" style="${dnActive?'background:#8a2a2a;color:#fff':''}">👎</button>`
       : '';
-    row.innerHTML=`<span class="kind ${it.kind}">${it.kind==='m'?'music':'sfx'}</span><span class="nm" title="${it.name}">${it.name.replace(/\.(mp3|m4a|wav|ogg|aac|flac)$/i,'')}</span>
+    const kindLbl = it.kind==='m'?'music':(it.kind==='s'?'sfx':'voice');
+    row.innerHTML=`<span class="kind ${it.kind}">${kindLbl}</span><span class="nm" title="${it.name}">${it.name.replace(/\.(mp3|m4a|wav|ogg|aac|flac)$/i,'')}</span>
       ${thumbsHtml}
       <button class="mini" data-act="preview" title="Preview (play/stop)">▶</button>
       <button class="mini primary" data-act="add">＋ Add at playhead</button>`;
@@ -1729,7 +1735,8 @@ function _audHueForSrc(src){
 function buildAudioBar(a, total){
   const b=document.createElement('div'); b.dataset.audid=a.id;
   const meta=_audSrcInLib(a.src||'');
-  b.className='blk audclip '+(meta.kind==='s'?'sfx':'music')+(a.id===audSel?' sel':'')+(a.hidden?' clhidden':'')+(a.locked?' cllocked':'');
+  const kindCls = meta.kind==='s' ? 'sfx' : (meta.kind==='v' ? 'voice' : 'music');
+  b.className='blk audclip '+kindCls+(a.id===audSel?' sel':'')+(a.hidden?' clhidden':'')+(a.locked?' cllocked':'');
   b.style.left=((+a.start||0)/total*100)+'%'; b.style.width=((+a.dur||0)/total*100)+'%';
   // Per-file color coding: bar background + inner border derived from the src hash.
   // SFX get a slightly warmer baseline (saturation+lightness shift) so the kind is also legible at a glance.
@@ -3216,12 +3223,18 @@ function renderCfPickGrid(){
 $('#btnOverlays').onclick=openOvModal; $('#ovClose').onclick=closeOvModal;
 $('#btnAudio').onclick=openAudModal; $('#audClose').onclick=closeAudModal;
 $('#audFilter').oninput=renderAudPickList; $('#audShowMusic').onchange=renderAudPickList; $('#audShowSfx').onchange=renderAudPickList;
+if($('#audShowVoiceover')) $('#audShowVoiceover').onchange=renderAudPickList;
 // TTS panel: toggle open/close, refresh key-availability hint every time it opens so the user
 // gets accurate guidance if they just added editor/openai_key.txt without restarting.
 $('#audTtsOpen').onclick = async () => {
   const p = $('#audTtsPanel');
   if(p.style.display !== 'none'){ p.style.display = 'none'; return; }
   p.style.display = 'block';
+  // Pre-fill filename with the project name — sanitized down to safe chars. Server adds .mp3
+  // and uniquifies with _2, _3, … if the name is already taken.
+  const projName = (curProj && curProj.name) ? curProj.name : (EDL && EDL.name) || '';
+  const suggested = String(projName).replace(/[^A-Za-z0-9_-]+/g,'_').replace(/^_+|_+$/g,'').slice(0,60);
+  if(suggested) $('#audTtsName').value = suggested;
   $('#audTtsText').focus();
   // Refresh manifest quickly to check ttsAvailable (in case the user just added the key file)
   try{ const m = await api('/api/manifest?_=' + Date.now()); MAN.ttsAvailable = !!m.ttsAvailable; }catch(_){}
@@ -3249,7 +3262,7 @@ $('#audTtsGo').onclick = async () => {
     // Reload manifest so the new SFX file shows up in the picker, then optionally add at playhead.
     await boot(true);
     renderAudPickList();
-    stat.innerHTML = '✓ Saved <b>'+r.filename+'</b> to sources/sfx/ ('+elapsed+'s). It now appears in the list below — click ＋ Add at playhead when ready.';
+    stat.innerHTML = '✓ Saved <b>'+r.filename+'</b> to sources/voiceover/ ('+elapsed+'s). It now appears in the list below (Voiceover filter) — click ＋ Add at playhead when ready.';
     toast('Voiceover generated: '+r.filename);
   } else {
     stat.textContent = '❌ '+((r && r.log) || 'generation failed after '+elapsed+'s');
@@ -4102,7 +4115,16 @@ function applyEDL(edl){
   if(s.captionY==null) s.captionY=0.62;
   if(!EDL.segments) EDL.segments=[];
   if(!Array.isArray(EDL.overlays)) EDL.overlays=[];
-  if(!Array.isArray(EDL.audio)) EDL.audio=[];   // multi-track audio overlays (music + sfx)
+  if(!Array.isArray(EDL.audio)) EDL.audio=[];   // multi-track audio overlays (music + sfx + voiceover)
+  // Legacy audio-src migration: TTS voiceovers used to save into sources/sfx/. Any project
+  // still pointing there needs its src rewritten to sources/voiceover/ so the picker labels it
+  // as a voice track AND the server doesn't need its fallback resolver at render time.
+  const _vo = new Set((MAN.voiceover||[]).map(n=>n.toLowerCase()));
+  (EDL.audio||[]).forEach(a=>{
+    if(!a || !a.src) return;
+    const m = a.src.match(/^sources\/sfx\/(.+)$/i);
+    if(m && _vo.has(m[1].toLowerCase())) a.src = 'sources/voiceover/'+m[1];
+  });
   // Backfill stable per-segment IDs so variant framing (per-aspect zoom/anchor) can key on them
   // even for legacy projects saved before _suid existed.
   (EDL.segments||[]).forEach(sg => { if(sg && !sg._suid) sg._suid = _newSuid(); });
