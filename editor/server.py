@@ -413,11 +413,30 @@ def ingest_stopmotion(images, fps, brand, category, name):
     # rejects mixed dims). H264 needs even dims; round up.
     tmp = tempfile.mkdtemp(prefix="stopmotion_")
     try:
-        first = Image.open(io.BytesIO(images[0])).convert("RGB")
+        # Decode each raw byte-string to a PIL Image. PIL handles PNG/JPG/WEBP/BMP/TIFF/GIF/AVIF
+        # natively; HEIC/HEIF from iPhones needs ffmpeg to convert first (PIL raises UnidentifiedImageError).
+        def _decode(raw, idx):
+            try:
+                return Image.open(io.BytesIO(raw)).convert("RGB")
+            except Exception:
+                # Fall back to ffmpeg — write the raw bytes and convert to PNG in tmp.
+                _in = os.path.join(tmp, f"_in_{idx}.bin")
+                _out = os.path.join(tmp, f"_conv_{idx}.png")
+                with open(_in, "wb") as fh: fh.write(raw)
+                r = run([FFMPEG, "-y", "-loglevel", "error", "-i", _in, _out])
+                try: os.remove(_in)
+                except Exception: pass
+                if r.returncode != 0 or not os.path.exists(_out):
+                    raise RuntimeError(f"image #{idx} unreadable — not a recognized format (tried PIL + ffmpeg)")
+                im = Image.open(_out).convert("RGB")
+                try: os.remove(_out)
+                except Exception: pass
+                return im
+        first = _decode(images[0], 1)
         W, H = first.size
         W += W % 2; H += H % 2
         for i, raw in enumerate(images, start=1):
-            img = Image.open(io.BytesIO(raw)).convert("RGB")
+            img = first if i == 1 else _decode(raw, i)
             if img.size != (W, H):
                 # Pad to (W,H) preserving aspect: fit-inside then center on black.
                 img.thumbnail((W, H), Image.LANCZOS)
