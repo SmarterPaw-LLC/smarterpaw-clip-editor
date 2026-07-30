@@ -389,6 +389,58 @@ def vcodec(path):
     return (r.stdout or "").strip().lower()
 
 
+def ingest_stopmotion(images, fps, brand, category, name):
+    """Build a stop-motion mp4 from a list of image byte-strings at the given FPS. Images play
+    in list order; each holds for 1/fps seconds. Saved to sources/clips/<brand>/<category>/ so
+    it appears in the source bin next to every other clip. Returns (rel_path, category, cid).
+    Raises on failure."""
+    import base64  # local so a stopmotion-less import path never pays the cost
+    from PIL import Image
+    if not images:
+        raise ValueError("no images provided")
+    cat = re.sub(r"[^A-Za-z0-9_-]", "", (category or "stopmotion").lower()) or "stopmotion"
+    br = re.sub(r"[^A-Za-z0-9_-]", "", (brand or "meowijuana").lower()) or "meowijuana"
+    stem = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.splitext(name or "stopmotion")[0]) or "stopmotion"
+    fps = max(1, min(30, int(fps or 8)))
+    # Prefer existing product folder (matches ingest_upload behavior).
+    existing = _find_product_dir(cat)
+    dest_dir = existing or os.path.join(SRC_ROOT, br, cat)
+    os.makedirs(dest_dir, exist_ok=True)
+    # Bake in a short random id so the file is uniquely findable in the bin (matches YouTube-id pattern).
+    cid = base64.urlsafe_b64encode(os.urandom(8)).decode("ascii").rstrip("=")[:11]
+    dest = os.path.join(dest_dir, f"{stem}_stopmotion_[{cid}].mp4")
+    # Write frames to tmp — pad to consistent WxH taken from the FIRST image (ffmpeg's image2 demuxer
+    # rejects mixed dims). H264 needs even dims; round up.
+    tmp = tempfile.mkdtemp(prefix="stopmotion_")
+    try:
+        first = Image.open(io.BytesIO(images[0])).convert("RGB")
+        W, H = first.size
+        W += W % 2; H += H % 2
+        for i, raw in enumerate(images, start=1):
+            img = Image.open(io.BytesIO(raw)).convert("RGB")
+            if img.size != (W, H):
+                # Pad to (W,H) preserving aspect: fit-inside then center on black.
+                img.thumbnail((W, H), Image.LANCZOS)
+                bg = Image.new("RGB", (W, H), (0, 0, 0))
+                bg.paste(img, ((W - img.width) // 2, (H - img.height) // 2))
+                img = bg
+            img.save(os.path.join(tmp, f"f{i:05d}.png"))
+        r = run([FFMPEG, "-y", "-loglevel", "error",
+                 "-framerate", str(fps),
+                 "-i", os.path.join(tmp, "f%05d.png"),
+                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
+                 "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                 dest])
+        if r.returncode != 0 or not os.path.exists(dest):
+            raise RuntimeError(f"ffmpeg failed:\n{r.stderr[-1500:]}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    # Remember this product→brand mapping so flat-layout siblings still resolve
+    bm = load_brand_map(); bm[cat] = br; save_brand_map(bm)
+    rel = os.path.relpath(dest, PROJ).replace("\\", "/")
+    return rel, cat, cid
+
+
 def ingest_upload(raw, orig_name, category):
     """Save an uploaded video into sources/clips/<brand>/<category>/ as a browser-playable
     .mp4 (remux if already H.264, else re-encode). Returns (rel_path, category)."""
@@ -2396,6 +2448,39 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "log": repr(e)}, 500)
             bm = load_brand_map(); bm[cat] = brand; save_brand_map(bm)
             return self._json({"ok": True, "brand": brand, "category": cat})
+        if path == "/api/stopmotion/create":
+            # Body: {name, brand, category, fps, images:[{data:base64, name}]}. Builds an mp4
+            # from the images at fps frames per second, saves to sources/clips/<brand>/<cat>/,
+            # returns {ok, file, category, id}. Images play in the order provided (client sorts
+            # by filename before sending).
+            import base64
+            imgs_in = data.get("images") or []
+            if not imgs_in:
+                return self._json({"ok": False, "log": "no images provided"}, 400)
+            if len(imgs_in) > 300:
+                return self._json({"ok": False, "log": "too many images (max 300 per stop-motion)"}, 400)
+            try:
+                raw_bytes = []
+                for item in imgs_in:
+                    b = item.get("data") if isinstance(item, dict) else item
+                    if not b: continue
+                    # Support raw base64 or data-URI form ("data:image/png;base64,....")
+                    if isinstance(b, str) and "," in b and b.startswith("data:"):
+                        b = b.split(",", 1)[1]
+                    raw_bytes.append(base64.b64decode(b))
+            except Exception as e:
+                return self._json({"ok": False, "log": f"base64 decode failed: {e!r}"}, 400)
+            try:
+                rel, cat, cid = ingest_stopmotion(
+                    raw_bytes,
+                    fps=data.get("fps", 8),
+                    brand=data.get("brand", "meowijuana"),
+                    category=data.get("category", "stopmotion"),
+                    name=data.get("name", "stopmotion"),
+                )
+            except Exception as e:
+                return self._json({"ok": False, "log": repr(e)}, 500)
+            return self._json({"ok": True, "file": rel, "category": cat, "id": cid, "frames": len(raw_bytes)})
         if path == "/api/tts/generate":
             # Body: {text, voice, model, filename?}. voice ∈ alloy/echo/fable/onyx/nova/shimmer;
             # model ∈ tts-1 | tts-1-hd. Saves the mp3 to sources/voiceover/<filename>.mp3 so it

@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.82.2</span>
+  <span class="ver" id="appVer">v1.83.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -469,12 +469,37 @@
     <div class="modal-hd"><b>⚙ Manage clips</b>
       <button class="mini" id="mgrNewCat" title="Create an empty category folder — pick a brand, name it, then move clips into it">＋ New category</button>
       <button class="mini" id="mgrNewTag" title="Add a tag to the shared tag picker so it shows up on the '+ tag' popover for every clip">＋ New tag</button>
+      <button class="mini" id="mgrNewStopmo" title="Upload a batch of images and turn them into a stop-motion mp4 (saved into your clip library)">🎞 New stop-motion…</button>
       <button class="mini" id="mgrClose" style="margin-left:auto">✕ Close</button></div>
     <div class="modal-body">
       <div class="row" style="gap:8px;align-items:center"><input type="text" id="mgrFilter" placeholder="Filter by name, tag, category, id…" style="flex:1"><span id="mgrCount" style="font-size:11px;color:var(--mut)"></span></div>
       <div style="font-size:11px;color:var(--mut);margin:5px 0">Change a clip's category (moves the file) or delete it. Moving keeps the clip usable in saved projects; deleting is permanent.</div>
       <div id="mgrList" style="max-height:70vh;overflow:auto"></div>
       <div id="mgrStatus" style="font-size:12px;color:var(--mut);min-height:16px;margin-top:4px"></div>
+    </div>
+  </div>
+</div>
+
+<div id="stopmoModal" class="modal" style="display:none">
+  <div class="modal-card" style="max-width:720px;width:80vw;max-height:90vh">
+    <div class="modal-hd"><b>🎞 New stop-motion clip</b><button class="mini" id="smClose" style="margin-left:auto">✕ Close</button></div>
+    <div class="modal-body">
+      <div style="font-size:11px;color:var(--mut);margin-bottom:6px">Pick a batch of images (or a whole folder). They play in filename order at the FPS below; the result is saved as a normal .mp4 into your clip library.</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
+        <label class="mini primary" style="cursor:pointer">📁 Pick images<input type="file" id="smFiles" accept="image/*" multiple style="display:none"></label>
+        <label class="mini" style="cursor:pointer" title="Only works in Chromium/Edge — asks for a folder">📂 Pick folder<input type="file" id="smFolder" webkitdirectory directory multiple style="display:none"></label>
+        <span id="smCount" style="font-size:11px;color:var(--mut)">0 images</span>
+        <button class="mini" id="smClear" style="margin-left:auto">Clear</button>
+      </div>
+      <div id="smThumbs" style="display:flex;flex-wrap:wrap;gap:4px;max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:4px;background:#0006"></div>
+      <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+        <label>FPS <input type="number" id="smFps" min="1" max="30" step="1" value="8" style="width:56px" title="Frames per second — 8 is classic stop-motion, 24 = smoother, 2 = choppy"></label>
+        <label>Brand <select id="smBrand"></select></label>
+        <label>Category <input type="text" id="smCat" value="stopmotion" style="width:120px" placeholder="stopmotion"></label>
+        <label>Name <input type="text" id="smName" style="width:160px" placeholder="my-stopmotion"></label>
+        <button class="mini primary" id="smGo" style="margin-left:auto">Create clip</button>
+      </div>
+      <div id="smStatus" style="font-size:12px;color:var(--mut);min-height:16px;margin-top:6px"></div>
     </div>
   </div>
 </div>
@@ -4078,6 +4103,77 @@ $('#mgrNewTag').onclick=async()=>{
   if(r&&r.ok){ MAN.customTags = r.customTags || []; renderClipMgr(); $('#mgrStatus').textContent='Added tag "'+tag+'" to the picker'; toast('Tag "'+tag+'" available in every clip’s + tag popover'); }
   else { $('#mgrStatus').textContent='Failed: '+((r&&r.log)||'error'); }
 };
+/* ---------- stop-motion from images ---------- */
+let _smFiles = [];   // accumulated image File objects (sorted by name)
+function _smUpdateThumbs(){
+  const box = $('#smThumbs'); box.innerHTML = '';
+  $('#smCount').textContent = _smFiles.length + ' image' + (_smFiles.length!==1?'s':'');
+  _smFiles.forEach((f,i)=>{
+    const wrap = document.createElement('div'); wrap.style.cssText = 'position:relative;width:72px;height:72px';
+    const im = document.createElement('img'); im.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:3px;background:#111';
+    im.src = URL.createObjectURL(f);
+    im.onload = () => URL.revokeObjectURL(im.src);
+    const idx = document.createElement('span'); idx.textContent = i+1;
+    idx.style.cssText = 'position:absolute;top:1px;left:2px;background:#000a;color:#fff;font-size:10px;padding:1px 4px;border-radius:3px';
+    const rm = document.createElement('button'); rm.type='button'; rm.textContent='✕'; rm.title='Remove';
+    rm.style.cssText='position:absolute;top:1px;right:2px;background:#000a;color:#fff;border:none;font-size:10px;padding:1px 4px;border-radius:3px;cursor:pointer';
+    rm.onclick=()=>{ _smFiles.splice(i,1); _smUpdateThumbs(); };
+    wrap.appendChild(im); wrap.appendChild(idx); wrap.appendChild(rm);
+    box.appendChild(wrap);
+  });
+}
+function _smAddFiles(fileList){
+  const imgs = [...(fileList||[])].filter(f => f.type && f.type.startsWith('image/'));
+  imgs.sort((a,b) => a.name.localeCompare(b.name, undefined, {numeric:true, sensitivity:'base'}));
+  _smFiles = _smFiles.concat(imgs);
+  _smUpdateThumbs();
+}
+$('#mgrNewStopmo').onclick = () => {
+  _smFiles = []; _smUpdateThumbs();
+  $('#smStatus').textContent = '';
+  // Prefill brand dropdown from current project brand + all known brands
+  const brands = ['meowijuana','doggijuana','kkz','unassigned'];
+  const cur = (typeof projectBrand === 'function' ? projectBrand() : 'meowijuana');
+  $('#smBrand').innerHTML = brands.map(b => `<option value="${b}" ${b===cur?'selected':''}>${(BRAND_LABELS[b]||b)}</option>`).join('');
+  $('#smName').value = '';
+  $('#stopmoModal').style.display = 'flex';
+};
+$('#smClose').onclick = () => { $('#stopmoModal').style.display='none'; };
+$('#smClear').onclick = () => { _smFiles=[]; _smUpdateThumbs(); };
+$('#smFiles').onchange = e => { _smAddFiles(e.target.files); e.target.value=''; };
+$('#smFolder').onchange = e => { _smAddFiles(e.target.files); e.target.value=''; };
+$('#smGo').onclick = async () => {
+  if(!_smFiles.length){ $('#smStatus').textContent = 'Pick some images first.'; return; }
+  if(_smFiles.length > 300){ $('#smStatus').textContent = 'Too many images (max 300).'; return; }
+  const btn = $('#smGo'), stat = $('#smStatus');
+  btn.disabled = true; btn.textContent = 'Reading images…';
+  const fps = Math.max(1, Math.min(30, parseInt($('#smFps').value)||8));
+  const brand = $('#smBrand').value, category = $('#smCat').value.trim() || 'stopmotion';
+  const name = ($('#smName').value.trim() || 'stopmotion');
+  // Read each File → base64. FileReader is async but small, so it's fine.
+  const b64s = [];
+  for(let i=0;i<_smFiles.length;i++){
+    stat.textContent = 'Reading '+(i+1)+' / '+_smFiles.length+'…';
+    const b = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(_smFiles[i]); });
+    b64s.push({data: b, name: _smFiles[i].name});
+  }
+  stat.textContent = 'Uploading + encoding via ffmpeg…';
+  btn.textContent = 'Encoding…';
+  const t0 = Date.now();
+  const r = await api('/api/stopmotion/create', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({fps, brand, category, name, images: b64s})});
+  const secs = ((Date.now()-t0)/1000).toFixed(1);
+  btn.disabled = false; btn.textContent = 'Create clip';
+  if(r && r.ok){
+    stat.innerHTML = '✓ Saved <b>'+r.file+'</b> ('+r.frames+' frames at '+fps+'fps · '+secs+'s). Refreshing bin…';
+    await boot(true);
+    renderBin(); if($('#clipMgrModal').style.display==='flex') renderClipMgr();
+    toast('Stop-motion clip added to '+brand+'/'+category);
+  } else {
+    stat.textContent = '❌ '+((r && r.log) || 'failed after '+secs+'s');
+  }
+};
+$('#stopmoModal').onclick = e => { if(e.target.id === 'stopmoModal') $('#stopmoModal').style.display='none'; };
 $('#fileAddClip').onchange=e=>{ if(e.target.files.length) openAddClip(e.target.files); e.target.value=''; };
 (function(){ function wireDrop(el){ if(!el) return;
     el.addEventListener('dragover', e=>{ if([...(e.dataTransfer.items||[])].some(it=>it.kind==='file')){ e.preventDefault(); el.classList.add('dragover'); } });
