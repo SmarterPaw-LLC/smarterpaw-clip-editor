@@ -2025,6 +2025,21 @@ def render(edl, out_dir=None, out_name=None, progress=None):
                     return {"ok": False, "log": f"seg {idx} failed:\n{r.stderr[-1500:]}"}
                 total += outlen
             lines.append("file '" + so.replace("\\", "/") + "'")
+        # If overlays/audio extend PAST the last video clip, pad the concat with a black filler
+        # so their content is actually rendered instead of getting truncated at the last clip's
+        # end (mirrors client's layout() extension — timeline plays to the last content, not the
+        # last video).
+        content_end = _content_end(edl)
+        tail_gap = content_end - total
+        if tail_gap > 0.05 and not overlay_only:
+            tp = os.path.join(tmp, "seg_99_tail.mp4")
+            r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi",
+                     "-i", f"color=c=black:s={W}x{H}:r=30:d={tail_gap:g}",
+                     "-vf", "format=yuv420p"] + ENC + [tp])
+            if r.returncode != 0:
+                return {"ok": False, "log": f"tail-fill failed:\n{r.stderr[-1500:]}"}
+            lines.append("file '" + tp.replace("\\", "/") + "'")
+            total += tail_gap
         # end card: solid/gradient gets its own clip; transparent is already baked into the last segment
         if ec_on and not ec_transparent:
             ec_clip = os.path.join(tmp, "seg_99_endcard.mp4")
