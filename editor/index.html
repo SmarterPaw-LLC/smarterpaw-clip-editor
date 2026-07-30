@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.83.2</span>
+  <span class="ver" id="appVer">v1.83.3</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -4127,10 +4127,19 @@ function _smUpdateThumbs(){
   });
 }
 function _smAddFiles(fileList){
-  const imgs = [...(fileList||[])].filter(f => f.type && f.type.startsWith('image/'));
+  const arr = [...(fileList||[])];
+  // Accept by MIME image/* OR by extension — HEIC files, files without a recognized MIME, or
+  // files renamed on Windows often report an empty `type` and were being silently dropped.
+  const IMG_EXT = /\.(png|jpe?g|webp|gif|bmp|tif?f|heic|heif|avif)$/i;
+  const imgs = arr.filter(f => (f.type && f.type.startsWith('image/')) || IMG_EXT.test(f.name || ''));
+  const rejected = arr.length - imgs.length;
   imgs.sort((a,b) => a.name.localeCompare(b.name, undefined, {numeric:true, sensitivity:'base'}));
   _smFiles = _smFiles.concat(imgs);
   _smUpdateThumbs();
+  if(arr.length === 0){ $('#smStatus').textContent = 'No files received from the picker.'; }
+  else if(imgs.length === 0){ $('#smStatus').textContent = 'Selected '+arr.length+' file(s) but none look like images (checked MIME + extension).'; }
+  else if(rejected > 0){ $('#smStatus').textContent = 'Added '+imgs.length+', skipped '+rejected+' non-image file(s).'; }
+  else { $('#smStatus').textContent = ''; }
 }
 $('#mgrNewStopmo').onclick = () => {
   _smFiles = []; _smUpdateThumbs();
