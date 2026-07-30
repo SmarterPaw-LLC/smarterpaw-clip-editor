@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.83.0</span>
+  <span class="ver" id="appVer">v1.83.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -486,10 +486,12 @@
     <div class="modal-body">
       <div style="font-size:11px;color:var(--mut);margin-bottom:6px">Pick a batch of images (or a whole folder). They play in filename order at the FPS below; the result is saved as a normal .mp4 into your clip library.</div>
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
-        <label class="mini primary" style="cursor:pointer">📁 Pick images<input type="file" id="smFiles" accept="image/*" multiple style="display:none"></label>
-        <label class="mini" style="cursor:pointer" title="Only works in Chromium/Edge — asks for a folder">📂 Pick folder<input type="file" id="smFolder" webkitdirectory directory multiple style="display:none"></label>
+        <button type="button" class="mini primary" id="smPickImages">📁 Pick images</button>
+        <button type="button" class="mini" id="smPickFolder" title="Only works in Chromium/Edge — asks for a folder">📂 Pick folder</button>
+        <input type="file" id="smFiles" accept="image/*" multiple style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0">
+        <input type="file" id="smFolder" webkitdirectory directory multiple style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0">
         <span id="smCount" style="font-size:11px;color:var(--mut)">0 images</span>
-        <button class="mini" id="smClear" style="margin-left:auto">Clear</button>
+        <button type="button" class="mini" id="smClear" style="margin-left:auto">Clear</button>
       </div>
       <div id="smThumbs" style="display:flex;flex-wrap:wrap;gap:4px;max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:4px;background:#0006"></div>
       <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
@@ -4140,6 +4142,10 @@ $('#mgrNewStopmo').onclick = () => {
 };
 $('#smClose').onclick = () => { $('#stopmoModal').style.display='none'; };
 $('#smClear').onclick = () => { _smFiles=[]; _smUpdateThumbs(); };
+// Explicit .click() on the hidden inputs — label-wrapped hidden file inputs can be silently
+// suppressed depending on browser/CSP, so drive them directly from real buttons instead.
+$('#smPickImages').onclick = () => $('#smFiles').click();
+$('#smPickFolder').onclick = () => $('#smFolder').click();
 $('#smFiles').onchange = e => { _smAddFiles(e.target.files); e.target.value=''; };
 $('#smFolder').onchange = e => { _smAddFiles(e.target.files); e.target.value=''; };
 $('#smGo').onclick = async () => {
