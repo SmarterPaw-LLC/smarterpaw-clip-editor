@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.83.4</span>
+  <span class="ver" id="appVer">v1.83.5</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1182,6 +1182,7 @@ function renderTimeline(){
       <div class="cscrub-row">
         <button class="mini cbtn" data-sa="in" title="Set this clip's IN point to the scrub position">⇤ Set IN</button>
         <button class="mini cbtn" data-sa="out" title="Set this clip's OUT (duration) to the scrub position">Set OUT ⇥</button>
+        <button class="mini cbtn" data-sa="full" title="Use the entire source clip (in=0, dur=source length)">⇤⇥ Full clip</button>
         <span class="csct" style="flex:1;text-align:left">in ${fmt(s.in)} · ${fmt(s.dur)}s</span>
       </div>`;
     el.querySelector('.hd').onclick=()=>selectSeg(i);
@@ -1203,6 +1204,13 @@ function renderTimeline(){
       if(a==='play'){ stop(); selectSeg(i); playRange(EDL.segments[i], ()=>{}); }
       else if(a==='in'){ s.in=Math.round(t*100)/100; renderTimeline(); selectSeg(i); toast('IN set to '+fmt(t)+'s'); }
       else if(a==='out'){ const d=Math.round((t-(+s.in||0))*100)/100; if(d>0){ s.dur=d; renderTimeline(); selectSeg(i); toast('Duration set to '+fmt(d)+'s'); } else toast('Scrub past the IN point first'); }
+      else if(a==='full'){
+        // Reset to the entire source clip: in=0, dur=source.dur. Source dur comes from MAN.byId
+        // (probed by the server); fall back to cdur (60s cap) if the clip's not in the bin.
+        const src = MAN.byId && MAN.byId[s.id]; const full = src && src.dur ? +src.dur : (cdur || 60);
+        histCommit(); s.in = 0; s.dur = Math.round(full*100)/100;
+        renderTimeline(); selectSeg(i); toast('Segment set to full clip ('+fmt(s.dur)+'s)');
+      }
     }; });
     tl.appendChild(el);
   });
