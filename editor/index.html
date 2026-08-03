@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.86.1</span>
+  <span class="ver" id="appVer">v1.87.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1779,9 +1779,15 @@ function renderAudPickList(){
          <button class="mini" data-act="dn" title="I don't like this — flag for removal / replacement" style="${dnActive?'background:#8a2a2a;color:#fff':''}">👎</button>`
       : '';
     const kindLbl = it.kind==='m'?'music':(it.kind==='s'?'sfx':'voice');
+    // Voiceover clips are user-generated (TTS or mic) and often disposable — offer a delete
+    // button so they don't pile up. Music/SFX are managed by hand in sources/ so no button there.
+    const delHtml = it.kind==='v'
+      ? '<button class="mini" data-act="del" title="Delete this voiceover file (and its script sidecar if any). Cannot be undone." style="color:#e08b8b">🗑</button>'
+      : '';
     row.innerHTML=`<span class="kind ${it.kind}">${kindLbl}</span><span class="nm" title="${it.name}">${it.name.replace(/\.(mp3|m4a|wav|ogg|aac|flac)$/i,'')}</span>
       ${thumbsHtml}
       <button class="mini" data-act="preview" title="Preview (play/stop)">▶</button>
+      ${delHtml}
       <button class="mini primary" data-act="add">＋ Add at playhead</button>`;
     row.querySelector('[data-act="add"]').onclick=()=>addAudioAtPlayhead(it.src);
     let prev=null; row.querySelector('[data-act="preview"]').onclick=ev=>{ const btn=ev.currentTarget;
@@ -1798,6 +1804,26 @@ function renderAudPickList(){
     };
     const upBtn = row.querySelector('[data-act="up"]'); if(upBtn) upBtn.onclick = () => _rate('up');
     const dnBtn = row.querySelector('[data-act="dn"]'); if(dnBtn) dnBtn.onclick = () => _rate('down');
+    const delBtn = row.querySelector('[data-act="del"]');
+    if(delBtn) delBtn.onclick = async () => {
+      // If it's referenced on the current timeline, warn — the audio bar will 404 after delete
+      // and the user should know why.
+      const inUse = (EDL.audio||[]).some(a => (a.src||'') === it.src);
+      const msg = 'Delete voiceover "'+it.name+'"?'
+        + (inUse ? '\n\nWARNING: this file is used on the current timeline. Its audio bar will go silent after deletion.' : '')
+        + '\n\nThis removes the mp3 (and its script sidecar if any) from sources/voiceover/. Cannot be undone.';
+      if(!confirm(msg)) return;
+      const r = await api('/api/voiceover/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name: it.name})});
+      if(r && r.ok){
+        // Refresh manifest so the row disappears everywhere it's listed.
+        MAN.voiceover = (MAN.voiceover||[]).filter(n => n !== it.name);
+        if(MAN.voiceoverScripts) delete MAN.voiceoverScripts[it.name];
+        renderAudPickList();
+        toast('Deleted '+it.name);
+      } else {
+        toast('Delete failed: '+((r&&r.log)||'unknown'));
+      }
+    };
     box.appendChild(row); });
 }
 function audSyncEditor(){

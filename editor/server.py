@@ -2782,6 +2782,25 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "product": product, "brand": brand,
                                "moved": did_anything, "merged_dupes": merged, "moved_files": moved,
                                "conflicts": conflicts, "consolidated_from": len(all_dirs)})
+        if path == "/api/voiceover/delete":
+            name = (data.get("name") or "").strip()
+            # Reject anything that could path-traverse; filenames only.
+            if not name or "/" in name or "\\" in name or name.startswith("."):
+                return self._json({"ok": False, "log": "bad name"}, 400)
+            fp = os.path.join(VOICEOVER_DIR, name)
+            if not os.path.exists(fp):
+                return self._json({"ok": False, "log": "not found"}, 404)
+            try:
+                os.remove(fp)
+                # If a matching TTS script sidecar exists (<stem>.txt), drop it too so it
+                # doesn't linger and repopulate captions for an mp3 that no longer exists.
+                side = os.path.join(VOICEOVER_DIR, os.path.splitext(name)[0] + ".txt")
+                if os.path.exists(side):
+                    try: os.remove(side)
+                    except OSError: pass
+            except Exception as e:
+                return self._json({"ok": False, "log": repr(e)}, 500)
+            return self._json({"ok": True})
         if path == "/api/clip/delete":
             cid = (data.get("id") or "").strip()
             src = id_to_file().get(cid)
