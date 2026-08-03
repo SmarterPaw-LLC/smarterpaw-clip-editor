@@ -2221,16 +2221,25 @@ def render(edl, out_dir=None, out_name=None, progress=None):
             chains = []
             outs = []
             def _atempo_chain(spd):
-                # Vinyl-style pitch-shift: asetrate changes the sample rate (higher rate → faster
-                # playback + higher pitch; lower rate → slower + deeper), aresample brings it
-                # back to a standard rate so downstream filters work. Matches the classic
-                # slow-down/speed-up sound (no time-stretch artifacts that atempo produces at
-                # extreme speeds like 0.5× or 2×).
+                # Pitch-preserving time-stretch via atempo. A "speed" control should not turn a
+                # voiceover into a chipmunk — that's what asetrate does. Modern ffmpeg atempo
+                # accepts 0.5..100 in a single stage; chain two stages for 0.25× so extreme
+                # slowdown still works without breaking the filter.
                 if abs(spd - 1.0) < 1e-3:
                     return ""
-                # Use 48kHz as a common intermediate; aresample back to 44.1k after.
-                base_sr = 48000
-                return "asetrate=%d,aresample=44100" % int(round(base_sr * spd))
+                if 0.5 <= spd <= 2.0:
+                    return "atempo=%.4f" % spd
+                # Below 0.5×: split into two ≥0.5 factors (e.g. 0.25 → 0.5 × 0.5).
+                # Above 2×: split into two ≤2 factors (rare — UI caps at 4).
+                import math
+                factors = []
+                x = spd
+                while x < 0.5:
+                    factors.append(0.5); x /= 0.5
+                while x > 2.0:
+                    factors.append(2.0); x /= 2.0
+                factors.append(x)
+                return ",".join("atempo=%.4f" % f for f in factors)
             for i, (p, st, du, vol, fi, fo, src_in, spd) in enumerate(tracks, start=1):
                 # Seek into source (framed-clip audio) uses -ss BEFORE -i for accurate keyframe seek.
                 if src_in > 0.001:
