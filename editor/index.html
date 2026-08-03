@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.83.5</span>
+  <span class="ver" id="appVer">v1.83.6</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1048,7 +1048,24 @@ function _clipMatchesQuery(c, q){
   return q.split(/\s+/).filter(Boolean).every(t => hay.includes(t));
 }
 function renderBin(){
-  const bin=$('#bin'); bin.innerHTML=''; const collapsed=_binCollapsed();
+  const bin=$('#bin'); bin.innerHTML='';
+  // Auto-collapse non-project-brand sections whenever the project brand changes (or on first
+  // load for this project's brand). Remembered via localStorage so a manual toggle after the
+  // auto-apply sticks — we only re-apply when the tracked brand differs from the current one.
+  const cur = projectBrand();
+  const lastKey = 'scl_bin_last_brand';
+  let last = null; try{ last = localStorage.getItem(lastKey); }catch(_){}
+  if(last !== cur){
+    const s = _binCollapsed();
+    (BRAND_ORDER || []).forEach(b => {
+      const key = 'b:'+b;
+      if(b === cur) s.delete(key);   // ensure the project brand is expanded
+      else s.add(key);                // collapse everything else
+    });
+    _binSaveCollapsed(s);
+    try{ localStorage.setItem(lastKey, cur); }catch(_){}
+  }
+  const collapsed=_binCollapsed();
   const q = ((document.getElementById('binFilter')||{}).value||'').trim().toLowerCase();
   // group clips into brand → product nested structure (filtered by search query)
   const clips = MAN.clips.filter(c => _clipMatchesQuery(c, q));
