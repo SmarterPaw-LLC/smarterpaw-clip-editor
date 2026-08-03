@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.88.1</span>
+  <span class="ver" id="appVer">v1.88.2</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2064,6 +2064,13 @@ function audBarInteract(b, hL, hR, a, total){
       for(const ln of lanes){ const r=ln.getBoundingClientRect(); if(cy<r.bottom){ return +ln.dataset.ach; } }
       return audChCount()-1;
     };
+    // Cap right-drag at the actual playable length of the source given srcIn/speed. Without this,
+    // dragging past the audio's real end loops the source from the start to fill the extra bar
+    // time — which sounds like the clip "expanded from the beginning" and clobbers fine edits.
+    const _srcDur = (typeof _wfDurCache !== 'undefined' && _wfDurCache[a.src]) ? _wfDurCache[a.src] : 0;
+    const _srcIn0 = +a.srcIn || 0;
+    const _spd0 = +a.speed || 1;
+    const maxSrcDur = _srcDur > 0 ? Math.max(0.1, (_srcDur - _srcIn0) / _spd0) : Infinity;
     const move = e => { const dx=(e.clientX-x0)/W*total;
       if(mode==='move'){
         a.start = Math.max(0, Math.min(total-dur0, start0+dx));
@@ -2071,7 +2078,7 @@ function audBarInteract(b, hL, hR, a, total){
         if(newAch !== (+a.ach||0)) a.ach = newAch;
       }
       else if(mode==='left'){ const ns=Math.max(0, Math.min(start0+dur0-0.1, start0+dx)); a.dur=Math.max(0.1, dur0-(ns-start0)); a.start=ns; }
-      else if(mode==='right'){ a.dur=Math.max(0.1, Math.min(total-start0, dur0+dx)); }
+      else if(mode==='right'){ a.dur=Math.max(0.1, Math.min(total-start0, maxSrcDur, dur0+dx)); }
       renderTracks(); audSyncPreview();
     };
     const up = () => { window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); histCommit(); audSyncEditor(); };
