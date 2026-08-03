@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.88.0</span>
+  <span class="ver" id="appVer">v1.88.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2024,7 +2024,9 @@ function buildAudioBar(a, total){
     const zoom = Math.max(100, (srcDur / barDurSrc) * 100);
     const visSpan = Math.max(0.001, srcDur - barDurSrc);
     const off  = Math.max(0, Math.min(100, (srcIn / visSpan) * 100));
-    b.style.backgroundImage = 'url("/api/waveform?src=' + encodeURIComponent(a.src) + '")';
+    // v param busts browser cache when we ship new render params on the server side. Any old
+    // `max-age` entry is keyed on the previous URL and is now orphaned.
+    b.style.backgroundImage = 'url("/api/waveform?src=' + encodeURIComponent(a.src) + '&v=5")';
     b.style.backgroundRepeat = 'no-repeat';
     b.style.backgroundSize = zoom.toFixed(2) + '% 100%';
     b.style.backgroundPosition = off.toFixed(2) + '% center';

@@ -2400,25 +2400,35 @@ class Handler(BaseHTTPRequestHandler):
             # v3 = white filled waveform on transparent bg, sqrt-scaled amplitude so quiet tracks
             # aren't invisible. Bump this suffix whenever the render params change so stale cached
             # PNGs get regenerated instead of served forever.
-            key = re.sub(r"[^A-Za-z0-9]+", "_", src) + f"_{mtime}_{size}_v3.png"
+            key = re.sub(r"[^A-Za-z0-9]+", "_", src) + f"_{mtime}_{size}_v5.png"
             cache_path = os.path.join(cache_dir, key)
             if not os.path.exists(cache_path):
                 # 2000px wide is enough that even a heavily-cropped slice still reads well.
                 # Transparent bg + solid accent color = clean overlay on the bar's own tint.
-                # White filled waveform on transparent background. sqrt scale lifts quiet passages
-                # so a normal-loudness song doesn't render as a nearly-invisible thin line. draw=full
-                # + a shorter PNG (2000x40) means peaks fill more of the bar height when scaled down.
-                # The audio bar's hue tint shows through the transparent regions.
+                # White filled waveform on transparent bg. This is VISUALIZATION not audio — we
+                # want the waveform to fill the bar top-to-bottom regardless of source loudness.
+                # volume=10 pre-amp guarantees anything above -20dB clips to full amplitude, which
+                # is what fills the render. dynaudnorm dropped — it flattens transients and made
+                # showwavespic pick suppressed values per column.
+                # PNG is 2000x60; sampled to a ~24px bar it downscales cleanly without moiré.
                 r = run([FFMPEG, "-y", "-loglevel", "error", "-i", ap,
-                         "-filter_complex", "aformat=channel_layouts=mono,showwavespic=s=2000x40:colors=white:scale=sqrt:draw=full",
+                         "-filter_complex", "aformat=channel_layouts=mono,volume=10,showwavespic=s=2000x60:colors=white:draw=full",
                          "-frames:v", "1", cache_path])
                 if r.returncode != 0 or not os.path.exists(cache_path):
                     return self._json({"error": "waveform failed: " + r.stderr[-400:]}, 500)
             with open(cache_path, "rb") as fh:
                 data = fh.read()
+            # ETag-driven revalidation: browser sends If-None-Match with the last ETag; if it still
+            # matches, 304 avoids re-downloading. If we bump the on-disk cache key (render-param
+            # change), the ETag flips and browsers refetch. Without ETag they'd cache the OLD PNG
+            # for max-age and never see server-side improvements.
+            etag = '"' + key + '"'
+            if self.headers.get("If-None-Match") == etag:
+                self.send_response(304); self.send_header("ETag", etag); self.end_headers(); return
             self.send_response(200)
             self.send_header("Content-Type", "image/png")
-            self.send_header("Cache-Control", "public, max-age=3600")
+            self.send_header("Cache-Control", "public, no-cache")
+            self.send_header("ETag", etag)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
