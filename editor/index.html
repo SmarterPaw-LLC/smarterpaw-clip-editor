@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.84.0</span>
+  <span class="ver" id="appVer">v1.85.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1795,7 +1795,10 @@ function audSyncEditor(){
     <div><label>Fade in <input type="range" id="audE_fi" min="0" max="5" step="0.1" value="${a.fadeIn||0}" style="width:160px"> <span id="audE_fiV" style="font-size:11px;color:var(--mut)">${(a.fadeIn||0).toFixed(1)}s</span></label></div>
     <div><label>Fade out <input type="range" id="audE_fo" min="0" max="5" step="0.1" value="${a.fadeOut||0}" style="width:160px"> <span id="audE_foV" style="font-size:11px;color:var(--mut)">${(a.fadeOut||0).toFixed(1)}s</span></label></div>
     <div style="margin-top:6px"><label title="Playback rate — atempo shifts pitch. 0.5× = half speed, deeper. 2× = double speed, higher.">Speed <select id="audE_spd">${[0.25,0.5,0.75,1,1.25,1.5,2,3,4].map(sp=>`<option value="${sp}" ${(+a.speed||1)===sp?'selected':''}>${sp}×</option>`).join('')}</select></label></div>
-    <div style="margin-top:6px"><button class="mini" id="audE_del">✕ Delete</button></div>`;
+    <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="mini" id="audE_del">✕ Delete</button>
+      <button class="mini" id="audE_captions" style="display:none" title="Split the voiceover's script into chunks and drop them as timed text overlays on the timeline (synced to this audio clip's start/duration)">💬 Generate captions</button>
+    </div>`;
   const upd=(k,v)=>{ a[k]=v; audSyncPreview(); renderTracks(); };
   $('#audE_start').oninput=e=>{ upd('start', Math.max(0, parseFloat(e.target.value)||0)); };
   $('#audE_dur').oninput=e=>{ upd('dur', Math.max(0.1, parseFloat(e.target.value)||0.1)); };
@@ -1811,6 +1814,13 @@ function audSyncEditor(){
     if(typeof _prevAud !== 'undefined' && _prevAud){ try{ _prevAud.playbackRate = v; }catch(_){} }
     audSyncPreview(); renderTracks(); };
   $('#audE_del').onclick=()=>removeAudio(a.id);
+  // Voiceover caption generator — visible only when the clip has a sidecar script (from TTS).
+  const _voiceFilename = meta.kind === 'v' ? meta.name : null;
+  const _script = (_voiceFilename && MAN.voiceoverScripts) ? MAN.voiceoverScripts[_voiceFilename] : null;
+  if(_script && $('#audE_captions')){
+    $('#audE_captions').style.display = '';
+    $('#audE_captions').onclick = () => _generateCaptionsForAudio(a, _script);
+  }
   // Load source duration so the srcIn slider can cap at (source-length − clip.dur)
   const _srcLen = $('#audE_srcLen'), _in = $('#audE_in'), _inNum = $('#audE_inNum');
   const _probe = new Audio(); _probe.preload='metadata'; _probe.src = '/'+encodeURI(a.src||'');
@@ -1876,6 +1886,59 @@ function audSyncEditor(){
     const kick = ()=>{ try{ _prevAud.currentTime = seedT; }catch(_){} _prevAud.play().catch(()=>{}); $('#audE_prev').textContent = '❚❚ Pause'; _tickPrev(); };
     if(_prevAud.readyState >= 1) kick(); else _prevAud.addEventListener('loadedmetadata', kick, {once:true});
   };
+}
+// Split a script into short caption chunks (≤~42 chars, respecting word + sentence boundaries)
+// then distribute their start times over `dur` seconds proportional to each chunk's char length.
+// Creates one 'text' overlay per chunk, placed on the timeline starting at `startAt`.
+function _splitScriptIntoCaptions(text, maxLen){
+  maxLen = maxLen || 42;
+  const chunks = [];
+  // Sentence-first split; then hard-wrap any sentence that's still too long.
+  const sents = (text || '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s+/).filter(Boolean);
+  for(const s of sents){
+    if(s.length <= maxLen){ chunks.push(s); continue; }
+    const words = s.split(' '); let buf = '';
+    for(const w of words){
+      if(!buf) buf = w;
+      else if((buf + ' ' + w).length <= maxLen) buf += ' ' + w;
+      else { chunks.push(buf); buf = w; }
+    }
+    if(buf) chunks.push(buf);
+  }
+  return chunks;
+}
+function _generateCaptionsForAudio(a, script){
+  const chunks = _splitScriptIntoCaptions(script);
+  if(!chunks.length){ toast('No caption text to generate'); return; }
+  const audioStart = +a.start || 0, audioDur = +a.dur || 0;
+  if(audioDur < 0.3){ toast('Audio clip too short for captions'); return; }
+  histCommit();
+  // Weight each chunk's duration by its character count so timing tracks the actual speech.
+  const totalChars = chunks.reduce((n, c) => n + Math.max(1, c.length), 0);
+  let acc = 0;
+  const created = [];
+  chunks.forEach(txt => {
+    const share = Math.max(1, txt.length) / totalChars;
+    const d = Math.max(0.4, audioDur * share);   // minimum 0.4s per caption so they're readable
+    const o = {
+      id: uid(), type: 'text', text: txt,
+      x: 0.5, y: 0.85,                             // bottom-center — standard caption position
+      size: 0.048, color: '#ffffff',
+      style: 'sticker', font: 'cooper',
+      gradStart: '#000000', gradEnd: '#000000',    // black outline sticker = readable over anything
+      bleed: 0.28, kerning: 0.02, lineGap: 0.08,
+      start: Math.round((audioStart + acc) * 100) / 100,
+      dur:   Math.round(d * 100) / 100,
+      opacity: 1, rot: 0, ch: 0,
+      anims: [{type:'fadeIn', d:0.15}, {type:'fadeOut', d:0.15}],
+    };
+    EDL.overlays = EDL.overlays || [];
+    EDL.overlays.push(o);
+    created.push(o.id);
+    acc += d;
+  });
+  renderOverlays(playhead); renderOvList(); renderTracks(); histCommit();
+  toast('Added '+created.length+' caption'+(created.length!==1?'s':'')+' timed to voiceover');
 }
 // Build the on-timeline bar for one audio clip (drag-to-move, resize handles, hide/lock/delete icons)
 // Hash the audio src to a stable hue (0-359) so every distinct file gets a unique color, and

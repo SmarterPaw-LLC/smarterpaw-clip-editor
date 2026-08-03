@@ -532,6 +532,23 @@ def list_voiceover():
         os.makedirs(VOICEOVER_DIR, exist_ok=True)
         return []
     return sorted(f for f in os.listdir(VOICEOVER_DIR) if f.lower().endswith(_AUDIO_EXTS))
+def voiceover_scripts():
+    """Return {mp3_filename: script_text} for every voiceover file that has a matching
+    <stem>.txt sidecar (written by /api/tts/generate). Empty dict if none."""
+    out = {}
+    if not os.path.isdir(VOICEOVER_DIR):
+        return out
+    for f in os.listdir(VOICEOVER_DIR):
+        if not f.lower().endswith(_AUDIO_EXTS):
+            continue
+        side = os.path.join(VOICEOVER_DIR, os.path.splitext(f)[0] + ".txt")
+        if os.path.exists(side):
+            try:
+                with open(side, "r", encoding="utf-8") as fh:
+                    out[f] = fh.read().strip()
+            except Exception:
+                pass
+    return out
 
 
 def default_edl():
@@ -2386,6 +2403,7 @@ class Handler(BaseHTTPRequestHandler):
                     logo = "/" + cand
                     break
             return self._json({"clips": clips, "music": list_music(), "sfx": list_sfx(), "voiceover": list_voiceover(),
+                               "voiceoverScripts": voiceover_scripts(),
                                "canvases": list(CANVAS.keys()), "logo": logo, "assets": list_assets(),
                                "exportsDir": EXPORTS,
                                "customTags": load_custom_tags(),
@@ -2534,7 +2552,14 @@ class Handler(BaseHTTPRequestHandler):
             ok, err = _openai_tts(text, voice, model, out_path)
             if not ok:
                 return self._json({"ok": False, "log": err}, 502)
-            return self._json({"ok": True, "filename": base, "src": "sources/voiceover/" + base})
+            # Save the script as a sidecar .txt next to the mp3 so the client can later split it
+            # into timed caption overlays that sync to the voiceover clip on the timeline.
+            try:
+                with open(os.path.splitext(out_path)[0] + ".txt", "w", encoding="utf-8") as fh:
+                    fh.write(text)
+            except Exception:
+                pass
+            return self._json({"ok": True, "filename": base, "src": "sources/voiceover/" + base, "text": text})
         if path == "/api/music/rate":
             # Body: {name: str, rating: 'up' | 'down' | null}. null clears the rating.
             name = str(data.get("name") or "").strip()
