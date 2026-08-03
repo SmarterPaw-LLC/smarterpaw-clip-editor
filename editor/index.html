@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.83.6</span>
+  <span class="ver" id="appVer">v1.83.7</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -633,7 +633,9 @@
     <div class="modal-body" style="display:flex;flex-direction:column;gap:8px">
       <video id="cpvVideo" controls autoplay muted loop style="max-width:75vw;max-height:65vh;background:#000;border-radius:6px"></video>
       <div id="cpvMeta" style="font-size:11px;color:var(--mut);display:flex;flex-wrap:wrap;gap:10px 16px"></div>
-      <div style="display:flex;gap:8px"><button class="mini" id="cpvMute">🔇 Unmute</button><button class="mini primary" id="cpvAdd">＋ Add to timeline</button></div>
+      <div style="display:flex;gap:8px"><button class="mini" id="cpvMute">🔇 Unmute</button>
+        <button class="mini primary" id="cpvAdd">＋ Add to timeline</button>
+        <button class="mini primary" id="cpvAddHere" title="Add to timeline with IN set to the current preview time">＋ Add from here</button></div>
     </div>
   </div>
 </div>
@@ -869,13 +871,19 @@ function buildEndcard(ec){
 }
 
 /* ---------- bin ---------- */
-function addClipToTimeline(id, atIdx){ const c=MAN.byId[id]; if(!c) return toast('Clip not found');
+function addClipToTimeline(id, atIdx, inTime){ const c=MAN.byId[id]; if(!c) return toast('Clip not found');
   histCommit();
-  const dur=Math.min(3, c.dur||3)||2;
-  const seg={id, in:0, dur, cap:'', zoom:1, anchor:'center'};
+  // Optional inTime: start the segment at that many seconds into the source. Clamps to leave
+  // at least 0.2s of playable material; default dur uses whatever's left, capped at 3s.
+  const _in = Math.max(0, Math.min(+(c.dur||60) - 0.2, +inTime||0));
+  const remain = Math.max(0.2, (+c.dur||60) - _in);
+  const dur = Math.min(3, remain) || 2;
+  const seg={id, in:Math.round(_in*100)/100, dur, cap:'', zoom:1, anchor:'center'};
   if(!(EDL.segments||[]).length){ EDL.segments=[seg]; sel=0; }   // first clip → base track (ch0)
   else { const p=placeAtPlayhead(dur, 1); seg.ch=p.ch; seg.t0=p.t0; EDL.segments.push(seg); sel=EDL.segments.length-1; }   // else at playhead on topmost free upper channel
-  renderTimeline(); selectSeg(sel); histCommit(); toast('Added “'+(c.label||id)+'”'); }
+  renderTimeline(); selectSeg(sel); histCommit();
+  const inMsg = _in > 0.05 ? (' from '+fmt(_in)+'s') : '';
+  toast('Added “'+(c.label||id)+'”'+inMsg); }
 const BRAND_LABELS={meowijuana:'🌿 Meowijuana',doggijuana:'🐶 Doggijuana',kkz:'⚡ Kitty Ka-Zoom',unassigned:'⚠ Unassigned'};
 const BRAND_ORDER=['meowijuana','doggijuana','kkz','unassigned'];
 function clipBrand(c){ return BRAND_LABELS[c.brand]?c.brand:'unassigned'; }
@@ -1025,6 +1033,13 @@ document.addEventListener('keydown', e => { if(e.key==='Escape'){ const m=docume
     document.getElementById('cpvMute').onclick = () => { const v=document.getElementById('cpvVideo'); v.muted=!v.muted;
       document.getElementById('cpvMute').textContent = v.muted ? '🔇 Unmute' : '🔊 Mute'; };
     document.getElementById('cpvAdd').onclick = () => { if(_cpvAddId){ addClipToTimeline(_cpvAddId); closeClipPreviewModal(); } };
+    document.getElementById('cpvAddHere').onclick = () => {
+      if(!_cpvAddId) return;
+      const v = document.getElementById('cpvVideo');
+      const t = v ? +v.currentTime || 0 : 0;
+      addClipToTimeline(_cpvAddId, undefined, t);
+      closeClipPreviewModal();
+    };
     return true;
   };
   if(!tryWire()) document.addEventListener('DOMContentLoaded', tryWire, {once:true});
