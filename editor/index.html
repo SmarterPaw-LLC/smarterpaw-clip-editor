@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.89.0</span>
+  <span class="ver" id="appVer">v1.89.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1868,7 +1868,7 @@ function audSyncEditor(){
   // (created by TTS at /api/tts/generate), use it directly. Otherwise prompt the user to paste
   // their script — mic recordings and manually uploaded mp3s don't have sidecars but deserve
   // captions too.
-  const _voiceFilename = meta.kind === 'v' ? meta.name : null;
+  const _voiceFilename = meta.kind === 'voiceover' ? meta.name : null;
   if(_voiceFilename && $('#audE_captions')){
     const _script = (MAN.voiceoverScripts || {})[_voiceFilename] || null;
     $('#audE_captions').style.display = '';
