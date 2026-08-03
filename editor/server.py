@@ -2388,13 +2388,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "stat failed"}, 500)
             cache_dir = os.path.join(EDITOR, "_waveform_cache")
             os.makedirs(cache_dir, exist_ok=True)
-            key = re.sub(r"[^A-Za-z0-9]+", "_", src) + f"_{mtime}_{size}.png"
+            # v2 = white waveform on transparent bg; bump this suffix whenever the render params
+            # change so stale cached PNGs get regenerated instead of served forever.
+            key = re.sub(r"[^A-Za-z0-9]+", "_", src) + f"_{mtime}_{size}_v2.png"
             cache_path = os.path.join(cache_dir, key)
             if not os.path.exists(cache_path):
                 # 2000px wide is enough that even a heavily-cropped slice still reads well.
                 # Transparent bg + solid accent color = clean overlay on the bar's own tint.
+                # White waveform on transparent background. The audio bar's hue tint shows through,
+                # so the waveform reads as a bright silhouette on top. draw=full = filled bars, not
+                # a line — much more visible at small heights.
                 r = run([FFMPEG, "-y", "-loglevel", "error", "-i", ap,
-                         "-filter_complex", "aformat=channel_layouts=mono,showwavespic=s=2000x80:colors=0xf0a830|0xf0a830:draw=full",
+                         "-filter_complex", "aformat=channel_layouts=mono,showwavespic=s=2000x80:colors=white:draw=full",
                          "-frames:v", "1", cache_path])
                 if r.returncode != 0 or not os.path.exists(cache_path):
                     return self._json({"error": "waveform failed: " + r.stderr[-400:]}, 500)

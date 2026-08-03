@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.86.0</span>
+  <span class="ver" id="appVer">v1.86.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1998,7 +1998,10 @@ function buildAudioBar(a, total){
     b.style.backgroundRepeat = 'no-repeat';
     b.style.backgroundSize = zoom.toFixed(2) + '% 100%';
     b.style.backgroundPosition = off.toFixed(2) + '% center';
-    b.style.backgroundBlendMode = 'screen';   // let the hue tint show through the waveform
+    // White waveform on transparent PNG — sits directly on top of the bar's hue tint.
+    // No blend mode; opacity keeps the label readable over dense peaks.
+    b.style.backgroundBlendMode = '';
+    b.style.opacity = ''; b.dataset.hasWaveform = '1';
   }).catch(()=>{});
   b.appendChild(document.createTextNode((meta.kind==='s'?'🔊 ':'🎵 ')+meta.name.replace(/\.(mp3|m4a|wav|ogg|aac|flac)$/i,'')));
   const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR'; b.appendChild(hL); b.appendChild(hR);
