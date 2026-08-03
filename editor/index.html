@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.87.1</span>
+  <span class="ver" id="appVer">v1.87.2</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2014,12 +2014,16 @@ function buildAudioBar(a, total){
   // compute the crop; probe once per src and cache. Bar re-renders whenever srcIn/dur/speed change.
   _waveformFor(a.src || '').then(srcDur => {
     if(!srcDur || !b.isConnected) return;
-    const srcIn = +a.srcIn || 0, spd = +a.speed || 1;
-    const barDurSrc = (+a.dur || 0) * spd;   // source-seconds this bar consumes at current speed
-    if(barDurSrc <= 0) return;
-    // background-size uses percentages relative to the container — >100% zooms in on the waveform.
-    const zoom = (srcDur / barDurSrc) * 100;
-    const off  = -(srcIn / barDurSrc) * 100;
+    const srcIn = Math.max(0, Math.min(+a.srcIn || 0, srcDur));
+    const spd = +a.speed || 1;
+    const barDurSrc = Math.max(0.01, (+a.dur || 0) * spd);   // source-seconds this bar consumes
+    // background-size >100% zooms in on the waveform image.
+    // background-position % maps 0..100 across (image_size - container_size). To show the slice
+    // starting at srcIn seconds into a srcDur-long track, we anchor at srcIn/(srcDur-barDurSrc).
+    // If the bar shows the entire track (barDurSrc >= srcDur), position doesn't matter — clamp to 0.
+    const zoom = Math.max(100, (srcDur / barDurSrc) * 100);
+    const visSpan = Math.max(0.001, srcDur - barDurSrc);
+    const off  = Math.max(0, Math.min(100, (srcIn / visSpan) * 100));
     b.style.backgroundImage = 'url("/api/waveform?src=' + encodeURIComponent(a.src) + '")';
     b.style.backgroundRepeat = 'no-repeat';
     b.style.backgroundSize = zoom.toFixed(2) + '% 100%';
