@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.85.0</span>
+  <span class="ver" id="appVer">v1.86.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -588,8 +588,25 @@
     <div class="modal-hd"><b>🎵 Audio tracks</b><button class="mini" id="audClose">✕ Done</button></div>
     <div class="modal-body">
       <div style="font-size:11px;color:var(--mut);margin-bottom:6px">Add music + sound effects on separate lanes. Drag clips on the timeline to move/retime. Click a clip to edit its volume + fades.</div>
-      <div class="sec" style="display:flex;align-items:center;gap:8px">＋ Add at playhead
-        <button class="mini" id="audTtsOpen" title="Generate an AI voiceover with OpenAI TTS — saved to sources/voiceover/ and added to the list below" style="margin-left:auto">🎤 Generate voiceover…</button></div>
+      <div class="sec" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">＋ Add at playhead
+        <button class="mini" id="audRecOpen" title="Record a voiceover from your microphone — saved to sources/voiceover/ and added to the list below" style="margin-left:auto">🎙 Record voiceover…</button>
+        <button class="mini" id="audTtsOpen" title="Generate an AI voiceover with OpenAI TTS — saved to sources/voiceover/ and added to the list below">🤖 Generate voiceover…</button></div>
+      <div id="audRecPanel" style="display:none;background:var(--panel2,#232732);border:1px solid var(--line);border-radius:6px;padding:8px;margin-bottom:6px;font-size:12px">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+          <b>🎙 Record voiceover</b>
+          <span id="audRecTime" style="font-family:monospace;color:var(--acc,#f0a830);margin-left:8px">0.0s</span>
+          <button class="mini" id="audRecClose" style="margin-left:auto">✕</button>
+        </div>
+        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="mini primary" id="audRecGo">🔴 Record</button>
+          <button class="mini" id="audRecStop" disabled>■ Stop</button>
+          <audio id="audRecPreview" controls style="height:32px;flex:1;min-width:200px;display:none"></audio>
+          <label>Name <input type="text" id="audRecName" placeholder="my-recording" style="width:120px"></label>
+          <button class="mini primary" id="audRecSave" disabled>💾 Save + add</button>
+          <button class="mini" id="audRecReset" disabled>↺ Redo</button>
+        </div>
+        <div id="audRecStatus" style="font-size:11px;color:var(--mut);min-height:14px;margin-top:6px">Hit Record. First time will prompt for microphone permission.</div>
+      </div>
       <div id="audTtsPanel" style="display:none;background:var(--panel2,#232732);border:1px solid var(--line);border-radius:6px;padding:8px;margin-bottom:6px;font-size:12px">
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
           <b>🎤 Generate voiceover (OpenAI TTS)</b>
@@ -1708,6 +1725,13 @@ function _audDurForFile(src){          // probe duration client-side; returns Pr
   return new Promise(res=>{ const a=new Audio(); a.preload='metadata'; a.src='/'+encodeURI(src);
     a.onloadedmetadata=()=>res(a.duration||3); a.onerror=()=>res(3); });
 }
+// Cache probed source durations so buildAudioBar doesn't re-fetch metadata on every render.
+const _wfDurCache = {};
+function _waveformFor(src){
+  if(!src) return Promise.resolve(0);
+  if(_wfDurCache[src] != null) return Promise.resolve(_wfDurCache[src]);
+  return _audDurForFile(src).then(d => { _wfDurCache[src] = d || 0; return _wfDurCache[src]; });
+}
 async function addAudioAtPlayhead(src){
   histCommit(); EDL.audio = EDL.audio || [];
   const dur = await _audDurForFile(src);
@@ -1959,6 +1983,23 @@ function buildAudioBar(a, total){
   const hue = _audHueForSrc(a.src||''), sat = meta.kind==='s' ? 60 : 50, lt = meta.kind==='s' ? 28 : 26;
   b.style.background = `hsl(${hue}, ${sat}%, ${lt}%)`;
   b.style.boxShadow = `inset 0 0 0 1px hsl(${hue}, ${sat+10}%, ${lt+22}%)`;
+  // Waveform background — full-file PNG from /api/waveform, cropped via background-position/size
+  // to show only the srcIn..srcIn+dur slice for this bar. Needs the source's total duration to
+  // compute the crop; probe once per src and cache. Bar re-renders whenever srcIn/dur/speed change.
+  _waveformFor(a.src || '').then(srcDur => {
+    if(!srcDur || !b.isConnected) return;
+    const srcIn = +a.srcIn || 0, spd = +a.speed || 1;
+    const barDurSrc = (+a.dur || 0) * spd;   // source-seconds this bar consumes at current speed
+    if(barDurSrc <= 0) return;
+    // background-size uses percentages relative to the container — >100% zooms in on the waveform.
+    const zoom = (srcDur / barDurSrc) * 100;
+    const off  = -(srcIn / barDurSrc) * 100;
+    b.style.backgroundImage = 'url("/api/waveform?src=' + encodeURIComponent(a.src) + '")';
+    b.style.backgroundRepeat = 'no-repeat';
+    b.style.backgroundSize = zoom.toFixed(2) + '% 100%';
+    b.style.backgroundPosition = off.toFixed(2) + '% center';
+    b.style.backgroundBlendMode = 'screen';   // let the hue tint show through the waveform
+  }).catch(()=>{});
   b.appendChild(document.createTextNode((meta.kind==='s'?'🔊 ':'🎵 ')+meta.name.replace(/\.(mp3|m4a|wav|ogg|aac|flac)$/i,'')));
   const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR'; b.appendChild(hL); b.appendChild(hR);
   const ic=document.createElement('div'); ic.className='clipicons';
@@ -3440,6 +3481,89 @@ $('#btnOverlays').onclick=openOvModal; $('#ovClose').onclick=closeOvModal;
 $('#btnAudio').onclick=openAudModal; $('#audClose').onclick=closeAudModal;
 $('#audFilter').oninput=renderAudPickList; $('#audShowMusic').onchange=renderAudPickList; $('#audShowSfx').onchange=renderAudPickList;
 if($('#audShowVoiceover')) $('#audShowVoiceover').onchange=renderAudPickList;
+// Mic recording — uses MediaRecorder to capture a webm/opus blob from the mic, POSTs it to
+// /api/voiceover/upload-raw which transcodes to mp3 via ffmpeg and drops it into sources/voiceover/.
+let _recStream = null, _recRec = null, _recChunks = [], _recBlob = null, _recStart = 0, _recTick = null;
+function _recFmt(sec){ return sec.toFixed(1) + 's'; }
+$('#audRecOpen').onclick = () => {
+  const p = $('#audRecPanel');
+  p.style.display = (p.style.display === 'none' ? 'block' : 'none');
+  if(p.style.display === 'block'){
+    const projName = (curProj && curProj.name) ? curProj.name : (EDL && EDL.name) || '';
+    const suggested = String(projName).replace(/[^A-Za-z0-9_-]+/g,'_').replace(/^_+|_+$/g,'').slice(0,60);
+    if(suggested && !$('#audRecName').value) $('#audRecName').value = suggested + '_recording';
+  }
+};
+$('#audRecClose').onclick = () => { $('#audRecPanel').style.display = 'none'; _recCleanup(); };
+function _recCleanup(){
+  if(_recTick){ clearInterval(_recTick); _recTick = null; }
+  if(_recStream){ try{ _recStream.getTracks().forEach(t=>t.stop()); }catch(_){} _recStream = null; }
+  _recRec = null; _recChunks = [];
+}
+$('#audRecGo').onclick = async () => {
+  if(!navigator.mediaDevices || !window.MediaRecorder){ $('#audRecStatus').textContent = '❌ Your browser doesn\'t support MediaRecorder.'; return; }
+  try{
+    _recStream = await navigator.mediaDevices.getUserMedia({audio:true});
+  } catch(e){ $('#audRecStatus').textContent = '❌ Mic access denied: ' + (e && e.message ? e.message : e); return; }
+  // Prefer opus in webm — nearly universal, small, and ffmpeg transcodes cleanly to mp3.
+  const mimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+  const mime = mimes.find(m => MediaRecorder.isTypeSupported(m)) || '';
+  _recChunks = []; _recBlob = null;
+  _recRec = new MediaRecorder(_recStream, mime ? {mimeType: mime} : undefined);
+  _recRec.ondataavailable = e => { if(e.data && e.data.size) _recChunks.push(e.data); };
+  _recRec.onstop = () => {
+    _recBlob = new Blob(_recChunks, {type: _recRec.mimeType || 'audio/webm'});
+    const url = URL.createObjectURL(_recBlob);
+    const pv = $('#audRecPreview'); pv.src = url; pv.style.display = '';
+    $('#audRecSave').disabled = false; $('#audRecReset').disabled = false;
+    $('#audRecStatus').textContent = 'Recorded '+ _recFmt((performance.now()-_recStart)/1000) +'. Preview above; Save to add to library.';
+    // Free the mic — we're done capturing.
+    if(_recStream){ try{ _recStream.getTracks().forEach(t=>t.stop()); }catch(_){} _recStream = null; }
+    if(_recTick){ clearInterval(_recTick); _recTick = null; }
+    $('#audRecGo').disabled = false; $('#audRecStop').disabled = true;
+    $('#audRecGo').textContent = '🔴 Record';
+  };
+  _recStart = performance.now();
+  _recRec.start();
+  $('#audRecGo').disabled = true; $('#audRecStop').disabled = false; $('#audRecSave').disabled = true; $('#audRecReset').disabled = true;
+  $('#audRecPreview').style.display = 'none';
+  $('#audRecGo').textContent = '● Recording';
+  $('#audRecStatus').textContent = 'Recording — click Stop when done.';
+  _recTick = setInterval(() => { $('#audRecTime').textContent = _recFmt((performance.now()-_recStart)/1000); }, 100);
+};
+$('#audRecStop').onclick = () => { if(_recRec && _recRec.state !== 'inactive') _recRec.stop(); };
+$('#audRecReset').onclick = () => {
+  _recBlob = null; _recChunks = [];
+  $('#audRecPreview').style.display = 'none'; $('#audRecPreview').removeAttribute('src');
+  $('#audRecSave').disabled = true; $('#audRecReset').disabled = true;
+  $('#audRecTime').textContent = '0.0s'; $('#audRecStatus').textContent = 'Cleared. Hit Record for another take.';
+};
+$('#audRecSave').onclick = async () => {
+  if(!_recBlob){ return; }
+  const name = ($('#audRecName').value.trim() || 'recording').replace(/[^A-Za-z0-9_-]+/g,'_').slice(0,60);
+  $('#audRecStatus').textContent = 'Uploading + transcoding to mp3…';
+  $('#audRecSave').disabled = true;
+  const buf = await _recBlob.arrayBuffer();
+  try{
+    const r = await fetch('/api/voiceover/upload-raw', {
+      method: 'POST',
+      headers: {'X-Filename': encodeURIComponent(name + (_recBlob.type.includes('mp4') ? '.mp4' : '.webm'))},
+      body: buf,
+    });
+    const j = await r.json();
+    if(!j || !j.ok) throw new Error(j && j.log || 'upload failed');
+    await boot(true); renderAudPickList();
+    $('#audRecStatus').innerHTML = '✓ Saved <b>'+j.filename+'</b>. Add it from the picker below.';
+    toast('Voiceover recorded: '+j.filename);
+    // Reset so a next take starts fresh
+    $('#audRecReset').click();
+    $('#audRecName').value = '';
+  } catch(e){
+    $('#audRecStatus').textContent = '❌ ' + (e && e.message ? e.message : e);
+  } finally {
+    $('#audRecSave').disabled = false;
+  }
+};
 // TTS panel: toggle open/close, refresh key-availability hint every time it opens so the user
 // gets accurate guidance if they just added editor/openai_key.txt without restarting.
 $('#audTtsOpen').onclick = async () => {

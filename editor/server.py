@@ -2370,6 +2370,43 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path in ("/", "/index.html"):
             return self._serve_file(os.path.join(EDITOR, "index.html"))
+        if path == "/api/waveform":
+            # Render a full-file waveform PNG via ffmpeg showwavespic. Cached by (src, mtime)
+            # under editor/_waveform_cache/. Client crops via CSS background-position/size to
+            # show only the srcIn..srcIn+dur slice — one waveform per audio file, reused across
+            # every timeline instance of that audio.
+            qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            src = (qs.get("src") or [""])[0].lstrip("/")
+            if not src:
+                return self._json({"error": "src required"}, 400)
+            ap = os.path.join(PROJ, src.replace("/", os.sep))
+            if not os.path.exists(ap):
+                return self._json({"error": "not found"}, 404)
+            try:
+                mtime = int(os.path.getmtime(ap)); size = int(os.path.getsize(ap))
+            except Exception:
+                return self._json({"error": "stat failed"}, 500)
+            cache_dir = os.path.join(EDITOR, "_waveform_cache")
+            os.makedirs(cache_dir, exist_ok=True)
+            key = re.sub(r"[^A-Za-z0-9]+", "_", src) + f"_{mtime}_{size}.png"
+            cache_path = os.path.join(cache_dir, key)
+            if not os.path.exists(cache_path):
+                # 2000px wide is enough that even a heavily-cropped slice still reads well.
+                # Transparent bg + solid accent color = clean overlay on the bar's own tint.
+                r = run([FFMPEG, "-y", "-loglevel", "error", "-i", ap,
+                         "-filter_complex", "aformat=channel_layouts=mono,showwavespic=s=2000x80:colors=0xf0a830|0xf0a830:draw=full",
+                         "-frames:v", "1", cache_path])
+                if r.returncode != 0 or not os.path.exists(cache_path):
+                    return self._json({"error": "waveform failed: " + r.stderr[-400:]}, 500)
+            with open(cache_path, "rb") as fh:
+                data = fh.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Cache-Control", "public, max-age=3600")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path == "/api/render-progress":
             qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
             jid = (qs.get("job") or [""])[0]
@@ -2442,6 +2479,36 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         ln = int(self.headers.get("Content-Length", 0))
         # Streaming raw-bytes upload: avoids the ~4× memory blow-up of base64+JSON for large video files.
+        if path == "/api/voiceover/upload-raw":
+            # Streaming raw bytes upload (like /api/upload-clip-raw). Client sends a recorded
+            # audio blob (typically webm/opus from MediaRecorder). We transcode to mp3 via ffmpeg
+            # so it slots into the existing voiceover picker + render pipeline uniformly.
+            try:
+                raw = self.rfile.read(ln) if ln else b""
+                if not raw:
+                    return self._json({"ok": False, "log": "empty upload"}, 400)
+                orig = urllib.parse.unquote(self.headers.get("X-Filename", "recording.webm"))
+                stem = re.sub(r"[^A-Za-z0-9_-]+", "_", os.path.splitext(os.path.basename(orig))[0]).strip("_") or "recording"
+                os.makedirs(VOICEOVER_DIR, exist_ok=True)
+                base = stem + ".mp3"
+                out_path = os.path.join(VOICEOVER_DIR, base)
+                n = 2
+                while os.path.exists(out_path):
+                    base = f"{stem}_{n}.mp3"; out_path = os.path.join(VOICEOVER_DIR, base); n += 1
+                fd, tmpf = tempfile.mkstemp(suffix=os.path.splitext(orig)[1] or ".bin")
+                os.close(fd)
+                try:
+                    with open(tmpf, "wb") as f: f.write(raw)
+                    r = run([FFMPEG, "-y", "-loglevel", "error", "-i", tmpf,
+                             "-c:a", "libmp3lame", "-q:a", "3", out_path])
+                    if r.returncode != 0 or not os.path.exists(out_path):
+                        return self._json({"ok": False, "log": f"ffmpeg transcode failed:\n{r.stderr[-400:]}"}, 500)
+                finally:
+                    try: os.remove(tmpf)
+                    except Exception: pass
+                return self._json({"ok": True, "filename": base, "src": "sources/voiceover/" + base})
+            except Exception as e:
+                return self._json({"ok": False, "log": repr(e)}, 500)
         if path == "/api/upload-clip-raw":
             try:
                 raw = self.rfile.read(ln) if ln else b""
