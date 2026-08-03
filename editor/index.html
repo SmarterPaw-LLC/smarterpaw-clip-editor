@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.88.2</span>
+  <span class="ver" id="appVer">v1.89.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1864,12 +1864,24 @@ function audSyncEditor(){
     if(typeof _prevAud !== 'undefined' && _prevAud){ try{ _prevAud.playbackRate = v; }catch(_){} }
     audSyncPreview(); renderTracks(); };
   $('#audE_del').onclick=()=>removeAudio(a.id);
-  // Voiceover caption generator — visible only when the clip has a sidecar script (from TTS).
+  // Voiceover caption generator — show for every voiceover clip. If the clip has a sidecar script
+  // (created by TTS at /api/tts/generate), use it directly. Otherwise prompt the user to paste
+  // their script — mic recordings and manually uploaded mp3s don't have sidecars but deserve
+  // captions too.
   const _voiceFilename = meta.kind === 'v' ? meta.name : null;
-  const _script = (_voiceFilename && MAN.voiceoverScripts) ? MAN.voiceoverScripts[_voiceFilename] : null;
-  if(_script && $('#audE_captions')){
+  if(_voiceFilename && $('#audE_captions')){
+    const _script = (MAN.voiceoverScripts || {})[_voiceFilename] || null;
     $('#audE_captions').style.display = '';
-    $('#audE_captions').onclick = () => _generateCaptionsForAudio(a, _script);
+    $('#audE_captions').textContent = _script ? '💬 Generate captions' : '💬 Add captions (paste script)';
+    $('#audE_captions').onclick = () => {
+      let script = _script;
+      if(!script){
+        script = prompt('Paste the voiceover script (captions will be split across the clip duration, sentence-first then word-wrap ≤42 chars):', '');
+        if(!script || !script.trim()) return;
+        script = script.trim();
+      }
+      _generateCaptionsForAudio(a, script);
+    };
   }
   // Load source duration so the srcIn slider can cap at (source-length − clip.dur)
   const _srcLen = $('#audE_srcLen'), _in = $('#audE_in'), _inNum = $('#audE_inNum');
