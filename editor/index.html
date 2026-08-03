@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.83.7</span>
+  <span class="ver" id="appVer">v1.84.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -633,9 +633,18 @@
     <div class="modal-body" style="display:flex;flex-direction:column;gap:8px">
       <video id="cpvVideo" controls autoplay muted loop style="max-width:75vw;max-height:65vh;background:#000;border-radius:6px"></video>
       <div id="cpvMeta" style="font-size:11px;color:var(--mut);display:flex;flex-wrap:wrap;gap:10px 16px"></div>
-      <div style="display:flex;gap:8px"><button class="mini" id="cpvMute">🔇 Unmute</button>
-        <button class="mini primary" id="cpvAdd">＋ Add to timeline</button>
-        <button class="mini primary" id="cpvAddHere" title="Add to timeline with IN set to the current preview time">＋ Add from here</button></div>
+      <div id="cpvRange" style="position:relative;height:26px;background:#222;border-radius:4px;cursor:crosshair;user-select:none;margin-top:2px" title="Drag either handle to set IN/OUT; drag the highlighted region to move it as a whole. Click a handle to seek the preview to that spot.">
+        <div id="cpvRangeSel" style="position:absolute;top:0;bottom:0;background:var(--acc, #f0a830);opacity:0.35;pointer-events:none"></div>
+        <div id="cpvRangePh" style="position:absolute;top:0;bottom:0;width:2px;background:#ff5a5a;pointer-events:none"></div>
+        <div id="cpvRangeIn"  style="position:absolute;top:-3px;bottom:-3px;width:10px;background:var(--acc, #f0a830);border-radius:2px;cursor:ew-resize;transform:translateX(-50%)"></div>
+        <div id="cpvRangeOut" style="position:absolute;top:-3px;bottom:-3px;width:10px;background:var(--acc, #f0a830);border-radius:2px;cursor:ew-resize;transform:translateX(-50%)"></div>
+      </div>
+      <div id="cpvRangeLbl" style="font-family:monospace;font-size:11px;color:var(--acc,#f0a830);text-align:center">IN 0.00s → OUT 0.00s (0.00s)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="mini" id="cpvMute">🔇 Unmute</button>
+        <button class="mini" id="cpvRangeReset" title="Set range to the whole clip">⇤⇥ Whole clip</button>
+        <button class="mini primary" id="cpvAdd">＋ Add whole clip</button>
+        <button class="mini primary" id="cpvAddHere" title="Add to timeline starting at the current preview position (3s, or less if the clip is shorter)">＋ Add from here</button>
+        <button class="mini primary" id="cpvAddRange" title="Add to timeline using the IN/OUT range set with the handles above">＋ Add selection</button></div>
     </div>
   </div>
 </div>
@@ -1015,6 +1024,10 @@ function openClipPreviewModal(clip){
   renderCpvMeta(clip);
   document.getElementById('cpvMute').textContent = '🔇 Unmute';
   _cpvAddId = clip.id;
+  // Seed range = whole clip; total dur comes from manifest, refined by video loadedmetadata below.
+  _cpvRangeDur = +clip.dur || 0;
+  _cpvRangeIn = 0; _cpvRangeOut = _cpvRangeDur;
+  _cpvUpdateRangeUI();
   modal.style.display = 'flex';
 }
 function closeClipPreviewModal(){
@@ -1040,10 +1053,82 @@ document.addEventListener('keydown', e => { if(e.key==='Escape'){ const m=docume
       addClipToTimeline(_cpvAddId, undefined, t);
       closeClipPreviewModal();
     };
+    // Range picker: two draggable handles + click-to-seek on the track. Region also draggable
+    // to move the whole selection. Reset button restores IN=0/OUT=<clip dur>. Add-selection
+    // button uses the current range as the segment's in/dur.
+    const track = document.getElementById('cpvRange');
+    const seekVideo = t => { const v = document.getElementById('cpvVideo'); if(v && !isNaN(t)){ try{ v.currentTime = Math.max(0, Math.min(_cpvRangeDur||60, t)); }catch(_){} } };
+    const trackTime = clientX => {
+      const r = track.getBoundingClientRect(); const f = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+      return f * (_cpvRangeDur || 0);
+    };
+    const startDrag = (mode) => (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      const startT = trackTime(ev.clientX);
+      const startIn = _cpvRangeIn, startOut = _cpvRangeOut;
+      const move = e => {
+        const t = trackTime(e.clientX);
+        if(mode === 'in'){ _cpvRangeIn = Math.max(0, Math.min(_cpvRangeOut - 0.1, t)); seekVideo(_cpvRangeIn); }
+        else if(mode === 'out'){ _cpvRangeOut = Math.max(_cpvRangeIn + 0.1, Math.min(_cpvRangeDur||60, t)); seekVideo(_cpvRangeOut); }
+        else if(mode === 'region'){
+          const dt = t - startT; const width = startOut - startIn;
+          let ni = startIn + dt; if(ni < 0) ni = 0; if(ni + width > _cpvRangeDur) ni = _cpvRangeDur - width;
+          _cpvRangeIn = ni; _cpvRangeOut = ni + width; seekVideo(_cpvRangeIn);
+        }
+        _cpvUpdateRangeUI();
+      };
+      const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+      window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+    };
+    document.getElementById('cpvRangeIn').onpointerdown  = startDrag('in');
+    document.getElementById('cpvRangeOut').onpointerdown = startDrag('out');
+    document.getElementById('cpvRangeSel').onpointerdown = startDrag('region');
+    // Click on the empty track = jump the NEAREST handle to that spot (whichever side you're closer to).
+    track.onpointerdown = ev => {
+      if(ev.target !== track) return;   // handles/region have their own drag; only handle bare track
+      const t = trackTime(ev.clientX);
+      if(Math.abs(t - _cpvRangeIn) <= Math.abs(t - _cpvRangeOut)) _cpvRangeIn = Math.max(0, Math.min(_cpvRangeOut - 0.1, t));
+      else _cpvRangeOut = Math.max(_cpvRangeIn + 0.1, Math.min(_cpvRangeDur||60, t));
+      seekVideo(t); _cpvUpdateRangeUI();
+    };
+    // Sync preview playhead marker to the video's currentTime while it plays
+    const vid = document.getElementById('cpvVideo');
+    vid.addEventListener('loadedmetadata', () => { _cpvRangeDur = vid.duration || _cpvRangeDur; if(_cpvRangeOut > _cpvRangeDur) _cpvRangeOut = _cpvRangeDur; _cpvUpdateRangeUI(); });
+    vid.addEventListener('timeupdate', () => { _cpvUpdateRangePh(); });
+    document.getElementById('cpvRangeReset').onclick = () => { _cpvRangeIn = 0; _cpvRangeOut = _cpvRangeDur || 60; seekVideo(0); _cpvUpdateRangeUI(); };
+    document.getElementById('cpvAddRange').onclick = () => {
+      if(!_cpvAddId) return;
+      const inT = _cpvRangeIn, dur = Math.max(0.2, _cpvRangeOut - _cpvRangeIn);
+      // addClipToTimeline caps dur at 3s by default — override by setting seg.dur after the add.
+      addClipToTimeline(_cpvAddId, undefined, inT);
+      if(sel >= 0 && EDL.segments[sel]) EDL.segments[sel].dur = Math.round(dur * 100) / 100;
+      renderTimeline(); selectSeg(sel);
+      closeClipPreviewModal();
+    };
     return true;
   };
   if(!tryWire()) document.addEventListener('DOMContentLoaded', tryWire, {once:true});
 })();
+let _cpvRangeIn = 0, _cpvRangeOut = 0, _cpvRangeDur = 0;
+function _cpvUpdateRangeUI(){
+  const sel = document.getElementById('cpvRangeSel');
+  const inH = document.getElementById('cpvRangeIn');
+  const outH = document.getElementById('cpvRangeOut');
+  const lbl = document.getElementById('cpvRangeLbl');
+  if(!sel || !inH || !outH || !lbl) return;
+  const dur = Math.max(0.001, _cpvRangeDur);
+  const fi = _cpvRangeIn / dur, fo = _cpvRangeOut / dur;
+  sel.style.left = (fi*100).toFixed(3)+'%'; sel.style.width = ((fo-fi)*100).toFixed(3)+'%';
+  inH.style.left  = (fi*100).toFixed(3)+'%';
+  outH.style.left = (fo*100).toFixed(3)+'%';
+  lbl.textContent = 'IN '+_cpvRangeIn.toFixed(2)+'s → OUT '+_cpvRangeOut.toFixed(2)+'s ('+(_cpvRangeOut-_cpvRangeIn).toFixed(2)+'s)';
+  _cpvUpdateRangePh();
+}
+function _cpvUpdateRangePh(){
+  const ph = document.getElementById('cpvRangePh'); const v = document.getElementById('cpvVideo');
+  if(!ph || !v || !_cpvRangeDur) return;
+  ph.style.left = ((v.currentTime / _cpvRangeDur) * 100).toFixed(3) + '%';
+}
 async function saveClipTags(cid, tags){
   // Optimistic UI: update MAN.clips immediately, then persist. Drop the change if the server rejects.
   const local = MAN.clips.find(c=>c.id===cid); if(local) local.tags = tags.slice();
