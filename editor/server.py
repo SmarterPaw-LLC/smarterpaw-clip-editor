@@ -2158,24 +2158,30 @@ def render(edl, out_dir=None, out_name=None, progress=None):
                 _kb_t1_raw = float(seg.get("kbEndT")) if seg.get("kbEndT") is not None else parent_dur
                 _kb_t1 = max(_kb_t0, min(parent_dur, _kb_t1_raw))
                 _win = max(0.001, _kb_t1 - _kb_t0)
-                # elapsed source-seconds = (flat_in - parent_in) + t*spd
-                # Progress = clip((elapsed - t0) / (t1 - t0), 0, 1) so before t0 it's 0
-                # (holds START) and after t1 it's 1 (holds END).
-                p_expr = f"clip((((({_off_src:.6f})+t*{_spd_val:.6f})-{_kb_t0:.6f})/{_win:.6f}),0,1)"
-                # z(t), px(t), py(t) — linear interp between start and end.
+                # Use ffmpeg's zoompan filter — the crop filter's expressions are evaluated
+                # only at init in the build we're targeting (no `eval=frame` support), which
+                # can't handle time-varying expressions with `t`. zoompan is designed for
+                # animated zoom + pan and evaluates z/x/y per output frame using `time`.
+                # elapsed source-seconds inside parent = (flat_in - parent_in) + time*spd
+                # setpts (applied later) modifies PTS by 1/spd, so zoompan's `time` already
+                # runs at 1/spd — multiplying it by spd converts back to source seconds.
+                p_expr = f"clip(((({_off_src:.6f})+time*{_spd_val:.6f})-{_kb_t0:.6f})/{_win:.6f},0,1)"
                 z_expr  = f"({z_s:.6f}+({z_e - z_s:.6f})*{p_expr})"
                 pxe = f"({px_s:.6f}+({px_e - px_s:.6f})*{p_expr})"
                 pye = f"({py_s:.6f}+({py_e - py_s:.6f})*{p_expr})"
-                # crop dims: at max zoom (z_max) → W/z_max*z_max = W (full). At z(t) < z_max, crop is smaller than input.
-                # crop_w = W * z_max / z(t) but capped to the enlarged frame size (in_w).
-                cw_expr = f"min(in_w,{W}*{z_max:.6f}/{z_expr})"
-                ch_expr = f"min(in_h,{H}*{z_max:.6f}/{z_expr})"
-                cx_expr = f"(in_w-({cw_expr}))*({pxe})"
-                cy_expr = f"(in_h-({ch_expr}))*({pye})"
-                # Wrap x/y/w/h in single quotes so ffmpeg treats them as expressions with `t`.
-                base = (f"scale={sw}:{sh}:force_original_aspect_ratio=increase,"
-                        f"crop=w='{cw_expr}':h='{ch_expr}':x='{cx_expr}':y='{cy_expr}',"
-                        f"scale={W}:{H},setsar=1,fps=60,format=yuv420p")
+                # Pre-fit source to canvas (cover + center crop) so zoompan operates on a
+                # WxH input matching the canvas aspect. Then zoompan zooms in by z(t) and
+                # positions the WxH viewport at (x, y) inside the iw*zoom × ih*zoom
+                # zoomed-up space. d=1 = one output per input (no dwell), fps=60 = smooth.
+                base = (
+                    f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
+                    f"zoompan="
+                    f"z='{z_expr}':"
+                    f"x='(iw*zoom-{W})*({pxe})':"
+                    f"y='(ih*zoom-{H})*({pye})':"
+                    f"d=1:s={W}x{H}:fps=60,"
+                    f"setsar=1,format=yuv420p"
+                )
             else:
                 sw, sh = math.ceil(W * z), math.ceil(H * z)
                 px, py = seg.get("panX"), seg.get("panY")
