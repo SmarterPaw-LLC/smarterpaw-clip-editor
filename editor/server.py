@@ -2172,14 +2172,17 @@ def render(edl, out_dir=None, out_name=None, progress=None):
                 # Pre-fit source to canvas (cover + center crop) so zoompan operates on a
                 # WxH input matching the canvas aspect. Force 60fps BEFORE zoompan — with
                 # d=1, zoompan emits one output frame per input frame, so a 30fps input at
-                # 60fps output plays at 2× (this is the "why doesn't it render" bug).
-                # After zoompan, another fps=60 normalizes the timestamps for the concat.
+                # 60fps output plays at 2×. After zoompan, another fps=60 normalizes.
+                # Pan formula: zoompan's x/y are in SOURCE image coordinates (not scaled-up).
+                # At panY=0 the viewport starts at source y=0 (top); at panY=1 it starts at
+                # source y = ih - ih/zoom (bottom of what fits). So `y = (ih - ih/zoom)*panY`.
+                # This matches the CSS transform-origin semantics used in the preview.
                 base = (
                     f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps=60,"
                     f"zoompan="
                     f"z='{z_expr}':"
-                    f"x='(iw*zoom-{W})*({pxe})':"
-                    f"y='(ih*zoom-{H})*({pye})':"
+                    f"x='(iw-iw/zoom)*({pxe})':"
+                    f"y='(ih-ih/zoom)*({pye})':"
                     f"d=1:s={W}x{H},"
                     f"fps=60,setsar=1,format=yuv420p"
                 )
