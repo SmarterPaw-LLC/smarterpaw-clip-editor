@@ -619,6 +619,29 @@ def list_projects():
     return out
 
 
+def list_track_usage():
+    """Aggregate audio-track usage across every saved project. Returns
+    { 'sources/music/foo.mp3': [ {file: 'proj-slug.json', name: 'Proj Name'}, ... ], ... }
+    so the audio picker can show "used in N projects" per row and list which ones."""
+    out = {}
+    os.makedirs(PROJECTS, exist_ok=True)
+    for f in sorted(os.listdir(PROJECTS)):
+        if not f.endswith(".json"): continue
+        try:
+            with open(os.path.join(PROJECTS, f), encoding="utf-8") as fh:
+                edl = json.load(fh)
+        except Exception:
+            continue
+        proj_name = edl.get("name", os.path.splitext(f)[0])
+        seen = set()
+        for a in (edl.get("audio") or []):
+            src = (a.get("src") or "").lstrip("/").lower()
+            if not src or src in seen: continue
+            seen.add(src)
+            out.setdefault(src, []).append({"file": f, "name": proj_name})
+    return out
+
+
 def load_project(fname):
     full = safe_project(fname)
     if not full or not os.path.exists(full):
@@ -2472,6 +2495,7 @@ class Handler(BaseHTTPRequestHandler):
                                "customTags": load_custom_tags(),
                                "allCategories": list_all_categories(),
                                "musicRatings": load_music_ratings(),
+                               "trackUsage": list_track_usage(),
                                "ttsAvailable": bool(load_openai_key())})
         if path == "/api/edl":
             return self._json(load_edl())

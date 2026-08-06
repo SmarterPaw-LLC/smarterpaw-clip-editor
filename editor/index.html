@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.90.0</span>
+  <span class="ver" id="appVer">v1.91.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -635,7 +635,12 @@
       <div class="row" style="gap:8px;margin-bottom:6px;flex-wrap:wrap"><input type="text" id="audFilter" placeholder="🔍 filter…" style="flex:1;min-width:120px" spellcheck="false">
         <label class="ck"><input type="checkbox" id="audShowMusic" checked> Music</label>
         <label class="ck"><input type="checkbox" id="audShowSfx" checked> SFX</label>
-        <label class="ck"><input type="checkbox" id="audShowVoiceover" checked> Voiceover</label></div>
+        <label class="ck"><input type="checkbox" id="audShowVoiceover" checked> Voiceover</label>
+        <label class="ck" title="Filter to just the tracks used in one or more saved projects — or just the fresh ones you've never used"><select id="audUsageFilter" style="font-size:11px;padding:2px 4px">
+          <option value="all">All tracks</option>
+          <option value="used">Only used in a project</option>
+          <option value="unused">Only unused</option>
+        </select></label></div>
       <div id="audPickList" style="max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:6px"></div>
       <hr>
       <div id="audEditor"><div style="color:var(--mut);font-size:11px">Select an audio clip on the timeline to edit it.</div></div>
@@ -1764,7 +1769,17 @@ function renderAudPickList(){
   const items=[]; if(showM) (MAN.music||[]).forEach(n=>items.push({kind:'m', name:n, src:'sources/music/'+n}));
   if(showS) (MAN.sfx||[]).forEach(n=>items.push({kind:'s', name:n, src:'sources/sfx/'+n}));
   if(showV) (MAN.voiceover||[]).forEach(n=>items.push({kind:'v', name:n, src:'sources/voiceover/'+n}));
-  const list=items.filter(it=>!q||it.name.toLowerCase().includes(q));
+  // Track-usage filter: server returns { 'sources/music/foo.mp3': [{file, name}, ...] } for every
+  // audio src referenced by any saved project's EDL. Used to show a chip AND filter used/unused.
+  const usage = MAN.trackUsage || {};
+  const usageOf = it => usage[(it.src||'').toLowerCase()] || [];
+  const usageMode = (($('#audUsageFilter')||{}).value) || 'all';
+  const list=items.filter(it=>{
+    if(q && !it.name.toLowerCase().includes(q)) return false;
+    if(usageMode === 'used' && usageOf(it).length === 0) return false;
+    if(usageMode === 'unused' && usageOf(it).length > 0) return false;
+    return true;
+  });
   if(!list.length){ box.innerHTML='<div style="color:var(--mut);font-size:11px;padding:10px;text-align:center">No audio files. Drop .mp3/.wav into <code>sources/music/</code>, <code>sources/sfx/</code>, or generate a voiceover above.</div>'; return; }
   const ratings = MAN.musicRatings || {};
   list.forEach(it=>{ const row=document.createElement('div'); row.className='audrow';
@@ -1784,7 +1799,16 @@ function renderAudPickList(){
     const delHtml = it.kind==='v'
       ? '<button class="mini" data-act="del" title="Delete this voiceover file (and its script sidecar if any). Cannot be undone." style="color:#e08b8b">🗑</button>'
       : '';
+    // Usage chip: "🗂 3" tooltip lists the project names so you can spot repeats fast.
+    const _uses = usageOf(it);
+    const _usesTip = _uses.length
+      ? 'Used in '+_uses.length+' project'+(_uses.length!==1?'s':'')+':\n• '+_uses.map(u=>u.name).join('\n• ')
+      : 'Not used in any saved project yet';
+    const usageHtml = _uses.length
+      ? '<span class="mini" title="'+_usesTip.replace(/"/g,'&quot;')+'" style="background:#2b3d5a;color:#a6c8ff;padding:2px 6px;border-radius:4px;font-size:10px;cursor:help">🗂 '+_uses.length+'</span>'
+      : '';
     row.innerHTML=`<span class="kind ${it.kind}">${kindLbl}</span><span class="nm" title="${it.name}">${it.name.replace(/\.(mp3|m4a|wav|ogg|aac|flac)$/i,'')}</span>
+      ${usageHtml}
       ${thumbsHtml}
       <button class="mini" data-act="preview" title="Preview (play/stop) — expands a full player with scrub bar">▶</button>
       ${delHtml}
@@ -3549,6 +3573,7 @@ $('#btnOverlays').onclick=openOvModal; $('#ovClose').onclick=closeOvModal;
 $('#btnAudio').onclick=openAudModal; $('#audClose').onclick=closeAudModal;
 $('#audFilter').oninput=renderAudPickList; $('#audShowMusic').onchange=renderAudPickList; $('#audShowSfx').onchange=renderAudPickList;
 if($('#audShowVoiceover')) $('#audShowVoiceover').onchange=renderAudPickList;
+if($('#audUsageFilter')) $('#audUsageFilter').onchange=renderAudPickList;
 // Mic recording — uses MediaRecorder to capture a webm/opus blob from the mic, POSTs it to
 // /api/voiceover/upload-raw which transcodes to mp3 via ffmpeg and drops it into sources/voiceover/.
 let _recStream = null, _recRec = null, _recChunks = [], _recBlob = null, _recStart = 0, _recTick = null;
