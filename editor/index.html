@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.91.0</span>
+  <span class="ver" id="appVer">v1.92.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1323,6 +1323,10 @@ function renderTimeline(){
         <button class="mini cbtn" data-sa="out" title="Set this clip's OUT (duration) to the scrub position">Set OUT ⇥</button>
         <button class="mini cbtn" data-sa="full" title="Use the entire source clip (in=0, dur=source length)">⇤⇥ Full clip</button>
         <span class="csct" style="flex:1;text-align:left">in ${fmt(s.in)} · ${fmt(s.dur)}s</span>
+      </div>
+      <div class="cscrub-row">
+        <label style="font-size:11px;display:flex;align-items:center;gap:4px" title="Include the clip's original audio in the render (mixed with any music/voiceover overlays)"><input type="checkbox" data-sa="srcAudio" ${s.srcAudio?'checked':''}> 🎤 Src audio</label>
+        <label style="font-size:11px;display:flex;align-items:center;gap:4px;flex:1;opacity:${s.srcAudio?1:0.4}">vol <input type="range" data-sa="srcAudioVol" min="0" max="2" step="0.05" value="${s.srcAudioVol!=null?s.srcAudioVol:1}" style="flex:1;min-width:60px" ${s.srcAudio?'':'disabled'}> <span class="csct" style="min-width:32px">${Math.round((s.srcAudioVol!=null?s.srcAudioVol:1)*100)}%</span></label>
       </div>`;
     el.querySelector('.hd').onclick=()=>selectSeg(i);
     el.querySelectorAll('[data-f]').forEach(inp=>{
@@ -1339,18 +1343,40 @@ function renderTimeline(){
       { const _sr=resolveSegment(s); $('#inIn').value=s.in; $('#inDur').value=s.dur; $('#inZoom').value=_sr.zoom||1; $('#inZoomR').value=_sr.zoom||1; $('#inAnchor').value=_sr.anchor||'center'; $('#inSpeed').value=String(s.speed||1); updateSpeedHint(s); } $('#trimName').textContent=name;
       withClip(s.id, v=>{ if(!v) return; showVid(s.id); applyFraming(s,v); try{v.currentTime=t;}catch(e){} showCap(s.cap); });
     };
-    el.querySelectorAll('[data-sa]').forEach(b=>{ b.onclick=(ev)=>{ ev.stopPropagation(); const t=parseFloat(cscrub.value)||0; const a=b.dataset.sa;
-      if(a==='play'){ stop(); selectSeg(i); playRange(EDL.segments[i], ()=>{}); }
-      else if(a==='in'){ s.in=Math.round(t*100)/100; renderTimeline(); selectSeg(i); toast('IN set to '+fmt(t)+'s'); }
-      else if(a==='out'){ const d=Math.round((t-(+s.in||0))*100)/100; if(d>0){ s.dur=d; renderTimeline(); selectSeg(i); toast('Duration set to '+fmt(d)+'s'); } else toast('Scrub past the IN point first'); }
-      else if(a==='full'){
-        // Reset to the entire source clip: in=0, dur=source.dur. Source dur comes from MAN.byId
-        // (probed by the server); fall back to cdur (60s cap) if the clip's not in the bin.
-        const src = MAN.byId && MAN.byId[s.id]; const full = src && src.dur ? +src.dur : (cdur || 60);
-        histCommit(); s.in = 0; s.dur = Math.round(full*100)/100;
-        renderTimeline(); selectSeg(i); toast('Segment set to full clip ('+fmt(s.dur)+'s)');
+    el.querySelectorAll('[data-sa]').forEach(b=>{
+      const a = b.dataset.sa;
+      // Checkbox: toggle srcAudio, refresh so the volume slider enables/disables in step.
+      if(a === 'srcAudio'){
+        b.onchange = (ev) => { ev.stopPropagation(); histCommit(); s.srcAudio = !!b.checked;
+          // Live-preview: if this segment is currently on screen, unmute/mute its video now.
+          const v = vids[s.id]; if(v){ v.muted = !s.srcAudio; if(s.srcAudio) v.volume = Math.max(0, Math.min(1, (s.srcAudioVol!=null?+s.srcAudioVol:1))); }
+          renderTimeline(); selectSeg(i);
+        };
+        return;
       }
-    }; });
+      // Volume slider: 0..2 → clamp to 1 for <video> (which caps at 1); store the true value for render.
+      if(a === 'srcAudioVol'){
+        b.oninput = (ev) => { ev.stopPropagation(); const v = parseFloat(b.value)||0; s.srcAudioVol = v;
+          const label = b.parentElement.querySelector('.csct'); if(label) label.textContent = Math.round(v*100)+'%';
+          const vd = vids[s.id]; if(vd && s.srcAudio){ vd.volume = Math.max(0, Math.min(1, v)); }
+        };
+        b.onchange = () => { histCommit(); };
+        return;
+      }
+      // Buttons: play/in/out/full — same as before.
+      b.onclick = (ev) => { ev.stopPropagation(); const t=parseFloat(cscrub.value)||0;
+        if(a==='play'){ stop(); selectSeg(i); playRange(EDL.segments[i], ()=>{}); }
+        else if(a==='in'){ s.in=Math.round(t*100)/100; renderTimeline(); selectSeg(i); toast('IN set to '+fmt(t)+'s'); }
+        else if(a==='out'){ const d=Math.round((t-(+s.in||0))*100)/100; if(d>0){ s.dur=d; renderTimeline(); selectSeg(i); toast('Duration set to '+fmt(d)+'s'); } else toast('Scrub past the IN point first'); }
+        else if(a==='full'){
+          // Reset to the entire source clip: in=0, dur=source.dur. Source dur comes from MAN.byId
+          // (probed by the server); fall back to cdur (60s cap) if the clip's not in the bin.
+          const src = MAN.byId && MAN.byId[s.id]; const full = src && src.dur ? +src.dur : (cdur || 60);
+          histCommit(); s.in = 0; s.dur = Math.round(full*100)/100;
+          renderTimeline(); selectSeg(i); toast('Segment set to full clip ('+fmt(s.dur)+'s)');
+        }
+      };
+    });
     tl.appendChild(el);
   });
   updateTotal();
@@ -1403,7 +1429,10 @@ function loadSegIntoTrim(){
 /* ---------- playback ---------- */
 let tlPlaying=false, pbToken=0, segRaf=null, clockRaf=null, segTO=null, clockTimer=null, playhead=0;
 function stop(){ tlPlaying=false; pbToken++; cancelAnimationFrame(segRaf); cancelAnimationFrame(clockRaf); clearInterval(clockTimer); clearTimeout(segTO);
-  const v=activeVid(); if(v){ v.onseeked=null; try{v.pause();}catch(e){} v.style.opacity=1; } audStopPlayback();
+  const v=activeVid(); if(v){ v.onseeked=null; try{v.pause();}catch(e){} v.style.opacity=1; }
+  // Re-mute every segment video so a stopped preview never keeps leaking source audio.
+  for(const k in vids){ try{ vids[k].muted = true; }catch(_){} }
+  audStopPlayback();
   // Also pause every clipframe overlay's inner video — they're independent HTML <video> elements
   // that don't listen to the timeline clock, so they'd keep playing on their own otherwise.
   for(const id in ovCfVids){ try{ ovCfVids[id].pause(); }catch(e){} }
@@ -1459,6 +1488,8 @@ function playRange(seg, onDone){
     if(v.currentTime>=end-0.03 || v.ended){ finish(); return; }
     segRaf=requestAnimationFrame(watch); };
   const go=()=>{ if(my!==pbToken) return; v.onseeked=null; applyFraming(seg, v); showVid(seg.id); showCap(seg.cap);
+    // Toggle source-audio: unmute + set volume if the segment opted in, otherwise silence.
+    try{ v.muted = !seg.srcAudio; if(seg.srcAudio) v.volume = Math.max(0, Math.min(1, (seg.srcAudioVol!=null?+seg.srcAudioVol:1))); }catch(_){}
     try{v.playbackRate=spd;}catch(_){} const p=v.play(); if(p&&p.catch) p.catch(()=>{}); segRaf=requestAnimationFrame(watch); };
   const seekThenGo=()=>{ if(my!==pbToken) return;
     if(Math.abs(v.currentTime-start)>0.06){ v.onseeked=()=>{ v.onseeked=null; go(); }; try{v.currentTime=start;}catch(e){ go(); } }
@@ -1507,8 +1538,10 @@ function playTimeline(){
     const s=hit.seg, v=getVid(s.id), want=(+s.in||0)+hit.off*spd;
     if(s!==curKey){                                     // entered a new (topmost) clip
       curKey=s;
-      for(const k in vids){ if(vids[k]!==v){ try{vids[k].pause();}catch(_){} } }
+      for(const k in vids){ if(vids[k]!==v){ try{vids[k].pause(); vids[k].muted=true;}catch(_){} } }
       if(v){ applyFraming(s,v); showVid(s.id); try{v.playbackRate=spd;}catch(_){} try{v.currentTime=Math.max(0,want);}catch(_){}
+        // Segment source-audio: unmute + volume for the incoming clip, others stay muted.
+        try{ v.muted = !s.srcAudio; if(s.srcAudio) v.volume = Math.max(0, Math.min(1, (s.srcAudioVol!=null?+s.srcAudioVol:1))); }catch(_){}
         const p=v.play(); if(p&&p.catch)p.catch(()=>{}); }
       showCap(s.cap);
     } else if(v){                                      // same clip: keep it synced + playing

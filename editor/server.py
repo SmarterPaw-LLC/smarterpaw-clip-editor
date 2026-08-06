@@ -1956,6 +1956,11 @@ def flatten_segments(edl):
         seg = {"id": s.get("id"), "in": round(float(s.get("in", 0) or 0) + off * sp, 4),
                "dur": round((b - a) * sp, 4), "speed": sp, "cap": s.get("cap", ""),
                "zoom": s.get("zoom", 1.0), "anchor": s.get("anchor", "center")}
+        # Carry per-segment original-audio flags so the audio-mix stage can pull the source
+        # clip's audio track at the right timeline position with the right volume.
+        if s.get("srcAudio"):
+            seg["srcAudio"] = True
+            seg["srcAudioVol"] = float(s.get("srcAudioVol", 1) if s.get("srcAudioVol") is not None else 1)
         if s.get("panX") is not None:
             seg["panX"] = s.get("panX")
         if s.get("panY") is not None:
@@ -2219,6 +2224,24 @@ def render(edl, out_dir=None, out_name=None, progress=None):
             src_in = max(0.0, float(a.get("srcIn", 0) or 0))   # skip N seconds into the source file
             spd = max(0.25, min(4.0, float(a.get("speed", 1) or 1)))   # atempo-safe range
             tracks.append((ap, st, du, vol, fi, fo, src_in, spd))
+        # Segment source audio: iterate flattened segments (already visible-ordered, multi-channel
+        # collapsed) with a running timeline position. Any segment with srcAudio=true contributes
+        # its clip's original audio at the exact position it appears on the timeline. Uses the
+        # flat entries' `in`/`speed` so trimmed/sped-up segments still line up.
+        seg_i2f = None
+        _tl_pos = 0.0
+        for _fseg in flat:
+            _dur_tl = max(0.0, float(_fseg.get("dur", 0) or 0) / max(0.1, float(_fseg.get("speed", 1) or 1)))
+            if not _fseg.get("black") and _fseg.get("srcAudio"):
+                if seg_i2f is None:
+                    seg_i2f = id_to_file()
+                _ap = seg_i2f.get(_fseg.get("id"))
+                if _ap and os.path.exists(_ap):
+                    _vol = max(0.0, min(2.0, float(_fseg.get("srcAudioVol", 1))))
+                    if _vol > 0.001 and _tl_pos < total:
+                        _du = min(_dur_tl, total - _tl_pos)
+                        tracks.append((_ap, _tl_pos, _du, _vol, 0.0, 0.0, float(_fseg.get("in", 0)), float(_fseg.get("speed", 1))))
+            _tl_pos += _dur_tl
         # Framed-clip (picture-in-picture) source audio — one track per clipframe with srcAudio=true.
         # Reuse id_to_file lookup to resolve the source file path.
         cf_i2f = None
