@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.94.0</span>
+  <span class="ver" id="appVer">v1.95.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -841,8 +841,16 @@ function applyFraming(seg, v, tProgress){ v=v||vids[activeId]; if(!v) return;
   const sr = resolveSegment(seg);
   // Ken Burns: if seg has zoomEnd / panXEnd / panYEnd, linearly interpolate start → end.
   // tProgress is 0..1 across the segment; falls back to 0 (start framing) when omitted.
-  const p = Math.max(0, Math.min(1, +tProgress || 0));
+  // kbStartT / kbEndT (source-seconds within the segment) narrow the animation window: before
+  // kbStartT the START framing holds; between kbStartT and kbEndT it interpolates; after
+  // kbEndT the END framing holds. Both default to full segment span (0 → seg.dur).
+  const rawP = Math.max(0, Math.min(1, +tProgress || 0));
   const anim = seg.zoomEnd != null || seg.panXEnd != null || seg.panYEnd != null;
+  const dur = Math.max(0.001, +seg.dur || 1);
+  const t0 = Math.max(0, Math.min(dur, +seg.kbStartT || 0));
+  const t1 = Math.max(t0 + 0.001, Math.min(dur, seg.kbEndT != null ? +seg.kbEndT : dur));
+  const tNow = rawP * dur;
+  const p = tNow <= t0 ? 0 : tNow >= t1 ? 1 : (tNow - t0) / (t1 - t0);
   const lerp = (a, b) => a + (b - a) * p;
   const z0 = Math.max(1, +sr.zoom || 1);
   const z1 = anim && seg.zoomEnd != null ? Math.max(1, +seg.zoomEnd) : z0;
@@ -1304,6 +1312,25 @@ function layout(){ const base=clipBounds(); const all=base.bounds.map(o=>Object.
 function topAt(t){ let best=null; layout().all.forEach(o=>{ if(o.seg&&o.seg.hidden) return; if(t>=o.start && t<o.end){ if(!best||o.ch>best.ch||(o.ch===best.ch&&o.idx>best.idx)) best=o; } });
   if(!best) return null; return {seg:best.seg, off:t-best.start, dur:best.dur, ch:best.ch}; }
 function totalDur(){ const ec=normEndcard(EDL.settings); return layout().vidTotal + (ec.enabled?ec.dur:0); }
+function _kbLabel(s, side){
+  // Small helper for the START/END status line under the Ken Burns buttons — keeps the
+  // template literal readable (nested ternaries there triggered a parse issue).
+  const sr = resolveSegment(s);
+  const has = (s.zoomEnd != null) || (s.panXEnd != null) || (s.panYEnd != null);
+  if(side === 'start'){
+    const t = fmt(+s.kbStartT || 0);
+    const z = (+sr.zoom || 1).toFixed(2);
+    const px = Math.round((sr.panX != null ? +sr.panX : 0.5) * 100);
+    const py = Math.round((sr.panY != null ? +sr.panY : 0.5) * 100);
+    return 'START @ ' + t + 's · z' + z + '× · pan ' + px + '%/' + py + '%';
+  }
+  const t = s.kbEndT != null ? fmt(+s.kbEndT) : fmt(+s.dur || 0);
+  if(!has) return 'END @ ' + t + 's · no animation';
+  const z = s.zoomEnd != null ? (+s.zoomEnd).toFixed(2) + '×' : '-';
+  const px = s.panXEnd != null ? (Math.round(+s.panXEnd * 100) + '%') : '-';
+  const py = s.panYEnd != null ? (Math.round(+s.panYEnd * 100) + '%') : '-';
+  return 'END @ ' + t + 's · z' + z + ' · pan ' + px + '/' + py;
+}
 function renderTimeline(){
   const tl=$('#timeline'); tl.innerHTML='';
   if(!EDL.segments.length){ const h=document.createElement('div'); h.className='emptyhint';
@@ -1345,10 +1372,14 @@ function renderTimeline(){
         <label style="font-size:11px;display:flex;align-items:center;gap:4px" title="Include the clip's original audio in the render (mixed with any music/voiceover overlays)"><input type="checkbox" data-sa="srcAudio" ${s.srcAudio?'checked':''}> 🎤 Src audio</label>
         <label style="font-size:11px;display:flex;align-items:center;gap:4px;flex:1;opacity:${s.srcAudio?1:0.4}">vol <input type="range" data-sa="srcAudioVol" min="0" max="2" step="0.05" value="${s.srcAudioVol!=null?s.srcAudioVol:1}" style="flex:1;min-width:60px" ${s.srcAudio?'':'disabled'}> <span class="csct" style="min-width:32px">${Math.round((s.srcAudioVol!=null?s.srcAudioVol:1)*100)}%</span></label>
       </div>
-      <div class="cscrub-row" title="Ken Burns: current zoom/pan is the START framing. Scrub or drag-frame the preview to set the END, then click 🎬 Set END. Preview + render animate linearly between them.">
-        <button class="mini cbtn" data-sa="kbEnd">🎬 Set END framing</button>
+      <div class="cscrub-row" title="Ken Burns: scrub or drag-frame the preview, then click 🎬 Set START (captures scrub time + framing as anim start) and 🎬 Set END (captures scrub time + framing as anim end). Before START and after END the framing holds; between them it interpolates.">
+        <button class="mini cbtn" data-sa="kbStart">🎬 Set START @ scrub</button>
+        <button class="mini cbtn" data-sa="kbEnd">🎬 Set END @ scrub</button>
         <button class="mini cbtn" data-sa="kbClear" ${s.zoomEnd==null&&s.panXEnd==null&&s.panYEnd==null?'disabled':''}>✕ Clear anim</button>
-        <span class="csct" style="flex:1;font-size:10px;color:var(--mut)">${(s.zoomEnd!=null||s.panXEnd!=null||s.panYEnd!=null)?('→ z'+(s.zoomEnd!=null?(+s.zoomEnd).toFixed(2)+'×':'—')+' · pan '+(s.panXEnd!=null?Math.round(s.panXEnd*100)+'%':'—')+'/'+(s.panYEnd!=null?Math.round(s.panYEnd*100)+'%':'—')):'no animation'}</span>
+      </div>
+      <div class="cscrub-row" style="font-size:10px;color:var(--mut);gap:12px">
+        <span>${_kbLabel(s,'start')}</span>
+        <span>${_kbLabel(s,'end')}</span>
       </div>`;
     el.querySelector('.hd').onclick=()=>selectSeg(i);
     el.querySelectorAll('[data-f]').forEach(inp=>{
@@ -1397,21 +1428,38 @@ function renderTimeline(){
           histCommit(); s.in = 0; s.dur = Math.round(full*100)/100;
           renderTimeline(); selectSeg(i); toast('Segment set to full clip ('+fmt(s.dur)+'s)');
         }
+        else if(a==='kbStart'){
+          // Capture the scrub position (as source-seconds within the segment) as the animation
+          // START time, and the current framing as the START keyframe. Scrub value is absolute
+          // source seconds; convert to seg-relative by subtracting s.in.
+          histCommit();
+          const sr = resolveSegment(s);
+          // Overwrite the base zoom/pan so START matches what the user framed.
+          s.zoom  = +sr.zoom || 1;
+          s.panX  = sr.panX != null ? +sr.panX : (sr.anchor==='left'?0:sr.anchor==='right'?1:0.5);
+          s.panY  = sr.panY != null ? +sr.panY : (sr.anchor==='top'?0:sr.anchor==='bottom'?1:0.5);
+          const relT = Math.max(0, Math.min((+s.dur||0), t - (+s.in||0)));
+          s.kbStartT = Math.round(relT * 100) / 100;
+          // If END isn't set yet, no animation happens — user still needs to click Set END.
+          renderTimeline(); selectSeg(i);
+          toast('START @ '+fmt(s.kbStartT)+'s → z'+(+s.zoom).toFixed(2)+'× pan '+Math.round(s.panX*100)+'%/'+Math.round(s.panY*100)+'%');
+        }
         else if(a==='kbEnd'){
-          // Capture the CURRENT resolved framing as the END keyframe. START is whatever
-          // zoom/panX/panY already are on this segment. Preview + render will linearly
-          // interpolate zoom + pan across the clip's duration.
+          // Capture the scrub position as animation END time, and the current framing as END keyframe.
           histCommit();
           const sr = resolveSegment(s);
           s.zoomEnd = +sr.zoom || 1;
           s.panXEnd = sr.panX != null ? +sr.panX : (sr.anchor==='left'?0:sr.anchor==='right'?1:0.5);
           s.panYEnd = sr.panY != null ? +sr.panY : (sr.anchor==='top'?0:sr.anchor==='bottom'?1:0.5);
+          const relT = Math.max(0, Math.min((+s.dur||0), t - (+s.in||0)));
+          s.kbEndT = Math.round(relT * 100) / 100;
           renderTimeline(); selectSeg(i);
-          toast('END framing captured → z'+s.zoomEnd.toFixed(2)+'× pan '+Math.round(s.panXEnd*100)+'%/'+Math.round(s.panYEnd*100)+'%');
+          toast('END @ '+fmt(s.kbEndT)+'s → z'+s.zoomEnd.toFixed(2)+'× pan '+Math.round(s.panXEnd*100)+'%/'+Math.round(s.panYEnd*100)+'%');
         }
         else if(a==='kbClear'){
           histCommit();
           delete s.zoomEnd; delete s.panXEnd; delete s.panYEnd;
+          delete s.kbStartT; delete s.kbEndT;
           renderTimeline(); selectSeg(i); toast('Animation cleared');
         }
       };

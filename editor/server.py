@@ -1979,6 +1979,13 @@ def flatten_segments(edl):
             }
             seg["kbParentIn"] = float(s.get("in", 0) or 0)
             seg["kbParentDur"] = float(s.get("dur", 1) or 1)
+            # Optional window: animation begins at kbStartT source-seconds into the parent
+            # (default 0) and completes at kbEndT (default parent dur). Before START, hold
+            # the START framing; after END, hold END.
+            if s.get("kbStartT") is not None:
+                seg["kbStartT"] = max(0.0, float(s.get("kbStartT")))
+            if s.get("kbEndT") is not None:
+                seg["kbEndT"] = max(0.0, float(s.get("kbEndT")))
         if s.get("panX") is not None:
             seg["panX"] = s.get("panX")
         if s.get("panY") is not None:
@@ -2134,8 +2141,15 @@ def render(edl, out_dir=None, out_name=None, progress=None):
                 # progress = elapsed / parent_dur, clamped 0..1
                 _off_src = flat_in - parent_in
                 _spd_val = min(10.0, max(0.1, float(seg.get("speed", 1) or 1)))
-                # p(t) is the animation progress expression used inside crop's expressions.
-                p_expr = f"clip((({_off_src:.6f})+t*{_spd_val:.6f})/{parent_dur:.6f},0,1)"
+                # Animation window inside the parent (source-seconds). Default 0..parent_dur.
+                _kb_t0 = max(0.0, float(seg.get("kbStartT", 0.0)))
+                _kb_t1 = float(seg.get("kbEndT")) if seg.get("kbEndT") is not None else parent_dur
+                _kb_t1 = max(_kb_t0 + 0.001, min(parent_dur, _kb_t1))
+                _win = max(0.001, _kb_t1 - _kb_t0)
+                # elapsed source-seconds = (flat_in - parent_in) + t*spd
+                # Progress = clip((elapsed - t0) / (t1 - t0), 0, 1) so before t0 it's 0
+                # (holds START) and after t1 it's 1 (holds END).
+                p_expr = f"clip((((({_off_src:.6f})+t*{_spd_val:.6f})-{_kb_t0:.6f})/{_win:.6f}),0,1)"
                 # z(t), px(t), py(t) — linear interp between start and end.
                 z_expr  = f"({z_s:.6f}+({z_e - z_s:.6f})*{p_expr})"
                 pxe = f"({px_s:.6f}+({px_e - px_s:.6f})*{p_expr})"
