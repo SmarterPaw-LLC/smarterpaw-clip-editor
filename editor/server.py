@@ -2170,17 +2170,18 @@ def render(edl, out_dir=None, out_name=None, progress=None):
                 pxe = f"({px_s:.6f}+({px_e - px_s:.6f})*{p_expr})"
                 pye = f"({py_s:.6f}+({py_e - py_s:.6f})*{p_expr})"
                 # Pre-fit source to canvas (cover + center crop) so zoompan operates on a
-                # WxH input matching the canvas aspect. Then zoompan zooms in by z(t) and
-                # positions the WxH viewport at (x, y) inside the iw*zoom × ih*zoom
-                # zoomed-up space. d=1 = one output per input (no dwell), fps=60 = smooth.
+                # WxH input matching the canvas aspect. Force 60fps BEFORE zoompan — with
+                # d=1, zoompan emits one output frame per input frame, so a 30fps input at
+                # 60fps output plays at 2× (this is the "why doesn't it render" bug).
+                # After zoompan, another fps=60 normalizes the timestamps for the concat.
                 base = (
-                    f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
+                    f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps=60,"
                     f"zoompan="
                     f"z='{z_expr}':"
                     f"x='(iw*zoom-{W})*({pxe})':"
                     f"y='(ih*zoom-{H})*({pye})':"
-                    f"d=1:s={W}x{H}:fps=60,"
-                    f"setsar=1,format=yuv420p"
+                    f"d=1:s={W}x{H},"
+                    f"fps=60,setsar=1,format=yuv420p"
                 )
             else:
                 sw, sh = math.ceil(W * z), math.ceil(H * z)
