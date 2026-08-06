@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.95.0</span>
+  <span class="ver" id="appVer">v1.95.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -845,24 +845,27 @@ function applyFraming(seg, v, tProgress){ v=v||vids[activeId]; if(!v) return;
   // kbStartT the START framing holds; between kbStartT and kbEndT it interpolates; after
   // kbEndT the END framing holds. Both default to full segment span (0 → seg.dur).
   const rawP = Math.max(0, Math.min(1, +tProgress || 0));
-  const anim = seg.zoomEnd != null || seg.panXEnd != null || seg.panYEnd != null;
+  const anim = seg.zoomEnd != null || seg.panXEnd != null || seg.panYEnd != null || seg.zoomStart != null || seg.panXStart != null || seg.panYStart != null;
   const dur = Math.max(0.001, +seg.dur || 1);
   const t0 = Math.max(0, Math.min(dur, +seg.kbStartT || 0));
   const t1 = Math.max(t0 + 0.001, Math.min(dur, seg.kbEndT != null ? +seg.kbEndT : dur));
   const tNow = rawP * dur;
   const p = tNow <= t0 ? 0 : tNow >= t1 ? 1 : (tNow - t0) / (t1 - t0);
   const lerp = (a, b) => a + (b - a) * p;
-  const z0 = Math.max(1, +sr.zoom || 1);
+  // START framing prefers dedicated zoomStart/panXStart/panYStart (captured by Set START) so
+  // that a later reframe drag doesn't clobber it. Falls back to the base zoom/panX/panY when
+  // no separate START was captured (backwards compatible with the earlier one-endpoint flow).
+  const z0 = Math.max(1, +(seg.zoomStart != null ? seg.zoomStart : sr.zoom) || 1);
   const z1 = anim && seg.zoomEnd != null ? Math.max(1, +seg.zoomEnd) : z0;
   const z = anim ? lerp(z0, z1) : z0;
   let posX, posY;
   if(anim || sr.panX != null || sr.panY != null){
-    const px0 = sr.panX != null ? +sr.panX : (sr.anchor === 'left' ? 0 : sr.anchor === 'right' ? 1 : 0.5);
-    const py0 = sr.panY != null ? +sr.panY : (sr.anchor === 'top'  ? 0 : sr.anchor === 'bottom' ? 1 : 0.5);
-    const px1 = anim && seg.panXEnd != null ? +seg.panXEnd : px0;
-    const py1 = anim && seg.panYEnd != null ? +seg.panYEnd : py0;
-    posX = Math.max(0, Math.min(1, lerp(px0, px1)));
-    posY = Math.max(0, Math.min(1, lerp(py0, py1)));
+    const _sx = seg.panXStart != null ? +seg.panXStart : (sr.panX != null ? +sr.panX : (sr.anchor === 'left' ? 0 : sr.anchor === 'right' ? 1 : 0.5));
+    const _sy = seg.panYStart != null ? +seg.panYStart : (sr.panY != null ? +sr.panY : (sr.anchor === 'top'  ? 0 : sr.anchor === 'bottom' ? 1 : 0.5));
+    const px1 = anim && seg.panXEnd != null ? +seg.panXEnd : _sx;
+    const py1 = anim && seg.panYEnd != null ? +seg.panYEnd : _sy;
+    posX = Math.max(0, Math.min(1, lerp(_sx, px1)));
+    posY = Math.max(0, Math.min(1, lerp(_sy, py1)));
   }
   const pos = (posX != null) ? ((posX*100).toFixed(3)+'% '+(posY*100).toFixed(3)+'%') : anchorPos(sr.anchor);
   v.style.objectPosition=pos; v.style.transformOrigin=pos; v.style.transform = z>1?`scale(${z})`:'none';
@@ -1319,10 +1322,12 @@ function _kbLabel(s, side){
   const has = (s.zoomEnd != null) || (s.panXEnd != null) || (s.panYEnd != null);
   if(side === 'start'){
     const t = fmt(+s.kbStartT || 0);
-    const z = (+sr.zoom || 1).toFixed(2);
-    const px = Math.round((sr.panX != null ? +sr.panX : 0.5) * 100);
-    const py = Math.round((sr.panY != null ? +sr.panY : 0.5) * 100);
-    return 'START @ ' + t + 's · z' + z + '× · pan ' + px + '%/' + py + '%';
+    // Prefer dedicated START storage (captured by Set START button) over the base framing —
+    // the base fields keep getting overwritten by preview reframe drags.
+    const zRaw = s.zoomStart != null ? +s.zoomStart : (+sr.zoom || 1);
+    const pxRaw = s.panXStart != null ? +s.panXStart : (sr.panX != null ? +sr.panX : 0.5);
+    const pyRaw = s.panYStart != null ? +s.panYStart : (sr.panY != null ? +sr.panY : 0.5);
+    return 'START @ ' + t + 's · z' + zRaw.toFixed(2) + '× · pan ' + Math.round(pxRaw * 100) + '%/' + Math.round(pyRaw * 100) + '%';
   }
   const t = s.kbEndT != null ? fmt(+s.kbEndT) : fmt(+s.dur || 0);
   if(!has) return 'END @ ' + t + 's · no animation';
@@ -1430,19 +1435,18 @@ function renderTimeline(){
         }
         else if(a==='kbStart'){
           // Capture the scrub position (as source-seconds within the segment) as the animation
-          // START time, and the current framing as the START keyframe. Scrub value is absolute
-          // source seconds; convert to seg-relative by subtracting s.in.
+          // START time, and the current framing as the START keyframe. Stored in dedicated
+          // zoomStart/panXStart/panYStart fields so a later "reframe for END" drag (which writes
+          // to s.zoom/panX/panY) doesn't clobber the captured START values.
           histCommit();
           const sr = resolveSegment(s);
-          // Overwrite the base zoom/pan so START matches what the user framed.
-          s.zoom  = +sr.zoom || 1;
-          s.panX  = sr.panX != null ? +sr.panX : (sr.anchor==='left'?0:sr.anchor==='right'?1:0.5);
-          s.panY  = sr.panY != null ? +sr.panY : (sr.anchor==='top'?0:sr.anchor==='bottom'?1:0.5);
+          s.zoomStart = +sr.zoom || 1;
+          s.panXStart = sr.panX != null ? +sr.panX : (sr.anchor==='left'?0:sr.anchor==='right'?1:0.5);
+          s.panYStart = sr.panY != null ? +sr.panY : (sr.anchor==='top'?0:sr.anchor==='bottom'?1:0.5);
           const relT = Math.max(0, Math.min((+s.dur||0), t - (+s.in||0)));
           s.kbStartT = Math.round(relT * 100) / 100;
-          // If END isn't set yet, no animation happens — user still needs to click Set END.
           renderTimeline(); selectSeg(i);
-          toast('START @ '+fmt(s.kbStartT)+'s → z'+(+s.zoom).toFixed(2)+'× pan '+Math.round(s.panX*100)+'%/'+Math.round(s.panY*100)+'%');
+          toast('START @ '+fmt(s.kbStartT)+'s → z'+s.zoomStart.toFixed(2)+'× pan '+Math.round(s.panXStart*100)+'%/'+Math.round(s.panYStart*100)+'%');
         }
         else if(a==='kbEnd'){
           // Capture the scrub position as animation END time, and the current framing as END keyframe.
@@ -1459,6 +1463,7 @@ function renderTimeline(){
         else if(a==='kbClear'){
           histCommit();
           delete s.zoomEnd; delete s.panXEnd; delete s.panYEnd;
+          delete s.zoomStart; delete s.panXStart; delete s.panYStart;
           delete s.kbStartT; delete s.kbEndT;
           renderTimeline(); selectSeg(i); toast('Animation cleared');
         }

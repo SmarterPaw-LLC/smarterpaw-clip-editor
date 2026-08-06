@@ -1961,21 +1961,28 @@ def flatten_segments(edl):
         if s.get("srcAudio"):
             seg["srcAudio"] = True
             seg["srcAudioVol"] = float(s.get("srcAudioVol", 1) if s.get("srcAudioVol") is not None else 1)
-        # Ken Burns animation: if the parent segment has END framing set, propagate the START
-        # (current zoom/panX/panY) + END values along with the parent's total source duration
-        # and this flat's offset within it. That lets the render compute progress across the
-        # full parent even when the flat is a mid-segment split.
-        if s.get("zoomEnd") is not None or s.get("panXEnd") is not None or s.get("panYEnd") is not None:
+        # Ken Burns animation: propagate START + END framing + timing + parent bounds so the
+        # render can compute progress across the full parent even when the flat is a mid-
+        # segment split. START framing prefers dedicated zoomStart/panXStart/panYStart
+        # (captured by the Set START button) over the base fields — the base fields keep
+        # getting overwritten by preview reframe drags, so relying on them mangles the
+        # animation to just the END pose.
+        _any_end = (s.get("zoomEnd") is not None or s.get("panXEnd") is not None or s.get("panYEnd") is not None)
+        _any_start = (s.get("zoomStart") is not None or s.get("panXStart") is not None or s.get("panYStart") is not None)
+        if _any_end or _any_start:
+            _zs_base = float(s.get("zoom", 1.0) or 1.0)
+            _px_base = float(s.get("panX")) if s.get("panX") is not None else None
+            _py_base = float(s.get("panY")) if s.get("panY") is not None else None
             seg["kbStart"] = {
-                "zoom": float(s.get("zoom", 1.0) or 1.0),
-                "panX": (float(s.get("panX")) if s.get("panX") is not None else None),
-                "panY": (float(s.get("panY")) if s.get("panY") is not None else None),
+                "zoom": float(s.get("zoomStart")) if s.get("zoomStart") is not None else _zs_base,
+                "panX": float(s.get("panXStart")) if s.get("panXStart") is not None else _px_base,
+                "panY": float(s.get("panYStart")) if s.get("panYStart") is not None else _py_base,
                 "anchor": s.get("anchor", "center"),
             }
             seg["kbEnd"] = {
-                "zoom": (float(s.get("zoomEnd")) if s.get("zoomEnd") is not None else float(s.get("zoom", 1.0) or 1.0)),
-                "panX": (float(s.get("panXEnd")) if s.get("panXEnd") is not None else None),
-                "panY": (float(s.get("panYEnd")) if s.get("panYEnd") is not None else None),
+                "zoom": (float(s.get("zoomEnd")) if s.get("zoomEnd") is not None else seg["kbStart"]["zoom"]),
+                "panX": (float(s.get("panXEnd")) if s.get("panXEnd") is not None else seg["kbStart"]["panX"]),
+                "panY": (float(s.get("panYEnd")) if s.get("panYEnd") is not None else seg["kbStart"]["panY"]),
             }
             seg["kbParentIn"] = float(s.get("in", 0) or 0)
             seg["kbParentDur"] = float(s.get("dur", 1) or 1)
