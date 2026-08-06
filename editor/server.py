@@ -1967,9 +1967,12 @@ def flatten_segments(edl):
         # (captured by the Set START button) over the base fields — the base fields keep
         # getting overwritten by preview reframe drags, so relying on them mangles the
         # animation to just the END pose.
+        # Only enable server-side animation when BOTH endpoints are captured. A lone Set
+        # START without a matching END is a mid-workflow state — fall through to the static
+        # render using the base zoom/panX/panY the user is currently framing with.
         _any_end = (s.get("zoomEnd") is not None or s.get("panXEnd") is not None or s.get("panYEnd") is not None)
         _any_start = (s.get("zoomStart") is not None or s.get("panXStart") is not None or s.get("panYStart") is not None)
-        if _any_end or _any_start:
+        if _any_end and _any_start:
             _zs_base = float(s.get("zoom", 1.0) or 1.0)
             _px_base = float(s.get("panX")) if s.get("panX") is not None else None
             _py_base = float(s.get("panY")) if s.get("panY") is not None else None

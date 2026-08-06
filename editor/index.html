@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.95.1</span>
+  <span class="ver" id="appVer">v1.95.2</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -845,23 +845,29 @@ function applyFraming(seg, v, tProgress){ v=v||vids[activeId]; if(!v) return;
   // kbStartT the START framing holds; between kbStartT and kbEndT it interpolates; after
   // kbEndT the END framing holds. Both default to full segment span (0 → seg.dur).
   const rawP = Math.max(0, Math.min(1, +tProgress || 0));
-  const anim = seg.zoomEnd != null || seg.panXEnd != null || seg.panYEnd != null || seg.zoomStart != null || seg.panXStart != null || seg.panYStart != null;
+  // Animation only fires when BOTH ends are captured. A lone Set START without a matching
+  // Set END is a mid-workflow state — respect the user's current base framing instead of
+  // freezing the preview to the stale START snapshot.
+  const hasStart = seg.zoomStart != null || seg.panXStart != null || seg.panYStart != null;
+  const hasEnd = seg.zoomEnd != null || seg.panXEnd != null || seg.panYEnd != null;
+  const anim = hasStart && hasEnd;
   const dur = Math.max(0.001, +seg.dur || 1);
   const t0 = Math.max(0, Math.min(dur, +seg.kbStartT || 0));
   const t1 = Math.max(t0 + 0.001, Math.min(dur, seg.kbEndT != null ? +seg.kbEndT : dur));
   const tNow = rawP * dur;
   const p = tNow <= t0 ? 0 : tNow >= t1 ? 1 : (tNow - t0) / (t1 - t0);
   const lerp = (a, b) => a + (b - a) * p;
-  // START framing prefers dedicated zoomStart/panXStart/panYStart (captured by Set START) so
-  // that a later reframe drag doesn't clobber it. Falls back to the base zoom/panX/panY when
-  // no separate START was captured (backwards compatible with the earlier one-endpoint flow).
-  const z0 = Math.max(1, +(seg.zoomStart != null ? seg.zoomStart : sr.zoom) || 1);
+  // When animating: START comes from dedicated zoomStart/panXStart/panYStart (captured by
+  // Set START, immune to reframe-drag clobber). When NOT animating: use the base zoom/panX/panY
+  // so the current preview drag shows through — otherwise a stale START capture would freeze
+  // the framing back to the old snapshot.
+  const z0 = Math.max(1, +((anim && seg.zoomStart != null) ? seg.zoomStart : sr.zoom) || 1);
   const z1 = anim && seg.zoomEnd != null ? Math.max(1, +seg.zoomEnd) : z0;
   const z = anim ? lerp(z0, z1) : z0;
   let posX, posY;
   if(anim || sr.panX != null || sr.panY != null){
-    const _sx = seg.panXStart != null ? +seg.panXStart : (sr.panX != null ? +sr.panX : (sr.anchor === 'left' ? 0 : sr.anchor === 'right' ? 1 : 0.5));
-    const _sy = seg.panYStart != null ? +seg.panYStart : (sr.panY != null ? +sr.panY : (sr.anchor === 'top'  ? 0 : sr.anchor === 'bottom' ? 1 : 0.5));
+    const _sx = (anim && seg.panXStart != null) ? +seg.panXStart : (sr.panX != null ? +sr.panX : (sr.anchor === 'left' ? 0 : sr.anchor === 'right' ? 1 : 0.5));
+    const _sy = (anim && seg.panYStart != null) ? +seg.panYStart : (sr.panY != null ? +sr.panY : (sr.anchor === 'top'  ? 0 : sr.anchor === 'bottom' ? 1 : 0.5));
     const px1 = anim && seg.panXEnd != null ? +seg.panXEnd : _sx;
     const py1 = anim && seg.panYEnd != null ? +seg.panYEnd : _sy;
     posX = Math.max(0, Math.min(1, lerp(_sx, px1)));
@@ -1319,18 +1325,21 @@ function _kbLabel(s, side){
   // Small helper for the START/END status line under the Ken Burns buttons — keeps the
   // template literal readable (nested ternaries there triggered a parse issue).
   const sr = resolveSegment(s);
-  const has = (s.zoomEnd != null) || (s.panXEnd != null) || (s.panYEnd != null);
+  const hasStart = (s.zoomStart != null) || (s.panXStart != null) || (s.panYStart != null);
+  const hasEnd = (s.zoomEnd != null) || (s.panXEnd != null) || (s.panYEnd != null);
+  const anim = hasStart && hasEnd;
   if(side === 'start'){
     const t = fmt(+s.kbStartT || 0);
-    // Prefer dedicated START storage (captured by Set START button) over the base framing —
-    // the base fields keep getting overwritten by preview reframe drags.
-    const zRaw = s.zoomStart != null ? +s.zoomStart : (+sr.zoom || 1);
-    const pxRaw = s.panXStart != null ? +s.panXStart : (sr.panX != null ? +sr.panX : 0.5);
-    const pyRaw = s.panYStart != null ? +s.panYStart : (sr.panY != null ? +sr.panY : 0.5);
-    return 'START @ ' + t + 's · z' + zRaw.toFixed(2) + '× · pan ' + Math.round(pxRaw * 100) + '%/' + Math.round(pyRaw * 100) + '%';
+    // Only show the dedicated START snapshot when animation is actually active; otherwise show
+    // the current base framing so the label matches what the preview is rendering.
+    const zRaw = (anim && s.zoomStart != null) ? +s.zoomStart : (+sr.zoom || 1);
+    const pxRaw = (anim && s.panXStart != null) ? +s.panXStart : (sr.panX != null ? +sr.panX : 0.5);
+    const pyRaw = (anim && s.panYStart != null) ? +s.panYStart : (sr.panY != null ? +sr.panY : 0.5);
+    const hint = hasStart && !hasEnd ? ' (Set END to activate)' : '';
+    return 'START @ ' + t + 's · z' + zRaw.toFixed(2) + '× · pan ' + Math.round(pxRaw * 100) + '%/' + Math.round(pyRaw * 100) + '%' + hint;
   }
   const t = s.kbEndT != null ? fmt(+s.kbEndT) : fmt(+s.dur || 0);
-  if(!has) return 'END @ ' + t + 's · no animation';
+  if(!hasEnd) return 'END @ ' + t + 's · no animation';
   const z = s.zoomEnd != null ? (+s.zoomEnd).toFixed(2) + '×' : '-';
   const px = s.panXEnd != null ? (Math.round(+s.panXEnd * 100) + '%') : '-';
   const py = s.panYEnd != null ? (Math.round(+s.panYEnd * 100) + '%') : '-';
