@@ -1961,6 +1961,24 @@ def flatten_segments(edl):
         if s.get("srcAudio"):
             seg["srcAudio"] = True
             seg["srcAudioVol"] = float(s.get("srcAudioVol", 1) if s.get("srcAudioVol") is not None else 1)
+        # Ken Burns animation: if the parent segment has END framing set, propagate the START
+        # (current zoom/panX/panY) + END values along with the parent's total source duration
+        # and this flat's offset within it. That lets the render compute progress across the
+        # full parent even when the flat is a mid-segment split.
+        if s.get("zoomEnd") is not None or s.get("panXEnd") is not None or s.get("panYEnd") is not None:
+            seg["kbStart"] = {
+                "zoom": float(s.get("zoom", 1.0) or 1.0),
+                "panX": (float(s.get("panX")) if s.get("panX") is not None else None),
+                "panY": (float(s.get("panY")) if s.get("panY") is not None else None),
+                "anchor": s.get("anchor", "center"),
+            }
+            seg["kbEnd"] = {
+                "zoom": (float(s.get("zoomEnd")) if s.get("zoomEnd") is not None else float(s.get("zoom", 1.0) or 1.0)),
+                "panX": (float(s.get("panXEnd")) if s.get("panXEnd") is not None else None),
+                "panY": (float(s.get("panYEnd")) if s.get("panYEnd") is not None else None),
+            }
+            seg["kbParentIn"] = float(s.get("in", 0) or 0)
+            seg["kbParentDur"] = float(s.get("dur", 1) or 1)
         if s.get("panX") is not None:
             seg["panX"] = s.get("panX")
         if s.get("panY") is not None:
@@ -2085,15 +2103,63 @@ def render(edl, out_dir=None, out_name=None, progress=None):
             if not src:
                 return {"ok": False, "log": f"Clip not found for id {seg['id']}"}
             z = max(float(seg.get("zoom", 1.0)), 1.0)
-            sw, sh = math.ceil(W * z), math.ceil(H * z)
-            px, py = seg.get("panX"), seg.get("panY")
-            if px is not None or py is not None:
-                px = min(1.0, max(0.0, float(px) if px is not None else 0.5))
-                py = min(1.0, max(0.0, float(py) if py is not None else 0.5))
-                cx, cy = f"(iw-{W})*{px:.5f}", f"(ih-{H})*{py:.5f}"
+            _kb_s = seg.get("kbStart"); _kb_e = seg.get("kbEnd")
+            if _kb_s and _kb_e:
+                # Ken Burns branch: pre-scale to the LARGER of start/end zoom so the whole
+                # animation range fits in one enlarged frame, then animate crop w/h and x/y
+                # via time-varying expressions. `t` is timeline seconds inside THIS flat clip
+                # (post-setpts), so multiply by speed to get source-seconds consumed in the
+                # parent segment; add the flat's offset in the parent, divide by parent dur
+                # to get 0..1 progress. Clamp to keep math sane when a flat overruns.
+                z_s = max(1.0, float(_kb_s.get("zoom", 1.0)))
+                z_e = max(1.0, float(_kb_e.get("zoom", 1.0)))
+                z_max = max(z_s, z_e)
+                # Resolve start/end pan; fall back to anchor when panX/panY not set.
+                def _panfrom(o, key, anchor):
+                    v = o.get(key)
+                    if v is not None: return min(1.0, max(0.0, float(v)))
+                    if key == "panX":
+                        return 0.0 if anchor == "left" else 1.0 if anchor == "right" else 0.5
+                    return 0.0 if anchor == "top" else 1.0 if anchor == "bottom" else 0.5
+                _anchor = _kb_s.get("anchor", "center")
+                px_s = _panfrom(_kb_s, "panX", _anchor); py_s = _panfrom(_kb_s, "panY", _anchor)
+                px_e = _kb_e.get("panX"); py_e = _kb_e.get("panY")
+                px_e = min(1.0, max(0.0, float(px_e))) if px_e is not None else px_s
+                py_e = min(1.0, max(0.0, float(py_e))) if py_e is not None else py_s
+                sw, sh = math.ceil(W * z_max), math.ceil(H * z_max)
+                parent_in = float(seg.get("kbParentIn", 0.0))
+                parent_dur = max(0.01, float(seg.get("kbParentDur", 1.0)))
+                flat_in = float(seg.get("in", 0.0))
+                # source-seconds elapsed at time t: (flat_in - parent_in) + t*spd
+                # progress = elapsed / parent_dur, clamped 0..1
+                _off_src = flat_in - parent_in
+                _spd_val = min(10.0, max(0.1, float(seg.get("speed", 1) or 1)))
+                # p(t) is the animation progress expression used inside crop's expressions.
+                p_expr = f"clip((({_off_src:.6f})+t*{_spd_val:.6f})/{parent_dur:.6f},0,1)"
+                # z(t), px(t), py(t) — linear interp between start and end.
+                z_expr  = f"({z_s:.6f}+({z_e - z_s:.6f})*{p_expr})"
+                pxe = f"({px_s:.6f}+({px_e - px_s:.6f})*{p_expr})"
+                pye = f"({py_s:.6f}+({py_e - py_s:.6f})*{p_expr})"
+                # crop dims: at max zoom (z_max) → W/z_max*z_max = W (full). At z(t) < z_max, crop is smaller than input.
+                # crop_w = W * z_max / z(t) but capped to the enlarged frame size (in_w).
+                cw_expr = f"min(in_w,{W}*{z_max:.6f}/{z_expr})"
+                ch_expr = f"min(in_h,{H}*{z_max:.6f}/{z_expr})"
+                cx_expr = f"(in_w-({cw_expr}))*({pxe})"
+                cy_expr = f"(in_h-({ch_expr}))*({pye})"
+                # Wrap x/y/w/h in single quotes so ffmpeg treats them as expressions with `t`.
+                base = (f"scale={sw}:{sh}:force_original_aspect_ratio=increase,"
+                        f"crop=w='{cw_expr}':h='{ch_expr}':x='{cx_expr}':y='{cy_expr}',"
+                        f"scale={W}:{H},setsar=1,fps=60,format=yuv420p")
             else:
-                cx, cy = crop_xy(seg.get("anchor", "center"), W, H)
-            base = f"scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={W}:{H}:{cx}:{cy},setsar=1,fps=60,format=yuv420p"
+                sw, sh = math.ceil(W * z), math.ceil(H * z)
+                px, py = seg.get("panX"), seg.get("panY")
+                if px is not None or py is not None:
+                    px = min(1.0, max(0.0, float(px) if px is not None else 0.5))
+                    py = min(1.0, max(0.0, float(py) if py is not None else 0.5))
+                    cx, cy = f"(iw-{W})*{px:.5f}", f"(ih-{H})*{py:.5f}"
+                else:
+                    cx, cy = crop_xy(seg.get("anchor", "center"), W, H)
+                base = f"scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={W}:{H}:{cx}:{cy},setsar=1,fps=60,format=yuv420p"
             dur = float(seg["dur"])                     # dur = SOURCE seconds consumed
             spd = min(10.0, max(0.1, float(seg.get("speed", 1) or 1)))
             outlen = dur / spd                          # timeline (output) seconds

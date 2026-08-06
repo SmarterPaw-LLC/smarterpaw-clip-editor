@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.93.0</span>
+  <span class="ver" id="appVer">v1.94.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -837,9 +837,26 @@ function framePos(seg){   // free pan (panX/panY) overrides the coarse anchor pr
   }
   return anchorPos(sr.anchor);
 }
-function applyFraming(seg, v){ v=v||vids[activeId]; if(!v) return;
+function applyFraming(seg, v, tProgress){ v=v||vids[activeId]; if(!v) return;
   const sr = resolveSegment(seg);
-  const pos=framePos(seg); const z=Math.max(sr.zoom||1,1);
+  // Ken Burns: if seg has zoomEnd / panXEnd / panYEnd, linearly interpolate start → end.
+  // tProgress is 0..1 across the segment; falls back to 0 (start framing) when omitted.
+  const p = Math.max(0, Math.min(1, +tProgress || 0));
+  const anim = seg.zoomEnd != null || seg.panXEnd != null || seg.panYEnd != null;
+  const lerp = (a, b) => a + (b - a) * p;
+  const z0 = Math.max(1, +sr.zoom || 1);
+  const z1 = anim && seg.zoomEnd != null ? Math.max(1, +seg.zoomEnd) : z0;
+  const z = anim ? lerp(z0, z1) : z0;
+  let posX, posY;
+  if(anim || sr.panX != null || sr.panY != null){
+    const px0 = sr.panX != null ? +sr.panX : (sr.anchor === 'left' ? 0 : sr.anchor === 'right' ? 1 : 0.5);
+    const py0 = sr.panY != null ? +sr.panY : (sr.anchor === 'top'  ? 0 : sr.anchor === 'bottom' ? 1 : 0.5);
+    const px1 = anim && seg.panXEnd != null ? +seg.panXEnd : px0;
+    const py1 = anim && seg.panYEnd != null ? +seg.panYEnd : py0;
+    posX = Math.max(0, Math.min(1, lerp(px0, px1)));
+    posY = Math.max(0, Math.min(1, lerp(py0, py1)));
+  }
+  const pos = (posX != null) ? ((posX*100).toFixed(3)+'% '+(posY*100).toFixed(3)+'%') : anchorPos(sr.anchor);
   v.style.objectPosition=pos; v.style.transformOrigin=pos; v.style.transform = z>1?`scale(${z})`:'none';
 }
 function showCap(text){ const o=$('#capOverlay'); if(text&&text.trim()){ o.querySelector('span').textContent=text; o.style.display='block'; } else { o.style.display='none'; } }
@@ -1327,6 +1344,11 @@ function renderTimeline(){
       <div class="cscrub-row">
         <label style="font-size:11px;display:flex;align-items:center;gap:4px" title="Include the clip's original audio in the render (mixed with any music/voiceover overlays)"><input type="checkbox" data-sa="srcAudio" ${s.srcAudio?'checked':''}> 🎤 Src audio</label>
         <label style="font-size:11px;display:flex;align-items:center;gap:4px;flex:1;opacity:${s.srcAudio?1:0.4}">vol <input type="range" data-sa="srcAudioVol" min="0" max="2" step="0.05" value="${s.srcAudioVol!=null?s.srcAudioVol:1}" style="flex:1;min-width:60px" ${s.srcAudio?'':'disabled'}> <span class="csct" style="min-width:32px">${Math.round((s.srcAudioVol!=null?s.srcAudioVol:1)*100)}%</span></label>
+      </div>
+      <div class="cscrub-row" title="Ken Burns: current zoom/pan is the START framing. Scrub or drag-frame the preview to set the END, then click 🎬 Set END. Preview + render animate linearly between them.">
+        <button class="mini cbtn" data-sa="kbEnd">🎬 Set END framing</button>
+        <button class="mini cbtn" data-sa="kbClear" ${s.zoomEnd==null&&s.panXEnd==null&&s.panYEnd==null?'disabled':''}>✕ Clear anim</button>
+        <span class="csct" style="flex:1;font-size:10px;color:var(--mut)">${(s.zoomEnd!=null||s.panXEnd!=null||s.panYEnd!=null)?('→ z'+(s.zoomEnd!=null?(+s.zoomEnd).toFixed(2)+'×':'—')+' · pan '+(s.panXEnd!=null?Math.round(s.panXEnd*100)+'%':'—')+'/'+(s.panYEnd!=null?Math.round(s.panYEnd*100)+'%':'—')):'no animation'}</span>
       </div>`;
     el.querySelector('.hd').onclick=()=>selectSeg(i);
     el.querySelectorAll('[data-f]').forEach(inp=>{
@@ -1363,7 +1385,7 @@ function renderTimeline(){
         b.onchange = () => { histCommit(); };
         return;
       }
-      // Buttons: play/in/out/full — same as before.
+      // Buttons: play/in/out/full/kbEnd/kbClear — same as before.
       b.onclick = (ev) => { ev.stopPropagation(); const t=parseFloat(cscrub.value)||0;
         if(a==='play'){ stop(); selectSeg(i); playRange(EDL.segments[i], ()=>{}); }
         else if(a==='in'){ s.in=Math.round(t*100)/100; renderTimeline(); selectSeg(i); toast('IN set to '+fmt(t)+'s'); }
@@ -1374,6 +1396,23 @@ function renderTimeline(){
           const src = MAN.byId && MAN.byId[s.id]; const full = src && src.dur ? +src.dur : (cdur || 60);
           histCommit(); s.in = 0; s.dur = Math.round(full*100)/100;
           renderTimeline(); selectSeg(i); toast('Segment set to full clip ('+fmt(s.dur)+'s)');
+        }
+        else if(a==='kbEnd'){
+          // Capture the CURRENT resolved framing as the END keyframe. START is whatever
+          // zoom/panX/panY already are on this segment. Preview + render will linearly
+          // interpolate zoom + pan across the clip's duration.
+          histCommit();
+          const sr = resolveSegment(s);
+          s.zoomEnd = +sr.zoom || 1;
+          s.panXEnd = sr.panX != null ? +sr.panX : (sr.anchor==='left'?0:sr.anchor==='right'?1:0.5);
+          s.panYEnd = sr.panY != null ? +sr.panY : (sr.anchor==='top'?0:sr.anchor==='bottom'?1:0.5);
+          renderTimeline(); selectSeg(i);
+          toast('END framing captured → z'+s.zoomEnd.toFixed(2)+'× pan '+Math.round(s.panXEnd*100)+'%/'+Math.round(s.panYEnd*100)+'%');
+        }
+        else if(a==='kbClear'){
+          histCommit();
+          delete s.zoomEnd; delete s.panXEnd; delete s.panYEnd;
+          renderTimeline(); selectSeg(i); toast('Animation cleared');
         }
       };
     });
@@ -1486,8 +1525,11 @@ function playRange(seg, onDone){
   if(!v){ return; }
   const watch=()=>{ if(my!==pbToken) return;
     if(v.currentTime>=end-0.03 || v.ended){ finish(); return; }
+    // Ken Burns: update framing every frame based on progress into the segment.
+    const p = Math.max(0, Math.min(1, (v.currentTime - start) / Math.max(0.001, srcDur)));
+    applyFraming(seg, v, p);
     segRaf=requestAnimationFrame(watch); };
-  const go=()=>{ if(my!==pbToken) return; v.onseeked=null; applyFraming(seg, v); showVid(seg.id); showCap(seg.cap);
+  const go=()=>{ if(my!==pbToken) return; v.onseeked=null; applyFraming(seg, v, 0); showVid(seg.id); showCap(seg.cap);
     // Toggle source-audio: unmute + set volume if the segment opted in, otherwise silence.
     try{ v.muted = !seg.srcAudio; if(seg.srcAudio) v.volume = Math.max(0, Math.min(1, (seg.srcAudioVol!=null?+seg.srcAudioVol:1))); }catch(_){}
     try{v.playbackRate=spd;}catch(_){} const p=v.play(); if(p&&p.catch) p.catch(()=>{}); segRaf=requestAnimationFrame(watch); };
@@ -1536,15 +1578,19 @@ function playTimeline(){
     }
     const spd=segSpeed(hit.seg);
     const s=hit.seg, v=getVid(s.id), want=(+s.in||0)+hit.off*spd;
+    // Ken Burns progress within THIS segment: hit.off is timeline seconds since seg.start,
+    // hit.dur is timeline seconds this seg occupies. Convert to source progress: (hit.off*spd) / (s.dur)
+    const _kbProg = Math.max(0, Math.min(1, (hit.off * spd) / Math.max(0.001, +s.dur || 0)));
     if(s!==curKey){                                     // entered a new (topmost) clip
       curKey=s;
       for(const k in vids){ if(vids[k]!==v){ try{vids[k].pause(); vids[k].muted=true;}catch(_){} } }
-      if(v){ applyFraming(s,v); showVid(s.id); try{v.playbackRate=spd;}catch(_){} try{v.currentTime=Math.max(0,want);}catch(_){}
+      if(v){ applyFraming(s,v,_kbProg); showVid(s.id); try{v.playbackRate=spd;}catch(_){} try{v.currentTime=Math.max(0,want);}catch(_){}
         // Segment source-audio: unmute + volume for the incoming clip, others stay muted.
         try{ v.muted = !s.srcAudio; if(s.srcAudio) v.volume = Math.max(0, Math.min(1, (s.srcAudioVol!=null?+s.srcAudioVol:1))); }catch(_){}
         const p=v.play(); if(p&&p.catch)p.catch(()=>{}); }
       showCap(s.cap);
-    } else if(v){                                      // same clip: keep it synced + playing
+    } else if(v){                                      // same clip: keep it synced + playing + reframe
+      applyFraming(s, v, _kbProg);
       if(v.playbackRate!==spd){ try{v.playbackRate=spd;}catch(_){} }
       if(Math.abs(v.currentTime-want)>0.35){ try{v.currentTime=Math.max(0,want);}catch(_){} }
       if(v.paused){ const p=v.play(); if(p&&p.catch)p.catch(()=>{}); }
