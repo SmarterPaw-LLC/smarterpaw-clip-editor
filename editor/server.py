@@ -2152,9 +2152,14 @@ def render(edl, out_dir=None, out_name=None, progress=None):
                 _off_src = flat_in - parent_in
                 _spd_val = min(10.0, max(0.1, float(seg.get("speed", 1) or 1)))
                 # Animation window inside the parent (source-seconds). Default 0..parent_dur.
+                # If the user's captured times produce a degenerate window (endT <= startT + 0.1s),
+                # fall back to the entire parent so the animation actually plays instead of
+                # instant-jumping to END. Mirrors the client rescue in applyFraming.
                 _kb_t0 = max(0.0, float(seg.get("kbStartT", 0.0)))
                 _kb_t1 = float(seg.get("kbEndT")) if seg.get("kbEndT") is not None else parent_dur
-                _kb_t1 = max(_kb_t0 + 0.001, min(parent_dur, _kb_t1))
+                _kb_t1 = max(0.0, min(parent_dur, _kb_t1))
+                if _kb_t1 - _kb_t0 < 0.1:
+                    _kb_t0, _kb_t1 = 0.0, parent_dur
                 _win = max(0.001, _kb_t1 - _kb_t0)
                 # elapsed source-seconds = (flat_in - parent_in) + t*spd
                 # Progress = clip((elapsed - t0) / (t1 - t0), 0, 1) so before t0 it's 0

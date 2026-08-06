@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.95.2</span>
+  <span class="ver" id="appVer">v1.96.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -852,8 +852,13 @@ function applyFraming(seg, v, tProgress){ v=v||vids[activeId]; if(!v) return;
   const hasEnd = seg.zoomEnd != null || seg.panXEnd != null || seg.panYEnd != null;
   const anim = hasStart && hasEnd;
   const dur = Math.max(0.001, +seg.dur || 1);
-  const t0 = Math.max(0, Math.min(dur, +seg.kbStartT || 0));
-  const t1 = Math.max(t0 + 0.001, Math.min(dur, seg.kbEndT != null ? +seg.kbEndT : dur));
+  // Robust animation window: if the user's captured times produce a degenerate window
+  // (endT <= startT + 0.1s, or the user just hit Set END without scrubbing), fall back
+  // to animating across the ENTIRE segment. Better to Do The Right Thing than to
+  // instant-jump to END. Same rescue in the server.
+  let t0 = Math.max(0, Math.min(dur, +seg.kbStartT || 0));
+  let t1 = seg.kbEndT != null ? Math.max(0, Math.min(dur, +seg.kbEndT)) : dur;
+  if(t1 - t0 < 0.1){ t0 = 0; t1 = dur; }
   const tNow = rawP * dur;
   const p = tNow <= t0 ? 0 : tNow >= t1 ? 1 : (tNow - t0) / (t1 - t0);
   const lerp = (a, b) => a + (b - a) * p;
@@ -1464,7 +1469,14 @@ function renderTimeline(){
           s.zoomEnd = +sr.zoom || 1;
           s.panXEnd = sr.panX != null ? +sr.panX : (sr.anchor==='left'?0:sr.anchor==='right'?1:0.5);
           s.panYEnd = sr.panY != null ? +sr.panY : (sr.anchor==='top'?0:sr.anchor==='bottom'?1:0.5);
-          const relT = Math.max(0, Math.min((+s.dur||0), t - (+s.in||0)));
+          let relT = Math.max(0, Math.min((+s.dur||0), t - (+s.in||0)));
+          // DWIM: if the scrub is very close to (or before) START, default END to the segment
+          // end. Prevents the "both endpoints at 0s → 0-length window → snap to END" bug.
+          const _startT = +s.kbStartT || 0;
+          if(relT <= _startT + 0.1){
+            relT = +s.dur || 1;
+            toast('Scrub was at 0s — END defaulted to end of clip ('+fmt(relT)+'s). Move scrub before Set END if you want a narrower window.');
+          }
           s.kbEndT = Math.round(relT * 100) / 100;
           renderTimeline(); selectSeg(i);
           toast('END @ '+fmt(s.kbEndT)+'s → z'+s.zoomEnd.toFixed(2)+'× pan '+Math.round(s.panXEnd*100)+'%/'+Math.round(s.panYEnd*100)+'%');
@@ -4123,6 +4135,32 @@ function buildClipBlock(o,total){ const i=o.idx, sg=o.seg;
   if(c && c.dur){ const realTL=Math.max(0,(c.dur-(+sg.in||0)))/segSpeed(sg);
     if(realTL < o.dur-0.05){ const fz=document.createElement('div'); fz.className='freeze';
       fz.style.left=(realTL/o.dur*100)+'%'; fz.style.width=((o.dur-realTL)/o.dur*100)+'%'; fz.title='Freeze frame — beyond the clip’s '+fmt(c.dur)+'s length'; fz.innerHTML='<span>❄ freeze</span>'; b.appendChild(fz); } }
+  // Ken Burns marker: when animation is armed (both endpoints captured), draw a horizontal
+  // band across the timeline bar showing the START..END window and label it "🎬 zs→ze". If
+  // the captured window is degenerate, we render across the whole bar (matches the runtime
+  // rescue in applyFraming).
+  const _hasKbStart = sg.zoomStart!=null || sg.panXStart!=null || sg.panYStart!=null;
+  const _hasKbEnd = sg.zoomEnd!=null || sg.panXEnd!=null || sg.panYEnd!=null;
+  if(_hasKbStart && _hasKbEnd){
+    const dur = +sg.dur || 1;
+    let t0 = Math.max(0, Math.min(dur, +sg.kbStartT||0));
+    let t1 = sg.kbEndT!=null ? Math.max(0, Math.min(dur, +sg.kbEndT)) : dur;
+    if(t1 - t0 < 0.1){ t0 = 0; t1 = dur; }
+    // The bar covers seg.dur / seg.speed TIMELINE seconds; convert source-t0..t1 to timeline pct.
+    const spd = segSpeed(sg);
+    const tlLeft = (t0 / spd) / (o.dur || 1) * 100;
+    const tlWidth = ((t1 - t0) / spd) / (o.dur || 1) * 100;
+    const kb = document.createElement('div'); kb.className = 'kbMarker';
+    kb.style.cssText = 'position:absolute;left:'+tlLeft.toFixed(2)+'%;width:'+tlWidth.toFixed(2)+'%;top:0;bottom:0;background:linear-gradient(90deg,rgba(240,168,48,0.18),rgba(240,168,48,0.38));border-left:2px solid #f0a830;border-right:2px solid #f0a830;pointer-events:none;z-index:1';
+    const _zs = (sg.zoomStart!=null?+sg.zoomStart:1).toFixed(2);
+    const _ze = (sg.zoomEnd!=null?+sg.zoomEnd:_zs).toFixed(2);
+    kb.title = '🎬 Ken Burns: '+_zs+'× → '+_ze+'× from '+fmt(t0)+'s to '+fmt(t1)+'s';
+    const lbl = document.createElement('span');
+    lbl.style.cssText = 'position:absolute;top:1px;left:3px;font-size:9px;color:#f0a830;font-weight:600;text-shadow:0 0 3px #000';
+    lbl.textContent = '🎬 '+_zs+'→'+_ze+'×';
+    kb.appendChild(lbl);
+    b.appendChild(kb);
+  }
   clipDragMulti(b,o);
   const hL=document.createElement('span'); hL.className='hL'; const hR=document.createElement('span'); hR.className='hR'; b.appendChild(hL); b.appendChild(hR);
   if(o.ch===0){ clipResize(hL,i,'l'); clipResize(hR,i,'r'); } else { clipResizeUpper(hL,o,'l'); clipResizeUpper(hR,o,'r'); }
