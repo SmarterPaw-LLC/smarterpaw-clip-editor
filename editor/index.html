@@ -82,7 +82,7 @@
   .blk.audclip .clipicons .cic:hover { opacity:1; }
   .blk.audclip .hL, .blk.audclip .hR { position:absolute; top:0; bottom:0; width:6px; cursor:ew-resize; background:#fff2; }
   .blk.audclip .hL { left:0; } .blk.audclip .hR { right:0; }
-  #audPickList .audrow { display:flex; align-items:center; gap:8px; padding:5px 8px; border-bottom:1px solid var(--line); cursor:default; font-size:12px; }
+  #audPickList .audrow { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:5px 8px; border-bottom:1px solid var(--line); cursor:default; font-size:12px; }
   #audPickList .audrow:last-child { border-bottom:none; }
   #audPickList .audrow:hover { background:rgba(255,255,255,0.04); }
   #audPickList .audrow .nm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.89.1</span>
+  <span class="ver" id="appVer">v1.90.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1786,14 +1786,23 @@ function renderAudPickList(){
       : '';
     row.innerHTML=`<span class="kind ${it.kind}">${kindLbl}</span><span class="nm" title="${it.name}">${it.name.replace(/\.(mp3|m4a|wav|ogg|aac|flac)$/i,'')}</span>
       ${thumbsHtml}
-      <button class="mini" data-act="preview" title="Preview (play/stop)">▶</button>
+      <button class="mini" data-act="preview" title="Preview (play/stop) — expands a full player with scrub bar">▶</button>
       ${delHtml}
-      <button class="mini primary" data-act="add">＋ Add at playhead</button>`;
+      <button class="mini primary" data-act="add">＋ Add at playhead</button>
+      <audio data-act="player" preload="metadata" controls style="display:none;flex-basis:100%;width:100%;height:32px;margin-top:6px" src="/${encodeURI(it.src)}"></audio>`;
     row.querySelector('[data-act="add"]').onclick=()=>addAudioAtPlayhead(it.src);
-    let prev=null; row.querySelector('[data-act="preview"]').onclick=ev=>{ const btn=ev.currentTarget;
-      if(prev){ prev.pause(); prev=null; btn.textContent='▶'; return; }
-      prev=new Audio('/'+encodeURI(it.src)); prev.volume=0.6; prev.play().catch(()=>{}); btn.textContent='■';
-      prev.onended=()=>{ prev=null; btn.textContent='▶'; }; };
+    // Preview toggle: shows/hides the native <audio> player (has built-in scrub, seek, mute).
+    // Auto-pauses any other row's player when this one opens so previews don't stack.
+    const player = row.querySelector('[data-act="player"]');
+    player.volume = 0.6;
+    row.querySelector('[data-act="preview"]').onclick=ev=>{ const btn=ev.currentTarget;
+      const wasHidden = player.style.display === 'none';
+      // Stop every other preview in the picker
+      document.querySelectorAll('#audPickList audio[data-act="player"]').forEach(a => { if(a !== player){ try{a.pause();}catch(_){} a.style.display='none'; }});
+      document.querySelectorAll('#audPickList [data-act="preview"]').forEach(b => { if(b !== btn) b.textContent='▶'; });
+      if(wasHidden){ player.style.display=''; player.play().catch(()=>{}); btn.textContent='■'; }
+      else { try{player.pause();}catch(_){} player.style.display='none'; btn.textContent='▶'; }
+      player.onended=()=>{ btn.textContent='▶'; }; };
     // Thumbs: toggle if already set, else apply. Persists via /api/music/rate; MAN.musicRatings
     // is what the periodic manifest reload reads, so we merge locally too for immediate feedback.
     const _rate = async next => {
