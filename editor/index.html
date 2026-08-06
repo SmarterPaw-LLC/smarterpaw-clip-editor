@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.96.0</span>
+  <span class="ver" id="appVer">v1.97.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -852,15 +852,13 @@ function applyFraming(seg, v, tProgress){ v=v||vids[activeId]; if(!v) return;
   const hasEnd = seg.zoomEnd != null || seg.panXEnd != null || seg.panYEnd != null;
   const anim = hasStart && hasEnd;
   const dur = Math.max(0.001, +seg.dur || 1);
-  // Robust animation window: if the user's captured times produce a degenerate window
-  // (endT <= startT + 0.1s, or the user just hit Set END without scrubbing), fall back
-  // to animating across the ENTIRE segment. Better to Do The Right Thing than to
-  // instant-jump to END. Same rescue in the server.
-  let t0 = Math.max(0, Math.min(dur, +seg.kbStartT || 0));
-  let t1 = seg.kbEndT != null ? Math.max(0, Math.min(dur, +seg.kbEndT)) : dur;
-  if(t1 - t0 < 0.1){ t0 = 0; t1 = dur; }
+  // Animation window (source-seconds within the segment). Both times are user-controlled
+  // via the number inputs, so no auto-rescue — if t1 <= t0 the transition is instant.
+  const t0 = Math.max(0, Math.min(dur, +seg.kbStartT || 0));
+  const t1 = Math.max(t0, Math.min(dur, seg.kbEndT != null ? +seg.kbEndT : dur));
+  const win = Math.max(0.001, t1 - t0);
   const tNow = rawP * dur;
-  const p = tNow <= t0 ? 0 : tNow >= t1 ? 1 : (tNow - t0) / (t1 - t0);
+  const p = tNow <= t0 ? 0 : tNow >= t1 ? 1 : (tNow - t0) / win;
   const lerp = (a, b) => a + (b - a) * p;
   // When animating: START comes from dedicated zoomStart/panXStart/panYStart (captured by
   // Set START, immune to reframe-drag clobber). When NOT animating: use the base zoom/panX/panY
@@ -1326,6 +1324,33 @@ function layout(){ const base=clipBounds(); const all=base.bounds.map(o=>Object.
 function topAt(t){ let best=null; layout().all.forEach(o=>{ if(o.seg&&o.seg.hidden) return; if(t>=o.start && t<o.end){ if(!best||o.ch>best.ch||(o.ch===best.ch&&o.idx>best.idx)) best=o; } });
   if(!best) return null; return {seg:best.seg, off:t-best.start, dur:best.dur, ch:best.ch}; }
 function totalDur(){ const ec=normEndcard(EDL.settings); return layout().vidTotal + (ec.enabled?ec.dur:0); }
+function _kbNum(s, side){
+  // Value for the time input; defaults to 0 for start and seg.dur for end when unset.
+  if(side === 'start') return (+s.kbStartT || 0).toFixed(2);
+  return (s.kbEndT != null ? +s.kbEndT : (+s.dur || 0)).toFixed(2);
+}
+function _kbEmpty(s){
+  return s.zoomEnd == null && s.panXEnd == null && s.panYEnd == null
+      && s.zoomStart == null && s.panXStart == null && s.panYStart == null
+      && s.kbStartT == null && s.kbEndT == null;
+}
+function _kbSummary(s, side){
+  // Compact "✓ z2.19× · 20%/30%" or "not captured" line next to the button.
+  if(side === 'start'){
+    const has = s.zoomStart != null || s.panXStart != null || s.panYStart != null;
+    if(!has) return 'not captured';
+    const z = (s.zoomStart != null ? +s.zoomStart : 1).toFixed(2);
+    const px = Math.round((s.panXStart != null ? +s.panXStart : 0.5) * 100);
+    const py = Math.round((s.panYStart != null ? +s.panYStart : 0.5) * 100);
+    return '✓ z' + z + '× · ' + px + '%/' + py + '%';
+  }
+  const has = s.zoomEnd != null || s.panXEnd != null || s.panYEnd != null;
+  if(!has) return 'not captured';
+  const z = s.zoomEnd != null ? (+s.zoomEnd).toFixed(2) + '×' : '-';
+  const px = s.panXEnd != null ? Math.round(+s.panXEnd * 100) + '%' : '-';
+  const py = s.panYEnd != null ? Math.round(+s.panYEnd * 100) + '%' : '-';
+  return '✓ z' + z + ' · ' + px + '/' + py;
+}
 function _kbLabel(s, side){
   // Small helper for the START/END status line under the Ken Burns buttons — keeps the
   // template literal readable (nested ternaries there triggered a parse issue).
@@ -1391,14 +1416,16 @@ function renderTimeline(){
         <label style="font-size:11px;display:flex;align-items:center;gap:4px" title="Include the clip's original audio in the render (mixed with any music/voiceover overlays)"><input type="checkbox" data-sa="srcAudio" ${s.srcAudio?'checked':''}> 🎤 Src audio</label>
         <label style="font-size:11px;display:flex;align-items:center;gap:4px;flex:1;opacity:${s.srcAudio?1:0.4}">vol <input type="range" data-sa="srcAudioVol" min="0" max="2" step="0.05" value="${s.srcAudioVol!=null?s.srcAudioVol:1}" style="flex:1;min-width:60px" ${s.srcAudio?'':'disabled'}> <span class="csct" style="min-width:32px">${Math.round((s.srcAudioVol!=null?s.srcAudioVol:1)*100)}%</span></label>
       </div>
-      <div class="cscrub-row" title="Ken Burns: scrub or drag-frame the preview, then click 🎬 Set START (captures scrub time + framing as anim start) and 🎬 Set END (captures scrub time + framing as anim end). Before START and after END the framing holds; between them it interpolates.">
-        <button class="mini cbtn" data-sa="kbStart">🎬 Set START @ scrub</button>
-        <button class="mini cbtn" data-sa="kbEnd">🎬 Set END @ scrub</button>
-        <button class="mini cbtn" data-sa="kbClear" ${s.zoomEnd==null&&s.panXEnd==null&&s.panYEnd==null?'disabled':''}>✕ Clear anim</button>
+      <div class="cscrub-row" style="gap:6px;flex-wrap:wrap" title="Ken Burns animation. Type START and END times in seconds (within this clip). Use ⧉ Capture to snapshot the current preview framing at each endpoint. Animation only fires when BOTH framings are captured.">
+        <label style="font-size:11px;display:flex;align-items:center;gap:3px">START at <input type="number" min="0" step="0.1" data-sa="kbStartTNum" value="${_kbNum(s,'start')}" style="width:52px"> s</label>
+        <button class="mini cbtn" data-sa="kbStart" title="Snapshot the current preview framing as the START keyframe (zoom + pan). Uses the START time above, not the scrub position.">⧉ Capture START</button>
+        <span style="font-size:10px;color:var(--mut)">${_kbSummary(s,'start')}</span>
       </div>
-      <div class="cscrub-row" style="font-size:10px;color:var(--mut);gap:12px">
-        <span>${_kbLabel(s,'start')}</span>
-        <span>${_kbLabel(s,'end')}</span>
+      <div class="cscrub-row" style="gap:6px;flex-wrap:wrap">
+        <label style="font-size:11px;display:flex;align-items:center;gap:3px">END at <input type="number" min="0" step="0.1" data-sa="kbEndTNum" value="${_kbNum(s,'end')}" style="width:52px"> s</label>
+        <button class="mini cbtn" data-sa="kbEnd" title="Snapshot the current preview framing as the END keyframe. Uses the END time above.">⧉ Capture END</button>
+        <span style="font-size:10px;color:var(--mut)">${_kbSummary(s,'end')}</span>
+        <button class="mini cbtn" data-sa="kbClear" ${_kbEmpty(s)?'disabled':''} style="margin-left:auto">✕ Clear anim</button>
       </div>`;
     el.querySelector('.hd').onclick=()=>selectSeg(i);
     el.querySelectorAll('[data-f]').forEach(inp=>{
@@ -1426,6 +1453,24 @@ function renderTimeline(){
         };
         return;
       }
+      // Ken Burns time inputs: direct-edit the animation START/END time in seconds. Clamp to
+      // 0..seg.dur so users can't type past the clip length.
+      if(a === 'kbStartTNum'){
+        b.onchange = (ev) => { ev.stopPropagation(); histCommit();
+          const dur = +s.dur || 1;
+          s.kbStartT = Math.max(0, Math.min(dur, parseFloat(b.value) || 0));
+          renderTimeline(); selectSeg(i);
+        };
+        return;
+      }
+      if(a === 'kbEndTNum'){
+        b.onchange = (ev) => { ev.stopPropagation(); histCommit();
+          const dur = +s.dur || 1;
+          s.kbEndT = Math.max(0, Math.min(dur, parseFloat(b.value) || 0));
+          renderTimeline(); selectSeg(i);
+        };
+        return;
+      }
       // Volume slider: 0..2 → clamp to 1 for <video> (which caps at 1); store the true value for render.
       if(a === 'srcAudioVol'){
         b.oninput = (ev) => { ev.stopPropagation(); const v = parseFloat(b.value)||0; s.srcAudioVol = v;
@@ -1448,39 +1493,33 @@ function renderTimeline(){
           renderTimeline(); selectSeg(i); toast('Segment set to full clip ('+fmt(s.dur)+'s)');
         }
         else if(a==='kbStart'){
-          // Capture the scrub position (as source-seconds within the segment) as the animation
-          // START time, and the current framing as the START keyframe. Stored in dedicated
-          // zoomStart/panXStart/panYStart fields so a later "reframe for END" drag (which writes
-          // to s.zoom/panX/panY) doesn't clobber the captured START values.
+          // Capture the CURRENT preview framing as the START keyframe. Time is controlled
+          // separately via the kbStartTNum input — this button only snapshots framing.
           histCommit();
           const sr = resolveSegment(s);
           s.zoomStart = +sr.zoom || 1;
           s.panXStart = sr.panX != null ? +sr.panX : (sr.anchor==='left'?0:sr.anchor==='right'?1:0.5);
           s.panYStart = sr.panY != null ? +sr.panY : (sr.anchor==='top'?0:sr.anchor==='bottom'?1:0.5);
-          const relT = Math.max(0, Math.min((+s.dur||0), t - (+s.in||0)));
-          s.kbStartT = Math.round(relT * 100) / 100;
+          // Default the time to 0 if the user hasn't set it yet.
+          if(s.kbStartT == null) s.kbStartT = 0;
           renderTimeline(); selectSeg(i);
-          toast('START @ '+fmt(s.kbStartT)+'s → z'+s.zoomStart.toFixed(2)+'× pan '+Math.round(s.panXStart*100)+'%/'+Math.round(s.panYStart*100)+'%');
+          toast('START framing captured → z'+s.zoomStart.toFixed(2)+'× pan '+Math.round(s.panXStart*100)+'%/'+Math.round(s.panYStart*100)+'% (time is '+fmt(s.kbStartT)+'s — edit above)');
         }
         else if(a==='kbEnd'){
-          // Capture the scrub position as animation END time, and the current framing as END keyframe.
+          // Capture the CURRENT preview framing as the END keyframe. Time is controlled
+          // separately via the kbEndTNum input.
           histCommit();
           const sr = resolveSegment(s);
           s.zoomEnd = +sr.zoom || 1;
           s.panXEnd = sr.panX != null ? +sr.panX : (sr.anchor==='left'?0:sr.anchor==='right'?1:0.5);
           s.panYEnd = sr.panY != null ? +sr.panY : (sr.anchor==='top'?0:sr.anchor==='bottom'?1:0.5);
-          let relT = Math.max(0, Math.min((+s.dur||0), t - (+s.in||0)));
-          // DWIM: if the scrub is very close to (or before) START, default END to the segment
-          // end. Prevents the "both endpoints at 0s → 0-length window → snap to END" bug.
-          const _startT = +s.kbStartT || 0;
-          if(relT <= _startT + 0.1){
-            relT = +s.dur || 1;
-            toast('Scrub was at 0s — END defaulted to end of clip ('+fmt(relT)+'s). Move scrub before Set END if you want a narrower window.');
-          }
-          s.kbEndT = Math.round(relT * 100) / 100;
+          // Default the END time to seg.dur if the user hasn't set it yet.
+          if(s.kbEndT == null) s.kbEndT = +s.dur || 1;
           renderTimeline(); selectSeg(i);
-          toast('END @ '+fmt(s.kbEndT)+'s → z'+s.zoomEnd.toFixed(2)+'× pan '+Math.round(s.panXEnd*100)+'%/'+Math.round(s.panYEnd*100)+'%');
+          toast('END framing captured → z'+s.zoomEnd.toFixed(2)+'× pan '+Math.round(s.panXEnd*100)+'%/'+Math.round(s.panYEnd*100)+'% (time is '+fmt(s.kbEndT)+'s — edit above)');
         }
+        else if(a==='kbStartTNum'){ /* handled by onchange below */ }
+        else if(a==='kbEndTNum'){ /* handled by onchange below */ }
         else if(a==='kbClear'){
           histCommit();
           delete s.zoomEnd; delete s.panXEnd; delete s.panYEnd;
