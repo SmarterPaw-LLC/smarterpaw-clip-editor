@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.92.0</span>
+  <span class="ver" id="appVer">v1.93.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2104,7 +2104,7 @@ function buildAudioBar(a, total){
     const off  = Math.max(0, Math.min(100, (srcIn / visSpan) * 100));
     // v param busts browser cache when we ship new render params on the server side. Any old
     // `max-age` entry is keyed on the previous URL and is now orphaned.
-    b.style.backgroundImage = 'url("/api/waveform?src=' + encodeURIComponent(a.src) + '&v=5")';
+    b.style.backgroundImage = 'url("/api/waveform?src=' + encodeURIComponent(a.src) + '&v=6")';
     b.style.backgroundRepeat = 'no-repeat';
     b.style.backgroundSize = zoom.toFixed(2) + '% 100%';
     b.style.backgroundPosition = off.toFixed(2) + '% center';
@@ -3992,6 +3992,23 @@ function splitAudioAtPlayhead(a){
 function buildClipBlock(o,total){ const i=o.idx, sg=o.seg;
   const b=document.createElement('div'); b.dataset.segidx=i; b.className='blk clip'+(i===sel?' sel':'')+(_msel.includes(sg)?' msel':'')+(o.ch===0&&sg.editMode==='free'?' free':'')+(sg.hidden?' clhidden':'')+(sg.locked?' cllocked':'');
   b.style.left=(o.start/total*100)+'%'; b.style.width=(o.dur/total*100)+'%'; const c=MAN.byId[sg.id];
+  // Waveform background when this segment has 🎤 Src audio on — same server endpoint, same math
+  // as the audio bars. Cropped to show only the sg.in..sg.in+sg.dur slice of the clip's audio.
+  if(sg.srcAudio && c && c.url){
+    const srcDur = +c.dur || 0;   // MAN.byId dur is already probed by the server
+    const clipSrc = (c.url||'').replace(/^\//,'');   // /sources/clips/x.mp4 → sources/clips/x.mp4
+    if(srcDur > 0 && clipSrc){
+      const srcIn = Math.max(0, Math.min(+sg.in||0, srcDur));
+      const barDurSrc = Math.max(0.01, +sg.dur||0);   // segments store dur in SOURCE seconds
+      const zoom = Math.max(100, (srcDur / barDurSrc) * 100);
+      const visSpan = Math.max(0.001, srcDur - barDurSrc);
+      const off = Math.max(0, Math.min(100, (srcIn / visSpan) * 100));
+      b.style.backgroundImage = 'url("/api/waveform?src=' + encodeURIComponent(clipSrc) + '&v=6")';
+      b.style.backgroundRepeat = 'no-repeat';
+      b.style.backgroundSize = zoom.toFixed(2) + '% 100%';
+      b.style.backgroundPosition = off.toFixed(2) + '% center';
+    }
+  }
   const txt=document.createElement('span'); txt.className='clbl'; txt.textContent=(i+1)+'. '+(((c&&c.label)||sg.id).slice(0,16)); b.appendChild(txt);
   b.title=txt.textContent+(sg.hidden?' (hidden)':'')+(sg.locked?' (locked)':'');
   // freeze-frame region: any timeline length beyond the source clip's available footage holds the last frame

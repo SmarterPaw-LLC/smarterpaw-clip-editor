@@ -2446,19 +2446,19 @@ class Handler(BaseHTTPRequestHandler):
             # v3 = white filled waveform on transparent bg, sqrt-scaled amplitude so quiet tracks
             # aren't invisible. Bump this suffix whenever the render params change so stale cached
             # PNGs get regenerated instead of served forever.
-            key = re.sub(r"[^A-Za-z0-9]+", "_", src) + f"_{mtime}_{size}_v5.png"
+            key = re.sub(r"[^A-Za-z0-9]+", "_", src) + f"_{mtime}_{size}_v6.png"
             cache_path = os.path.join(cache_dir, key)
             if not os.path.exists(cache_path):
                 # 2000px wide is enough that even a heavily-cropped slice still reads well.
                 # Transparent bg + solid accent color = clean overlay on the bar's own tint.
-                # White filled waveform on transparent bg. This is VISUALIZATION not audio — we
-                # want the waveform to fill the bar top-to-bottom regardless of source loudness.
-                # volume=10 pre-amp guarantees anything above -20dB clips to full amplitude, which
-                # is what fills the render. dynaudnorm dropped — it flattens transients and made
-                # showwavespic pick suppressed values per column.
+                # White filled waveform on transparent bg. VISUALIZATION only — we want peaks that
+                # fill the bar regardless of source loudness. Two-stage boost:
+                #   1) dynaudnorm normalizes rolling loudness so quiet ambient video audio and loud
+                #      mastered music both hit similar peak levels
+                #   2) volume=8 pre-amp on top guarantees the normalized signal saturates fully
                 # PNG is 2000x60; sampled to a ~24px bar it downscales cleanly without moiré.
                 r = run([FFMPEG, "-y", "-loglevel", "error", "-i", ap,
-                         "-filter_complex", "aformat=channel_layouts=mono,volume=10,showwavespic=s=2000x60:colors=white:draw=full",
+                         "-filter_complex", "aformat=channel_layouts=mono,dynaudnorm=f=150:g=15:p=0.9,volume=8,showwavespic=s=2000x60:colors=white:draw=full",
                          "-frames:v", "1", cache_path])
                 if r.returncode != 0 or not os.path.exists(cache_path):
                     return self._json({"error": "waveform failed: " + r.stderr[-400:]}, 500)
