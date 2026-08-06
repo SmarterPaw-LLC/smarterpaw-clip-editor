@@ -2170,21 +2170,21 @@ def render(edl, out_dir=None, out_name=None, progress=None):
                 pxe = f"({px_s:.6f}+({px_e - px_s:.6f})*{p_expr})"
                 pye = f"({py_s:.6f}+({py_e - py_s:.6f})*{p_expr})"
                 # Pre-fit source to canvas (cover + center crop) so zoompan operates on a
-                # WxH input matching the canvas aspect. Force 60fps BEFORE zoompan — with
-                # d=1, zoompan emits one output frame per input frame, so a 30fps input at
-                # 60fps output plays at 2×. After zoompan, another fps=60 normalizes.
-                # Pan formula: zoompan's x/y are in SOURCE image coordinates (not scaled-up).
-                # At panY=0 the viewport starts at source y=0 (top); at panY=1 it starts at
-                # source y = ih - ih/zoom (bottom of what fits). So `y = (ih - ih/zoom)*panY`.
-                # This matches the CSS transform-origin semantics used in the preview.
+                # WxH input matching the canvas aspect. Force 60fps BEFORE zoompan.
+                # CRITICAL: zoompan's fps= parameter DEFAULTS TO 25 — without setting it to
+                # 60 here, the render duration stretches by 60/25 = 2.4× (8.7s clip becomes
+                # 20.8s output at 25fps). Setting fps=60 inside zoompan keeps duration honest.
+                # Pan formula: zoompan's x/y are in SOURCE image coordinates. At panY=0 the
+                # viewport starts at source y=0; at panY=1 it starts at ih-ih/zoom. This
+                # matches the CSS transform-origin semantics used in the preview.
                 base = (
                     f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps=60,"
                     f"zoompan="
                     f"z='{z_expr}':"
                     f"x='(iw-iw/zoom)*({pxe})':"
                     f"y='(ih-ih/zoom)*({pye})':"
-                    f"d=1:s={W}x{H},"
-                    f"fps=60,setsar=1,format=yuv420p"
+                    f"d=1:s={W}x{H}:fps=60,"
+                    f"setsar=1,format=yuv420p"
                 )
             else:
                 sw, sh = math.ceil(W * z), math.ceil(H * z)
