@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.97.4</span>
+  <span class="ver" id="appVer">v1.98.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2073,6 +2073,7 @@ function audSyncEditor(){
     <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
       <button class="mini" id="audE_del">✕ Delete</button>
       <button class="mini" id="audE_captions" style="display:none" title="Split the voiceover's script into chunks and drop them as timed text overlays on the timeline (synced to this audio clip's start/duration)">💬 Generate captions</button>
+      <button class="mini" id="audE_capsClear" style="display:none;color:#e08b8b" title="Remove all auto-generated captions for THIS voiceover clip. Click Generate again to make a fresh batch after tweaking the script.">✕ Clear captions</button>
     </div>`;
   const upd=(k,v)=>{ a[k]=v; audSyncPreview(); renderTracks(); };
   $('#audE_start').oninput=e=>{ upd('start', Math.max(0, parseFloat(e.target.value)||0)); };
@@ -2096,8 +2097,15 @@ function audSyncEditor(){
   const _voiceFilename = meta.kind === 'voiceover' ? meta.name : null;
   if(_voiceFilename && $('#audE_captions')){
     const _script = (MAN.voiceoverScripts || {})[_voiceFilename] || null;
+    // Count captions already generated for THIS voiceover clip so we can offer a clear button
+    // and adjust the primary label ("Generate" vs "Regenerate").
+    const _existingCaps = (EDL.overlays || []).filter(o => o && o._capOf === a.id);
+    const _hasExisting = _existingCaps.length > 0;
     $('#audE_captions').style.display = '';
-    $('#audE_captions').textContent = _script ? '💬 Generate captions' : '💬 Add captions (paste script)';
+    $('#audE_captions').textContent = _hasExisting
+      ? ('💬 Regenerate captions ('+_existingCaps.length+')')
+      : (_script ? '💬 Generate captions' : '💬 Add captions (paste script)');
+    $('#audE_captions').title = 'Captions land on a fresh channel above your video so they don\'t clog the main lane. Each is a text overlay you can click to tweak (Enter for a new line). Re-clicking removes the previous batch first.';
     $('#audE_captions').onclick = () => {
       let script = _script;
       if(!script){
@@ -2105,8 +2113,26 @@ function audSyncEditor(){
         if(!script || !script.trim()) return;
         script = script.trim();
       }
+      // Regenerate = clear old ones first so we don't stack duplicates.
+      if(_hasExisting){
+        histCommit();
+        EDL.overlays = (EDL.overlays || []).filter(o => !o || o._capOf !== a.id);
+      }
       _generateCaptionsForAudio(a, script);
     };
+    // Standalone "Clear captions" button — shown only when captions exist for this clip.
+    if($('#audE_capsClear')){
+      $('#audE_capsClear').style.display = _hasExisting ? '' : 'none';
+      $('#audE_capsClear').onclick = () => {
+        if(!confirm('Remove '+_existingCaps.length+' auto-generated caption(s) for "'+meta.name+'"?')) return;
+        histCommit();
+        EDL.overlays = (EDL.overlays || []).filter(o => !o || o._capOf !== a.id);
+        renderOverlays(playhead); renderOvList(); renderTracks(); audSyncEditor();
+        toast('Removed '+_existingCaps.length+' caption(s)');
+      };
+    }
+  } else if($('#audE_capsClear')){
+    $('#audE_capsClear').style.display = 'none';
   }
   // Load source duration so the srcIn slider can cap at (source-length − clip.dur)
   const _srcLen = $('#audE_srcLen'), _in = $('#audE_in'), _inNum = $('#audE_inNum');
@@ -2200,6 +2226,11 @@ function _generateCaptionsForAudio(a, script){
   const audioStart = +a.start || 0, audioDur = +a.dur || 0;
   if(audioDur < 0.3){ toast('Audio clip too short for captions'); return; }
   histCommit();
+  // Bump total channels to reserve a fresh lane ABOVE all existing content — captions sit on
+  // their own row so they don't clog Ch 0 with your video. Each caption becomes a text
+  // overlay tagged with _capOf=audio.id so we can find + remove the whole batch later.
+  const capChannel = chCount();
+  EDL.channels = capChannel + 1;
   // Weight each chunk's duration by its character count so timing tracks the actual speech.
   const totalChars = chunks.reduce((n, c) => n + Math.max(1, c.length), 0);
   let acc = 0;
@@ -2209,6 +2240,7 @@ function _generateCaptionsForAudio(a, script){
     const d = Math.max(0.4, audioDur * share);   // minimum 0.4s per caption so they're readable
     const o = {
       id: uid(), type: 'text', text: txt,
+      _capOf: a.id,                                // provenance tag — lets Clear/Regenerate find this batch
       x: 0.5, y: 0.85,                             // bottom-center — standard caption position
       size: 0.048, color: '#ffffff',
       style: 'sticker', font: 'cooper',
@@ -2216,7 +2248,7 @@ function _generateCaptionsForAudio(a, script){
       bleed: 0.28, kerning: 0.02, lineGap: 0.08,
       start: Math.round((audioStart + acc) * 100) / 100,
       dur:   Math.round(d * 100) / 100,
-      opacity: 1, rot: 0, ch: 0,
+      opacity: 1, rot: 0, ch: capChannel,          // dedicated caption lane — not Ch 0
       anims: [{type:'fadeIn', d:0.15}, {type:'fadeOut', d:0.15}],
     };
     EDL.overlays = EDL.overlays || [];
@@ -2224,8 +2256,8 @@ function _generateCaptionsForAudio(a, script){
     created.push(o.id);
     acc += d;
   });
-  renderOverlays(playhead); renderOvList(); renderTracks(); histCommit();
-  toast('Added '+created.length+' caption'+(created.length!==1?'s':'')+' timed to voiceover');
+  renderOverlays(playhead); renderOvList(); renderTracks(); audSyncEditor(); histCommit();
+  toast('Added '+created.length+' caption'+(created.length!==1?'s':'')+' on Ch '+capChannel+' — click any to edit; use ✕ Clear captions to remove');
 }
 // Build the on-timeline bar for one audio clip (drag-to-move, resize handles, hide/lock/delete icons)
 // Hash the audio src to a stable hue (0-359) so every distinct file gets a unique color, and
