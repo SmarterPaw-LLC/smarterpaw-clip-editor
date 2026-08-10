@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.98.1</span>
+  <span class="ver" id="appVer">v1.99.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2274,9 +2274,9 @@ async function _generateCaptionsForAudio(a, script){
       _capOf: a.id,                                // provenance tag — lets Clear/Regenerate find this batch
       x: 0.5, y: 0.85,                             // bottom-center — standard caption position
       size: 0.048, color: '#ffffff',
-      style: 'sticker', font: 'cooper',
-      gradStart: '#000000', gradEnd: '#000000',    // black outline sticker = readable over anything
-      bleed: 0.28, kerning: 0.02, lineGap: 0.08,
+      style: 'caption',                            // dark-bg subtitle look; supports \n for line breaks
+      font: 'arial',                               // clean sans for subtitles (readable > branded)
+      capBg: '#000000', capBgOpacity: 0.72,        // classic subtitle: black at ~72% opacity
       start: Math.round((audioStart + acc) * 100) / 100,
       dur:   Math.round(d * 100) / 100,
       opacity: 1, rot: 0, ch: capChannel,          // dedicated caption lane — not Ch 0
@@ -2681,15 +2681,34 @@ function buildStickerCanvas(o){
 function buildTextOverlayCanvas(o){
   const exportW=(CANVAS_PX[EDL.settings.canvas]||[1080,1920])[0];
   const size=Math.max(8,(o.size||0.06)*exportW), fam=(FONTS[o.font]||FONTS.cooper), font='800 '+size+'px '+fam;
-  const text=(o.text||'').replace(/\n/g,' ');
+  const isCaption=o.style==='caption';
+  // Caption preserves newlines for multi-line subtitles; plain/button collapse to one line as before.
+  const lines=isCaption ? String(o.text||'').replace(/\r/g,'').split('\n') : [(o.text||'').replace(/\n/g,' ')];
   const m=document.createElement('canvas').getContext('2d'); m.font=font;
-  const tw=Math.max(1,m.measureText(text).width);
+  let maxTw = 0;
+  for(const L of lines){ maxTw = Math.max(maxTw, m.measureText(L).width); }
+  const tw=Math.max(1, maxTw);
   const rr=(c,x,y,w,hh,r)=>{ r=Math.min(r,w/2,hh/2); c.beginPath(); c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+hh,r); c.arcTo(x+w,y+hh,x,y+hh,r); c.arcTo(x,y+hh,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath(); };
   const sh=o.shadow||{}, useSh=!!sh.on;
   const shCol=hexA(sh.color||'#000000', sh.opacity!=null?sh.opacity:0.5);
   const shBlur=(sh.blur!=null?sh.blur:0.01)*exportW, shDx=(sh.dx!=null?sh.dx:0.004)*exportW, shDy=(sh.dy!=null?sh.dy:0.006)*exportW;
   let cw,ch,cv,c;
-  if(o.button){   // preview: bg rect + padding + radius, NO text shadow (plus optional drop-shadow)
+  if(isCaption){   // subtitle-style: dark translucent bg box + white text, supports \n lines
+    const padX=size*0.55, padY=size*0.30, rad=size*0.24, lineH=size*1.2;
+    const pad=Math.ceil(useSh ? (shBlur+Math.max(Math.abs(shDx),Math.abs(shDy))) : 0)+4;
+    cw=Math.ceil(tw+padX*2+pad*2);
+    ch=Math.ceil(lineH*lines.length+padY*2+pad*2);
+    cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; c=cv.getContext('2d'); c.font=font;
+    const bw=cw-pad*2, bh=ch-pad*2;
+    // Caption bg color/opacity: overrides via o.capBg (hex) and o.capBgOpacity (0..1); defaults = classic subtitle look.
+    const bgHex = o.capBg || '#000000';
+    const bgOp = o.capBgOpacity != null ? +o.capBgOpacity : 0.72;
+    if(useSh){ c.save(); c.shadowColor=shCol; c.shadowBlur=shBlur; c.shadowOffsetX=shDx; c.shadowOffsetY=shDy; c.fillStyle=hexA(bgHex, bgOp); rr(c,pad,pad,bw,bh,rad); c.fill(); c.restore(); }
+    c.fillStyle=hexA(bgHex, bgOp); rr(c,pad,pad,bw,bh,rad); c.fill();
+    c.fillStyle=o.color||'#ffffff'; c.textAlign='center'; c.textBaseline='middle';
+    const baseY = pad+padY+lineH/2;
+    lines.forEach((L, i) => c.fillText(L, cw/2, baseY + i*lineH));
+  } else if(o.button){   // preview: bg rect + padding + radius, NO text shadow (plus optional drop-shadow)
     const padX=size*0.55, padY=size*0.38, rad=size*0.3;
     const pad=Math.ceil(useSh ? (shBlur+Math.max(Math.abs(shDx),Math.abs(shDy))) : 0)+4;
     cw=Math.ceil(tw+padX*2+pad*2); ch=Math.ceil(size*1.25+padY*2+pad*2);
@@ -2697,14 +2716,14 @@ function buildTextOverlayCanvas(o){
     const bw=cw-pad*2, bh=ch-pad*2;
     if(useSh){ c.save(); c.shadowColor=shCol; c.shadowBlur=shBlur; c.shadowOffsetX=shDx; c.shadowOffsetY=shDy; c.fillStyle=o.bg||'#f07830'; rr(c,pad,pad,bw,bh,rad); c.fill(); c.restore(); }
     c.fillStyle=o.bg||'#f07830'; rr(c,pad,pad,bw,bh,rad); c.fill();
-    c.fillStyle=o.color||'#ffffff'; c.textAlign='center'; c.textBaseline='middle'; c.fillText(text,cw/2,ch/2+size*0.03);
+    c.fillStyle=o.color||'#ffffff'; c.textAlign='center'; c.textBaseline='middle'; c.fillText(lines[0]||'',cw/2,ch/2+size*0.03);
   } else {   // preview: soft drop shadow (CSS textShadow ~0 2px 6px on the scaled-down stage) + optional drop-shadow
     const softBlur=exportW*0.012, softDy=exportW*0.0045;
     const pad=Math.ceil(Math.max(softBlur+softDy, useSh?(shBlur+Math.abs(shDx)+Math.abs(shDy)):0))+6;
     cw=Math.ceil(tw+pad*2); ch=Math.ceil(size*1.5+pad*2);
     cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; c=cv.getContext('2d'); c.font=font; c.textAlign='center'; c.textBaseline='middle';
-    if(useSh){ c.save(); c.shadowColor=shCol; c.shadowBlur=shBlur; c.shadowOffsetX=shDx; c.shadowOffsetY=shDy; c.fillStyle=o.color||'#ffffff'; c.fillText(text,cw/2,ch/2); c.restore(); }
-    c.save(); c.shadowColor='rgba(0,0,0,0.55)'; c.shadowBlur=softBlur; c.shadowOffsetX=0; c.shadowOffsetY=softDy; c.fillStyle=o.color||'#ffffff'; c.fillText(text,cw/2,ch/2); c.restore();
+    if(useSh){ c.save(); c.shadowColor=shCol; c.shadowBlur=shBlur; c.shadowOffsetX=shDx; c.shadowOffsetY=shDy; c.fillStyle=o.color||'#ffffff'; c.fillText(lines[0]||'',cw/2,ch/2); c.restore(); }
+    c.save(); c.shadowColor='rgba(0,0,0,0.55)'; c.shadowBlur=softBlur; c.shadowOffsetX=0; c.shadowOffsetY=softDy; c.fillStyle=o.color||'#ffffff'; c.fillText(lines[0]||'',cw/2,ch/2); c.restore();
   }
   return {canvas:cv, cw, exportW};
 }
@@ -3146,11 +3165,31 @@ function renderOverlays(time){
     else if(o.type==='clipframe'){   // picture-in-picture: source clip masked in a shape, w/ optional frame deco
       renderClipFrame(el, o, time, W);
     }
-    else { el.textContent=o.text||''; el.style.fontFamily=FONTS[o.font]||FONTS.cooper; el.style.fontWeight='800'; el.style.lineHeight='1';
-      el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.whiteSpace='nowrap'; el.style.color=o.color||'#fff';
-      el.style.opacity=(o.opacity!=null?o.opacity:1);
-      if(o.button){ el.style.background=o.bg||'#f07830'; const p=(o.size||0.06)*W; el.style.padding=(p*0.38)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.3)+'px'; el.style.textShadow='none'; }
-      else { el.style.background='none'; el.style.padding='0'; el.style.borderRadius='0'; el.style.textShadow='0 2px 6px rgba(0,0,0,.6)'; } }
+    else { el.style.fontFamily=FONTS[o.font]||FONTS.cooper; el.style.fontWeight='800'; el.style.color=o.color||'#fff';
+      el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.opacity=(o.opacity!=null?o.opacity:1);
+      if(o.style==='caption'){
+        // Caption: multi-line, dark translucent bg box, centered — subtitle look.
+        el.textContent = o.text || '';
+        el.style.whiteSpace = 'pre-line';        // honor \n from the textarea
+        el.style.textAlign = 'center';
+        el.style.lineHeight = '1.2';
+        const p=(o.size||0.06)*W;
+        el.style.padding=(p*0.30)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.24)+'px';
+        const bgHex = o.capBg || '#000000';
+        const bgOp = o.capBgOpacity != null ? +o.capBgOpacity : 0.72;
+        el.style.background = hexA(bgHex, bgOp);
+        el.style.textShadow = '0 2px 4px rgba(0,0,0,0.5)';
+      } else if(o.button){
+        el.textContent = o.text || '';
+        el.style.whiteSpace='nowrap'; el.style.lineHeight='1';
+        el.style.background=o.bg||'#f07830'; const p=(o.size||0.06)*W;
+        el.style.padding=(p*0.38)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.3)+'px'; el.style.textShadow='none';
+      } else {
+        el.textContent = o.text || '';
+        el.style.whiteSpace='nowrap'; el.style.lineHeight='1';
+        el.style.background='none'; el.style.padding='0'; el.style.borderRadius='0';
+        el.style.textShadow='0 2px 6px rgba(0,0,0,.6)';
+      } }
     const A=animState(o, time-o.start, +o.dur||0, W);   // overlay animations (offset + opacity)
     el.style.left=((o.x||0.5)*100)+'%'; el.style.top=((o.y||0.5)*100)+'%';
     const rotDeg=(A.rot||0)+(+o.rot||0);   // static rotation + animation rotation
@@ -3352,7 +3391,7 @@ function buildOvEditor(){
     <button class="mini" id="ovHere">⤓ at playhead</button></div>`;
   if(o.type==='text'){
     h+=`<div class="sec">Text</div><div><textarea id="ovText" rows="2" style="width:100%" placeholder="text — Enter = new line (bubble sticker)">${(o.text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</textarea></div>
-      <div><label>Style <select id="ovStyle"><option value="plain">Plain</option><option value="sticker">Bubble sticker</option></select></label>
+      <div><label>Style <select id="ovStyle"><option value="plain">Plain</option><option value="sticker">Bubble sticker</option><option value="caption">Caption (dark bg)</option></select></label>
       <label>Font <select id="ovFont"><option value="cooper">Cooper</option><option value="meowijuana">Meowijuana</option><option value="ofelia">Ofelia (KKZ display)</option><option value="caraque">Caraque (KKZ chunky)</option><option value="avenir">Avenir (KKZ body)</option><option value="arial">Arial</option></select></label></div>
       <div id="ovPlainRow"><label>Color <input type="color" id="ovColor" value="${o.color||'#ffffff'}"></label>
         <label class="ck"><input type="checkbox" id="ovBtn" ${o.button?'checked':''}> button</label> <input type="color" id="ovBg" value="${o.bg||'#f07830'}" title="button color"></div>
@@ -3480,7 +3519,7 @@ function buildOvEditor(){
     $('#ovPlainRow').style.display=st?'none':''; $('#ovStickRow').style.display=st?'':'none';
     $('#ovStickRow2').style.display=st?'':'none'; $('#ovStickRow3').style.display=st?'':'none';
     $('#ovStAngRow').style.display=(st && $('#ovStType').value!=='radial')?'':'none'; }
-  if($('#ovStyle')){ $('#ovStyle').value=(o.style==='sticker')?'sticker':'plain'; $('#ovStType').value=o.gradType||'linear'; ovTextRows(); }
+  if($('#ovStyle')){ $('#ovStyle').value=(o.style==='sticker'?'sticker':(o.style==='caption'?'caption':'plain')); $('#ovStType').value=o.gradType||'linear'; ovTextRows(); }
   const upd=()=>{ o.start=parseFloat($('#ovStart').value)||0; o.dur=parseFloat($('#ovDur').value)||1;
     if($('#ovRot')){ o.rot=parseFloat($('#ovRot').value)||0; if($('#ovRotV')) $('#ovRotV').textContent=(o.rot||0)+'°'; }
     const s2=o.shadow||(o.shadow={}); s2.on=$('#ovShOn').checked; s2.color=$('#ovShColor').value; s2.blur=parseFloat($('#ovShBlur').value)||0; s2.opacity=parseFloat($('#ovShOp').value); s2.dx=parseFloat($('#ovShX').value)||0; s2.dy=parseFloat($('#ovShY').value)||0;
