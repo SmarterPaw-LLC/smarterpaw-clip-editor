@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.98.0</span>
+  <span class="ver" id="appVer">v1.98.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2220,11 +2220,42 @@ function _splitScriptIntoCaptions(text, maxLen){
   }
   return chunks;
 }
-function _generateCaptionsForAudio(a, script){
-  const chunks = _splitScriptIntoCaptions(script);
-  if(!chunks.length){ toast('No caption text to generate'); return; }
+async function _generateCaptionsForAudio(a, script){
+  const allChunks = _splitScriptIntoCaptions(script);
+  if(!allChunks.length){ toast('No caption text to generate'); return; }
   const audioStart = +a.start || 0, audioDur = +a.dur || 0;
   if(audioDur < 0.3){ toast('Audio clip too short for captions'); return; }
+  // If the audio bar is a CLIPPED portion of a longer voiceover (srcIn > 0, or dur*speed <
+  // source dur), only caption the portion of the script that's actually audible in this
+  // window. Assumption: speech is roughly evenly distributed across source seconds, so we
+  // map source-time → character position in the script and pick chunks whose midpoints
+  // fall in the audible range.
+  const srcIn = +a.srcIn || 0;
+  const spd = +a.speed || 1;
+  const srcSpan = audioDur * spd;    // source-seconds consumed by this bar
+  let srcDur = (typeof _wfDurCache !== 'undefined') ? _wfDurCache[a.src] : 0;
+  if(!srcDur || srcDur <= 0){
+    try { srcDur = await _audDurForFile(a.src); } catch(_){ srcDur = srcIn + srcSpan; }
+    if(typeof _wfDurCache !== 'undefined' && srcDur > 0) _wfDurCache[a.src] = srcDur;
+  }
+  const isClipped = srcIn > 0.05 || (srcDur > 0 && srcSpan < srcDur - 0.05);
+  let chunks = allChunks;
+  if(isClipped && srcDur > 0){
+    const startFrac = Math.max(0, srcIn / srcDur);
+    const endFrac = Math.min(1, (srcIn + srcSpan) / srcDur);
+    const totalC = allChunks.reduce((n, c) => n + Math.max(1, c.length), 0);
+    let charPos = 0;
+    chunks = [];
+    for(const c of allChunks){
+      const midFrac = (charPos + Math.max(1, c.length) / 2) / totalC;
+      if(midFrac >= startFrac && midFrac <= endFrac) chunks.push(c);
+      charPos += Math.max(1, c.length);
+    }
+    if(!chunks.length){
+      toast('No script text falls inside this clipped voiceover range — try un-clipping the audio first');
+      return;
+    }
+  }
   histCommit();
   // Bump total channels to reserve a fresh lane ABOVE all existing content — captions sit on
   // their own row so they don't clog Ch 0 with your video. Each caption becomes a text
@@ -2257,7 +2288,8 @@ function _generateCaptionsForAudio(a, script){
     acc += d;
   });
   renderOverlays(playhead); renderOvList(); renderTracks(); audSyncEditor(); histCommit();
-  toast('Added '+created.length+' caption'+(created.length!==1?'s':'')+' on Ch '+capChannel+' — click any to edit; use ✕ Clear captions to remove');
+  const scope = isClipped ? (' ('+chunks.length+' of '+allChunks.length+' script chunks in clipped range)') : '';
+  toast('Added '+created.length+' caption'+(created.length!==1?'s':'')+' on Ch '+capChannel+scope);
 }
 // Build the on-timeline bar for one audio clip (drag-to-move, resize handles, hide/lock/delete icons)
 // Hash the audio src to a stable hue (0-359) so every distinct file gets a unique color, and
