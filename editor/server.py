@@ -2952,6 +2952,28 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "product": product, "brand": brand,
                                "moved": did_anything, "merged_dupes": merged, "moved_files": moved,
                                "conflicts": conflicts, "consolidated_from": len(all_dirs)})
+        if path == "/api/voiceover/save-script":
+            # Write / update the sidecar <stem>.txt for a voiceover file. Used by the audio
+            # editor's "📝 Script" panel so users can tweak the transcript that captions get
+            # generated from without leaving the app.
+            name = (data.get("name") or "").strip()
+            text = data.get("text") or ""
+            if not name or "/" in name or "\\" in name or name.startswith("."):
+                return self._json({"ok": False, "log": "bad name"}, 400)
+            mp3_path = os.path.join(VOICEOVER_DIR, name)
+            if not os.path.exists(mp3_path):
+                return self._json({"ok": False, "log": "voiceover not found"}, 404)
+            side = os.path.join(VOICEOVER_DIR, os.path.splitext(name)[0] + ".txt")
+            try:
+                # Empty text deletes the sidecar; otherwise (over)write.
+                if text.strip():
+                    with open(side, "w", encoding="utf-8") as fh:
+                        fh.write(text.strip())
+                elif os.path.exists(side):
+                    os.remove(side)
+            except Exception as e:
+                return self._json({"ok": False, "log": repr(e)}, 500)
+            return self._json({"ok": True, "hasScript": bool(text.strip())})
         if path == "/api/voiceover/delete":
             name = (data.get("name") or "").strip()
             # Reject anything that could path-traverse; filenames only.

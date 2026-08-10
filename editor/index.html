@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.99.1</span>
+  <span class="ver" id="appVer">v2.0.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1999,13 +1999,22 @@ function renderAudPickList(){
     const usageHtml = _uses.length
       ? '<span class="mini" title="'+_usesTip.replace(/"/g,'&quot;')+'" style="background:#2b3d5a;color:#a6c8ff;padding:2px 6px;border-radius:4px;font-size:10px;cursor:help">🗂 '+_uses.length+'</span>'
       : '';
+    // Voiceover script chip: shows 📝 with tooltip preview of the sidecar transcript. Clicking
+    // expands the full script inline below the row (read-only — edit via the audio editor).
+    const _script = it.kind === 'v' ? ((MAN.voiceoverScripts || {})[it.name] || '') : '';
+    const _scriptPreview = _script ? _script.slice(0, 200).replace(/"/g,'&quot;') + (_script.length > 200 ? '…' : '') : '';
+    const scriptHtml = _script
+      ? '<button class="mini" data-act="scr" title="'+_scriptPreview+'\n\n(click to expand full script)" style="background:#3a2b5e;color:#c8b8e8;padding:2px 6px;border-radius:4px;font-size:10px">📝</button>'
+      : '';
     row.innerHTML=`<span class="kind ${it.kind}">${kindLbl}</span><span class="nm" title="${it.name}">${it.name.replace(/\.(mp3|m4a|wav|ogg|aac|flac)$/i,'')}</span>
       ${usageHtml}
+      ${scriptHtml}
       ${thumbsHtml}
       <button class="mini" data-act="preview" title="Preview (play/stop) — expands a full player with scrub bar">▶</button>
       ${delHtml}
       <button class="mini primary" data-act="add">＋ Add at playhead</button>
-      <audio data-act="player" preload="metadata" controls style="display:none;flex-basis:100%;width:100%;height:32px;margin-top:6px" src="/${encodeURI(it.src)}"></audio>`;
+      <audio data-act="player" preload="metadata" controls style="display:none;flex-basis:100%;width:100%;height:32px;margin-top:6px" src="/${encodeURI(it.src)}"></audio>
+      <div data-act="scriptFull" style="display:none;flex-basis:100%;width:100%;margin-top:6px;padding:6px 8px;background:rgba(58,43,94,0.35);border-left:2px solid #6e5eae;border-radius:3px;font-size:11px;line-height:1.4;white-space:pre-wrap;color:#e5dfff;font-style:italic">${_script.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`;
     row.querySelector('[data-act="add"]').onclick=()=>addAudioAtPlayhead(it.src);
     // Preview toggle: shows/hides the native <audio> player (has built-in scrub, seek, mute).
     // Auto-pauses any other row's player when this one opens so previews don't stack.
@@ -2019,6 +2028,16 @@ function renderAudPickList(){
       if(wasHidden){ player.style.display=''; player.play().catch(()=>{}); btn.textContent='■'; }
       else { try{player.pause();}catch(_){} player.style.display='none'; btn.textContent='▶'; }
       player.onended=()=>{ btn.textContent='▶'; }; };
+    // Script chip: toggle the inline transcript display below the row (voiceovers only).
+    const scrBtn = row.querySelector('[data-act="scr"]');
+    const scrPanel = row.querySelector('[data-act="scriptFull"]');
+    if(scrBtn && scrPanel){
+      scrBtn.onclick = () => {
+        const showing = scrPanel.style.display !== 'none';
+        scrPanel.style.display = showing ? 'none' : '';
+        scrBtn.style.background = showing ? '#3a2b5e' : '#5d4a92';
+      };
+    }
     // Thumbs: toggle if already set, else apply. Persists via /api/music/rate; MAN.musicRatings
     // is what the periodic manifest reload reads, so we merge locally too for immediate feedback.
     const _rate = async next => {
@@ -2074,7 +2093,15 @@ function audSyncEditor(){
       <button class="mini" id="audE_del">✕ Delete</button>
       <button class="mini" id="audE_captions" style="display:none" title="Split the voiceover's script into chunks and drop them as timed text overlays on the timeline (synced to this audio clip's start/duration)">💬 Generate captions</button>
       <button class="mini" id="audE_capsClear" style="display:none;color:#e08b8b" title="Remove all auto-generated captions for THIS voiceover clip. Click Generate again to make a fresh batch after tweaking the script.">✕ Clear captions</button>
-    </div>`;
+    </div>
+    <details id="audE_scriptWrap" style="display:none;margin-top:8px" open>
+      <summary style="cursor:pointer;font-size:11px;color:var(--mut)">📝 Voiceover script (used by Generate captions)</summary>
+      <textarea id="audE_script" rows="4" style="width:100%;margin-top:4px;font-size:12px;line-height:1.4" placeholder="Paste or edit the voiceover script — captions are generated from this text"></textarea>
+      <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+        <button class="mini" id="audE_scriptSave">💾 Save script</button>
+        <span id="audE_scriptStatus" style="font-size:11px;color:var(--mut)"></span>
+      </div>
+    </details>`;
   const upd=(k,v)=>{ a[k]=v; audSyncPreview(); renderTracks(); };
   $('#audE_start').oninput=e=>{ upd('start', Math.max(0, parseFloat(e.target.value)||0)); };
   $('#audE_dur').oninput=e=>{ upd('dur', Math.max(0.1, parseFloat(e.target.value)||0.1)); };
@@ -2095,6 +2122,31 @@ function audSyncEditor(){
   // their script — mic recordings and manually uploaded mp3s don't have sidecars but deserve
   // captions too.
   const _voiceFilename = meta.kind === 'voiceover' ? meta.name : null;
+  // Script panel: view/edit the sidecar transcript for this voiceover. Hidden for music/sfx.
+  if($('#audE_scriptWrap')){
+    if(_voiceFilename){
+      $('#audE_scriptWrap').style.display = '';
+      const currentScript = (MAN.voiceoverScripts || {})[_voiceFilename] || '';
+      $('#audE_script').value = currentScript;
+      $('#audE_scriptStatus').textContent = currentScript ? '' : 'no script yet — paste one and save to unlock caption generation';
+      $('#audE_scriptSave').onclick = async () => {
+        const text = $('#audE_script').value;
+        $('#audE_scriptStatus').textContent = 'saving…';
+        const r = await api('/api/voiceover/save-script', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:_voiceFilename, text})});
+        if(r && r.ok){
+          MAN.voiceoverScripts = MAN.voiceoverScripts || {};
+          if(text.trim()) MAN.voiceoverScripts[_voiceFilename] = text.trim();
+          else delete MAN.voiceoverScripts[_voiceFilename];
+          $('#audE_scriptStatus').textContent = '✓ saved';
+          audSyncEditor();   // refresh so caption button label/state reflect new script availability
+        } else {
+          $('#audE_scriptStatus').textContent = '✕ save failed: '+((r&&r.log)||'unknown');
+        }
+      };
+    } else {
+      $('#audE_scriptWrap').style.display = 'none';
+    }
+  }
   if(_voiceFilename && $('#audE_captions')){
     const _script = (MAN.voiceoverScripts || {})[_voiceFilename] || null;
     // Count captions already generated for THIS voiceover clip so we can offer a clear button
