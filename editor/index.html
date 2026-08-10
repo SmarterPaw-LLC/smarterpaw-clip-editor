@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v1.99.0</span>
+  <span class="ver" id="appVer">v1.99.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2682,9 +2682,29 @@ function buildTextOverlayCanvas(o){
   const exportW=(CANVAS_PX[EDL.settings.canvas]||[1080,1920])[0];
   const size=Math.max(8,(o.size||0.06)*exportW), fam=(FONTS[o.font]||FONTS.cooper), font='800 '+size+'px '+fam;
   const isCaption=o.style==='caption';
-  // Caption preserves newlines for multi-line subtitles; plain/button collapse to one line as before.
-  const lines=isCaption ? String(o.text||'').replace(/\r/g,'').split('\n') : [(o.text||'').replace(/\n/g,' ')];
   const m=document.createElement('canvas').getContext('2d'); m.font=font;
+  // Caption: respect explicit \n AND word-wrap any line that would exceed the safe caption
+  // width (90% of the canvas — leaves margin so text doesn't run off the edges of the video).
+  // Plain/button collapse everything to one line as before.
+  let lines;
+  if(isCaption){
+    const maxW = exportW * 0.90;
+    const wrapLine = (line) => {
+      if(m.measureText(line).width <= maxW) return [line];
+      const words = line.split(/\s+/).filter(Boolean); const out = []; let buf = '';
+      for(const w of words){
+        const test = buf ? buf + ' ' + w : w;
+        if(m.measureText(test).width <= maxW){ buf = test; }
+        else { if(buf) out.push(buf); buf = w; }
+      }
+      if(buf) out.push(buf);
+      return out.length ? out : [line];
+    };
+    lines = String(o.text||'').replace(/\r/g,'').split('\n').flatMap(wrapLine);
+    if(!lines.length) lines = [''];
+  } else {
+    lines = [(o.text||'').replace(/\n/g,' ')];
+  }
   let maxTw = 0;
   for(const L of lines){ maxTw = Math.max(maxTw, m.measureText(L).width); }
   const tw=Math.max(1, maxTw);
@@ -3169,10 +3189,18 @@ function renderOverlays(time){
       el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.opacity=(o.opacity!=null?o.opacity:1);
       if(o.style==='caption'){
         // Caption: multi-line, dark translucent bg box, centered — subtitle look.
+        // max-width caps at 90% of canvas + word-break wraps long lines, matching what the
+        // baked render does (buildTextOverlayCanvas word-wraps at exportW*0.90). Without
+        // this cap the DOM preview showed captions running off the video edges just like
+        // the render used to.
         el.textContent = o.text || '';
         el.style.whiteSpace = 'pre-line';        // honor \n from the textarea
+        el.style.wordBreak = 'normal';
+        el.style.overflowWrap = 'break-word';
+        el.style.maxWidth = (W * 0.90) + 'px';
         el.style.textAlign = 'center';
         el.style.lineHeight = '1.2';
+        el.style.boxSizing = 'border-box';
         const p=(o.size||0.06)*W;
         el.style.padding=(p*0.30)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.24)+'px';
         const bgHex = o.capBg || '#000000';
