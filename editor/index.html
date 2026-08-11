@@ -254,7 +254,7 @@
   .toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:#000c; color:#fff;
            padding:10px 16px; border-radius:8px; display:none; z-index:2000; border:1px solid var(--line); }
   .modal { position:fixed; inset:0; background:transparent; pointer-events:none; z-index:1000; display:flex; align-items:stretch; justify-content:flex-end; }
-  .modal-card { pointer-events:auto; background:var(--panel); border-left:1px solid var(--line); border-radius:0; width:430px; max-width:96vw; height:100vh; max-height:100vh; overflow:auto; box-shadow:-12px 0 34px #0009; }
+  .modal-card { pointer-events:auto; background:var(--panel); border-left:1px solid var(--line); border-radius:0; width:430px; max-width:96vw; height:100vh; max-height:100vh; overflow:auto; box-shadow:-12px 0 34px #0009; margin-right:var(--modal-offset,0); }
   .modal-hd { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--panel); }
   .modal-body { padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
   .modal-body .sec { font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:var(--acc); margin-top:4px; }
@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.0.0</span>
+  <span class="ver" id="appVer">v2.2.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1951,6 +1951,30 @@ function removeAudio(id){ histCommit(); EDL.audio = (EDL.audio||[]).filter(a=>a.
 }
 function audFind(id){ return audList().find(a=>a.id===id); }
 
+// Multi-panel support: when several .modal side panels are open at once, stack them right-to-left
+// so they don't overlap. Each open modal reserves its own card width; the next one shifts left by
+// that amount. Runs on any style-attribute change to any .modal (MutationObserver at boot below).
+function _reflowModals(){
+  const open = [...document.querySelectorAll('.modal')].filter(m => m.style.display === 'flex');
+  let offset = 0;
+  // Right-most modal (last opened) gets offset 0 so the newest thing is nearest the edge — the
+  // one the user is most likely still interacting with.
+  const ordered = open.slice().reverse();
+  ordered.forEach(m => {
+    const card = m.querySelector('.modal-card');
+    if(!card) return;
+    card.style.setProperty('--modal-offset', offset + 'px');
+    // Fall back to the CSS width when offsetWidth isn't measured yet (first render on open).
+    const w = card.offsetWidth || parseInt(getComputedStyle(card).width) || 430;
+    offset += w;
+  });
+}
+if(!window._modalObs){
+  window._modalObs = new MutationObserver(_reflowModals);
+  document.querySelectorAll('.modal').forEach(m => window._modalObs.observe(m, {attributes:true, attributeFilter:['style']}));
+  // Also reflow on window resize since offsetWidth depends on max-width:96vw.
+  window.addEventListener('resize', _reflowModals);
+}
 function openAudModal(){ stop(); $('#audModal').style.display='flex'; renderAudPickList(); audSyncEditor(); }
 function closeAudModal(){ $('#audModal').style.display='none'; }
 function renderAudPickList(){
@@ -3468,7 +3492,21 @@ function buildOvEditor(){
   migrateAnims(o);
   let h=`<div class="sec">Timing</div><div><label>Start <input type="number" id="ovStart" step="0.1" style="width:58px" value="${o.start}"> s</label>
     <label>Dur <input type="number" id="ovDur" step="0.1" style="width:58px" value="${o.dur}"> s</label>
-    <button class="mini" id="ovHere">⤓ at playhead</button></div>`;
+    <button class="mini" id="ovHere">⤓ at playhead</button></div>
+    <div class="sec">Position preset</div>
+    <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+      <div style="display:grid;grid-template-columns:repeat(3,26px);grid-template-rows:repeat(3,22px);gap:2px" title="Snap to a preset position on the canvas (X = 5%/50%/95%, Y = 10%/50%/90%)">
+        ${[[0.05,0.10,'↖'],[0.5,0.10,'↑'],[0.95,0.10,'↗'],[0.05,0.5,'←'],[0.5,0.5,'●'],[0.95,0.5,'→'],[0.05,0.90,'↙'],[0.5,0.90,'↓'],[0.95,0.90,'↘']].map(([px,py,lb])=>`<button type="button" class="mini" data-posx="${px}" data-posy="${py}" title="x=${Math.round(px*100)}%, y=${Math.round(py*100)}%" style="padding:0;font-size:12px">${lb}</button>`).join('')}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <div style="display:flex;gap:4px" title="Only shift the Y position (top / middle / bottom third), keep X where it is">
+          <button type="button" class="mini" data-pyonly="0.10" title="Y = 10% (upper)">Y top</button>
+          <button type="button" class="mini" data-pyonly="0.5"  title="Y = 50%">Y mid</button>
+          <button type="button" class="mini" data-pyonly="0.85" title="Y = 85% (standard caption line)">Y bottom</button>
+        </div>
+        ${o._capOf ? '<button type="button" class="mini" id="ovApplyToBatch" style="background:#3a2b5e;color:#fff" title="Apply THIS overlay\'s x/y to every other caption in the same batch (all overlays tagged with the same voiceover)">↕ Apply x/y to all captions in this batch</button>' : ''}
+      </div>
+    </div>`;
   if(o.type==='text'){
     h+=`<div class="sec">Text</div><div><textarea id="ovText" rows="2" style="width:100%" placeholder="text — Enter = new line (bubble sticker)">${(o.text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</textarea></div>
       <div><label>Style <select id="ovStyle"><option value="plain">Plain</option><option value="sticker">Bubble sticker</option><option value="caption">Caption (dark bg)</option></select></label>
@@ -3723,6 +3761,36 @@ function buildOvEditor(){
   $('#ovAnimAdd').onchange=()=>{ const t=$('#ovAnimAdd').value; if(!t) return; histCommit(); (o.anims=o.anims||[]).push(Object.assign({type:t},JSON.parse(JSON.stringify(ANIM_DEFS[t].def)))); renderAnimList(); renderOverlays(playhead); };
   renderAnimList();
   if($('#ovHere')) $('#ovHere').onclick=()=>{ o.start=Math.round(playhead*100)/100; $('#ovStart').value=o.start; renderOvList(); renderOverlays(playhead); };
+  // Position presets: 3x3 grid snaps x AND y; Y-only row shifts vertical alignment only.
+  // Variant-aware via setOverlayField so per-aspect layouts land correctly.
+  document.querySelectorAll('[data-posx][data-posy]').forEach(btn => btn.onclick = () => {
+    histCommit();
+    setOverlayField(o, 'x', parseFloat(btn.dataset.posx));
+    setOverlayField(o, 'y', parseFloat(btn.dataset.posy));
+    renderOverlays(playhead); buildOvEditor();
+  });
+  document.querySelectorAll('[data-pyonly]').forEach(btn => btn.onclick = () => {
+    histCommit();
+    setOverlayField(o, 'y', parseFloat(btn.dataset.pyonly));
+    renderOverlays(playhead); buildOvEditor();
+  });
+  // Batch apply: only shown on _capOf-tagged overlays. Copies this overlay's x/y to every
+  // other overlay in the same caption batch (same _capOf audio id).
+  if($('#ovApplyToBatch')) $('#ovApplyToBatch').onclick = () => {
+    if(!o._capOf) return;
+    histCommit();
+    const nx = +o.x, ny = +o.y;
+    let n = 0;
+    (EDL.overlays || []).forEach(oo => {
+      if(oo && oo !== o && oo._capOf === o._capOf){
+        setOverlayField(oo, 'x', nx);
+        setOverlayField(oo, 'y', ny);
+        n++;
+      }
+    });
+    renderOverlays(playhead);
+    toast('Applied x/y to '+n+' other caption'+(n!==1?'s':'')+' in this batch');
+  };
   // Image swap — three sources, same as the +Image toolbar dropdown. Each writes o.src + re-renders.
   const _swapSet = src => { histCommit(); o.src = src; buildOvEditor(); renderOverlays(playhead); renderOvList(); };
   if($('#ovRepUpload')) $('#ovRepUpload').onclick = () => pickImage(_swapSet);
