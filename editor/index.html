@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.3.0</span>
+  <span class="ver" id="appVer">v2.3.2</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2129,9 +2129,14 @@ function audSyncEditor(){
     <div><label>Fade in <input type="range" id="audE_fi" min="0" max="5" step="0.1" value="${a.fadeIn||0}" style="width:160px"> <span id="audE_fiV" style="font-size:11px;color:var(--mut)">${(a.fadeIn||0).toFixed(1)}s</span></label></div>
     <div><label>Fade out <input type="range" id="audE_fo" min="0" max="5" step="0.1" value="${a.fadeOut||0}" style="width:160px"> <span id="audE_foV" style="font-size:11px;color:var(--mut)">${(a.fadeOut||0).toFixed(1)}s</span></label></div>
     <div style="margin-top:6px"><label title="Playback rate — pitch-preserving. 1.25× voiceover sounds faster but not chipmunk.">Speed <select id="audE_spd">${[0.25,0.5,0.75,1,1.25,1.5,2,3,4].map(sp=>`<option value="${sp}" ${(+a.speed||1)===sp?'selected':''}>${sp}×</option>`).join('')}</select></label></div>
-    <div style="margin-top:6px" title="Pitch shift in semitones (±12 = one octave). Preserves duration. Applied at render — the browser preview plays at original pitch.">
-      <label>Pitch <input type="range" id="audE_pitch" min="-12" max="12" step="0.5" value="${+a.pitch||0}" style="width:160px"> <span id="audE_pitchV" style="font-size:11px;color:var(--mut)">${(+a.pitch||0).toFixed(1)} st</span>
-      <button class="mini" id="audE_pitchReset" style="font-size:10px;padding:1px 5px" title="Reset pitch to 0">↺</button></label>
+<!-- Pitch shift temporarily disabled: server formula treated the source sample rate as
+         44100 but TTS outputs are often 24000, producing a huge speed change even at 1 semitone.
+         Data field is preserved on existing projects — just no UI to change it. Revisit with a
+         proper phase-preserving pitch shift (e.g. ffmpeg rubberband filter). -->
+    <div style="display:none">
+      <input type="hidden" id="audE_pitch" value="${+a.pitch||0}">
+      <button type="button" id="audE_pitchReset"></button>
+      <span id="audE_pitchV"></span>
     </div>
     <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
       <button class="mini" id="audE_del">✕ Delete</button>
@@ -2155,15 +2160,21 @@ function audSyncEditor(){
   $('#audE_fo').oninput=e=>{ const v=parseFloat(e.target.value)||0; a.fadeOut=v; $('#audE_foV').textContent=v.toFixed(1)+'s'; audSyncPreview(); };
   // Speed applies to (a) the timeline live-mix Audio element for this clip, and (b) the isolated
   // Preview audio if one is currently open — matches server render speed via pitch-preserving atempo.
+  // Live sync helper: keep _prevAud rate in sync with speed. Pitch is a no-op (see comment above).
+  const _syncPrevRate = () => {
+    if(typeof _prevAud === 'undefined' || !_prevAud) return;
+    try{ _prevAud.preservesPitch = true; _prevAud.mozPreservesPitch = true; _prevAud.webkitPreservesPitch = true; }catch(_){}
+    try{ _prevAud.playbackRate = (+a.speed || 1); }catch(_){}
+  };
   if($('#audE_spd')) $('#audE_spd').onchange=e=>{ const v=parseFloat(e.target.value)||1;
     a.speed = v;
     const el = _audEls[a.id]; if(el){ try{ el.playbackRate = v; }catch(_){} }
-    if(typeof _prevAud !== 'undefined' && _prevAud){ try{ _prevAud.playbackRate = v; }catch(_){} }
+    _syncPrevRate();
     audSyncPreview(); renderTracks(); };
   $('#audE_del').onclick=()=>removeAudio(a.id);
   if($('#audE_pitch')){
-    $('#audE_pitch').oninput = e => { const v = parseFloat(e.target.value) || 0; a.pitch = v; $('#audE_pitchV').textContent = v.toFixed(1) + ' st'; };
-    $('#audE_pitchReset').onclick = () => { a.pitch = 0; $('#audE_pitch').value = 0; $('#audE_pitchV').textContent = '0.0 st'; };
+    $('#audE_pitch').oninput = e => { const v = parseFloat(e.target.value) || 0; a.pitch = v; $('#audE_pitchV').textContent = v.toFixed(1) + ' st'; _syncPrevRate(); };
+    $('#audE_pitchReset').onclick = () => { a.pitch = 0; $('#audE_pitch').value = 0; $('#audE_pitchV').textContent = '0.0 st'; _syncPrevRate(); };
   }
   // Voiceover caption generator — show for every voiceover clip. If the clip has a sidecar script
   // (created by TTS at /api/tts/generate), use it directly. Otherwise prompt the user to paste
@@ -2290,8 +2301,9 @@ function audSyncEditor(){
     // Not playing → create/reuse audio and start from CURRENT SLIDER VALUE. Every time.
     if(!_prevAud){
       _prevAud = new Audio('/'+encodeURI(a.src||''));
+      // Pitch shift disabled (see server _pitch_chain comment) — treat as pitch-preserving speed only.
       try{ _prevAud.preservesPitch = true; _prevAud.mozPreservesPitch = true; _prevAud.webkitPreservesPitch = true; }catch(_){}
-      try{ _prevAud.playbackRate = +a.speed || 1; }catch(_){}   // pitch-preserving, matches server atempo
+      try{ _prevAud.playbackRate = +a.speed || 1; }catch(_){}
       _prevAud.volume = 0.7;
       _prevAud.onended = ()=>{ _stopPrev(); if(_posEl) _posEl.textContent = 'end reached'; };
     }

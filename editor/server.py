@@ -2395,20 +2395,12 @@ def render(edl, out_dir=None, out_name=None, progress=None):
                 factors.append(x)
                 return ",".join("atempo=%.4f" % f for f in factors)
             def _pitch_chain(semitones):
-                # Pitch shift WITHOUT changing duration. asetrate speeds the audio up (and shifts
-                # pitch up), aresample keeps the sample rate sane for downstream filters, then a
-                # counter-atempo brings the duration back to original — leaving only the pitch shift.
-                # semitones ∈ ±12 (one octave up/down). r = 2^(s/12).
-                if abs(semitones) < 0.01:
-                    return ""
-                r = 2 ** (semitones / 12.0)
-                base_sr = 44100
-                new_sr = int(round(base_sr * r))
-                # counter-tempo: 1/r may be outside atempo's single-stage range so build a chain.
-                counter = _atempo_chain(1.0 / r)
-                s = f"asetrate={new_sr},aresample={base_sr}"
-                if counter: s += "," + counter
-                return s
+                # Pitch shift TEMPORARILY DISABLED — old implementation hardcoded a 44100 base
+                # sample rate, but TTS outputs are often 24000, so asetrate blew the playback
+                # speed up wildly (chipmunks even at +1 semitone). Field is preserved on saved
+                # projects so no data loss — just a no-op until we swap in rubberband or an
+                # input-rate-aware formula.
+                return ""
             for i, (p, st, du, vol, fi, fo, src_in, spd, pitch) in enumerate(tracks, start=1):
                 # Seek into source (framed-clip audio) uses -ss BEFORE -i for accurate keyframe seek.
                 if src_in > 0.001:
