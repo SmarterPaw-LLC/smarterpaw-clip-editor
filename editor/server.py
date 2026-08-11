@@ -92,18 +92,23 @@ def load_openai_key():
     return None
 
 
-def _openai_tts(text, voice, model, out_path):
+def _openai_tts(text, voice, model, out_path, instructions=None):
     """Call OpenAI /v1/audio/speech and save the mp3 response to out_path. Returns (ok, error).
-    Kept dependency-free — uses urllib.request so no `openai` package install needed."""
+    Kept dependency-free — uses urllib.request so no `openai` package install needed.
+    `instructions` (optional str) is only used with gpt-4o-mini-tts and steers the delivery
+    style (e.g. "cheerful and upbeat", "slow, thoughtful, warm")."""
     key = load_openai_key()
     if not key:
         return False, "No OpenAI API key. Create editor/openai_key.txt with your key, or set OPENAI_API_KEY env var."
-    payload = json.dumps({
+    body = {
         "model": model or "tts-1",
         "input": text,
         "voice": voice or "alloy",
         "response_format": "mp3",
-    }).encode("utf-8")
+    }
+    if instructions and (model or "").startswith("gpt-4o"):
+        body["instructions"] = instructions
+    payload = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         "https://api.openai.com/v1/audio/speech",
         data=payload,
@@ -2325,7 +2330,8 @@ def render(edl, out_dir=None, out_name=None, progress=None):
             if st + du > total: du = total - st
             src_in = max(0.0, float(a.get("srcIn", 0) or 0))   # skip N seconds into the source file
             spd = max(0.25, min(4.0, float(a.get("speed", 1) or 1)))   # atempo-safe range
-            tracks.append((ap, st, du, vol, fi, fo, src_in, spd))
+            pitch = max(-12.0, min(12.0, float(a.get("pitch", 0) or 0)))   # semitones; ±12 = one octave
+            tracks.append((ap, st, du, vol, fi, fo, src_in, spd, pitch))
         # Segment source audio: iterate flattened segments (already visible-ordered, multi-channel
         # collapsed) with a running timeline position. Any segment with srcAudio=true contributes
         # its clip's original audio at the exact position it appears on the timeline. Uses the
@@ -2342,7 +2348,7 @@ def render(edl, out_dir=None, out_name=None, progress=None):
                     _vol = max(0.0, min(2.0, float(_fseg.get("srcAudioVol", 1))))
                     if _vol > 0.001 and _tl_pos < total:
                         _du = min(_dur_tl, total - _tl_pos)
-                        tracks.append((_ap, _tl_pos, _du, _vol, 0.0, 0.0, float(_fseg.get("in", 0)), float(_fseg.get("speed", 1))))
+                        tracks.append((_ap, _tl_pos, _du, _vol, 0.0, 0.0, float(_fseg.get("in", 0)), float(_fseg.get("speed", 1)), 0.0))
             _tl_pos += _dur_tl
         # Framed-clip (picture-in-picture) source audio — one track per clipframe with srcAudio=true.
         # Reuse id_to_file lookup to resolve the source file path.
@@ -2362,7 +2368,7 @@ def render(edl, out_dir=None, out_name=None, progress=None):
             spd = max(0.1, float(o.get("srcSpeed", 1) or 1))
             if st >= total: continue
             if st + du > total: du = total - st
-            tracks.append((ap, st, du, vol, 0.0, 0.0, src_in, spd))
+            tracks.append((ap, st, du, vol, 0.0, 0.0, src_in, spd, 0.0))
         prog("Adding audio + finalizing…", 92)
         if tracks:
             ff_in = [FFMPEG, "-y", "-loglevel", "error", "-i", vid_src]
@@ -2388,7 +2394,22 @@ def render(edl, out_dir=None, out_name=None, progress=None):
                     factors.append(2.0); x /= 2.0
                 factors.append(x)
                 return ",".join("atempo=%.4f" % f for f in factors)
-            for i, (p, st, du, vol, fi, fo, src_in, spd) in enumerate(tracks, start=1):
+            def _pitch_chain(semitones):
+                # Pitch shift WITHOUT changing duration. asetrate speeds the audio up (and shifts
+                # pitch up), aresample keeps the sample rate sane for downstream filters, then a
+                # counter-atempo brings the duration back to original — leaving only the pitch shift.
+                # semitones ∈ ±12 (one octave up/down). r = 2^(s/12).
+                if abs(semitones) < 0.01:
+                    return ""
+                r = 2 ** (semitones / 12.0)
+                base_sr = 44100
+                new_sr = int(round(base_sr * r))
+                # counter-tempo: 1/r may be outside atempo's single-stage range so build a chain.
+                counter = _atempo_chain(1.0 / r)
+                s = f"asetrate={new_sr},aresample={base_sr}"
+                if counter: s += "," + counter
+                return s
+            for i, (p, st, du, vol, fi, fo, src_in, spd, pitch) in enumerate(tracks, start=1):
                 # Seek into source (framed-clip audio) uses -ss BEFORE -i for accurate keyframe seek.
                 if src_in > 0.001:
                     ff_in += ["-ss", "%.3f" % src_in, "-i", p]
@@ -2401,6 +2422,9 @@ def render(edl, out_dir=None, out_name=None, progress=None):
                 tempo = _atempo_chain(spd)
                 if tempo:
                     ch += "," + tempo
+                pch = _pitch_chain(pitch)
+                if pch:
+                    ch += "," + pch
                 if fi > 0: ch += f",afade=t=in:st=0:d={fi:.3f}"
                 if fo > 0: ch += f",afade=t=out:st={max(0.0, du-fo):.3f}:d={fo:.3f}"
                 if vol != 1.0: ch += f",volume={vol:.3f}"
@@ -2761,19 +2785,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "log": repr(e)}, 500)
             return self._json({"ok": True, "file": rel, "category": cat, "id": cid, "frames": len(raw_bytes)})
         if path == "/api/tts/generate":
-            # Body: {text, voice, model, filename?}. voice ∈ alloy/echo/fable/onyx/nova/shimmer;
-            # model ∈ tts-1 | tts-1-hd. Saves the mp3 to sources/voiceover/<filename>.mp3 so it
-            # appears in the Audio picker (under the Voiceover filter) on the next manifest reload.
-            # Filename optional; auto-generated from voice + text slug if omitted.
+            # Body: {text, voice, model, filename?, instructions?}.
+            # tts-1 / tts-1-hd → voices: alloy/echo/fable/onyx/nova/shimmer.
+            # gpt-4o-mini-tts → adds ash/coral/sage/verse/ballad and honors `instructions` for style.
+            # Saves the mp3 to sources/voiceover/<filename>.mp3 so it appears in the Audio picker
+            # (under the Voiceover filter) on the next manifest reload.
             text = (data.get("text") or "").strip()
             voice = (data.get("voice") or "alloy").strip().lower()
             model = (data.get("model") or "tts-1").strip().lower()
+            instructions = (data.get("instructions") or "").strip()
             raw_name = (data.get("filename") or "").strip()
             if not text:
                 return self._json({"ok": False, "log": "text required"}, 400)
             if len(text) > 4000:
                 return self._json({"ok": False, "log": "text too long (max 4000 chars per OpenAI limit)"}, 400)
-            if voice not in {"alloy","echo","fable","onyx","nova","shimmer"}:
+            _all_voices = {"alloy","echo","fable","onyx","nova","shimmer","ash","coral","sage","verse","ballad"}
+            if voice not in _all_voices:
                 return self._json({"ok": False, "log": f"unknown voice: {voice}"}, 400)
             # Sanitize/derive filename
             if raw_name:
@@ -2791,7 +2818,7 @@ class Handler(BaseHTTPRequestHandler):
                 stem, ext = os.path.splitext(base); n = 2
                 while os.path.exists(os.path.join(VOICEOVER_DIR, f"{stem}_{n}{ext}")): n += 1
                 base = f"{stem}_{n}{ext}"; out_path = os.path.join(VOICEOVER_DIR, base)
-            ok, err = _openai_tts(text, voice, model, out_path)
+            ok, err = _openai_tts(text, voice, model, out_path, instructions=instructions or None)
             if not ok:
                 return self._json({"ok": False, "log": err}, 502)
             # Save the script as a sidecar .txt next to the mp3 so the client can later split it
