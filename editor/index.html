@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.3.3</span>
+  <span class="ver" id="appVer">v2.3.4</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -642,8 +642,10 @@
           <button class="mini primary" id="audTtsGo">Generate</button>
         </div>
         <div id="audTtsInstrRow" style="display:none;margin-top:6px">
-          <label style="display:block;font-size:11px;color:var(--mut);margin-bottom:3px">Delivery instructions (gpt-4o-mini-tts only) — describe how the voice should sound</label>
-          <textarea id="audTtsInstr" rows="2" style="width:100%;box-sizing:border-box;background:#191b21;color:#eee;border:1px solid #333;border-radius:4px;padding:6px;font-size:12px" placeholder="e.g., cheerful and energetic · slow and thoughtful · warm and reassuring · playful with rising intonation"></textarea>
+          <label style="display:block;font-size:11px;color:var(--mut);margin-bottom:3px">Delivery instructions (gpt-4o-mini-tts only) — tone/style works best; specific-word emphasis is hit-or-miss</label>
+          <textarea id="audTtsInstr" rows="3" style="width:100%;box-sizing:border-box;background:#191b21;color:#eee;border:1px solid #333;border-radius:4px;padding:6px;font-size:12px" placeholder="TONE (reliable): cheerful and high-energy · warm and reassuring · slow and thoughtful · casual and playful · news-anchor formal
+EMPHASIS (unreliable — better to CAPS the word in the script, or add , or — before it): read with punch, letting emphasized words hit hard"></textarea>
+          <div style="font-size:10px;color:var(--mut);margin-top:3px">Tip: to emphasize "lose it", put it in CAPS in the script above ("you'll LOSE IT"), or add a comma/dash before it ("you'll — lose it") — TTS naturally stresses those.</div>
         </div>
         <div id="audTtsStatus" style="font-size:11px;color:var(--mut);min-height:14px;margin-top:6px"></div>
         <div id="audTtsHint" style="font-size:10px;color:var(--mut);margin-top:4px">Needs an OpenAI API key. Put it in <code>editor/openai_key.txt</code> (single line) or set <code>OPENAI_API_KEY</code>.</div>

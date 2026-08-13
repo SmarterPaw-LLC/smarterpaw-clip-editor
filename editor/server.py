@@ -2814,10 +2814,16 @@ class Handler(BaseHTTPRequestHandler):
             if not ok:
                 return self._json({"ok": False, "log": err}, 502)
             # Save the script as a sidecar .txt next to the mp3 so the client can later split it
-            # into timed caption overlays that sync to the voiceover clip on the timeline.
+            # into timed caption overlays that sync to the voiceover clip on the timeline. Also
+            # save the delivery instructions (if any) to a separate .instructions.txt sidecar so
+            # we can trace which prompts produced which take.
             try:
-                with open(os.path.splitext(out_path)[0] + ".txt", "w", encoding="utf-8") as fh:
+                stem = os.path.splitext(out_path)[0]
+                with open(stem + ".txt", "w", encoding="utf-8") as fh:
                     fh.write(text)
+                if instructions:
+                    with open(stem + ".instructions.txt", "w", encoding="utf-8") as fh:
+                        fh.write(instructions)
             except Exception:
                 pass
             return self._json({"ok": True, "filename": base, "src": "sources/voiceover/" + base, "text": text})
