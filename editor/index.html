@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.3.7</span>
+  <span class="ver" id="appVer">v2.3.8</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -5285,6 +5285,34 @@ function applyEDL(edl){
     const m = a.src.match(/^sources\/sfx\/(.+)$/i);
     if(m && _vo.has(m[1].toLowerCase())) a.src = 'sources/voiceover/'+m[1];
   });
+  // Repair oversized audio bars: any bar where (srcIn + dur*speed) > srcDur was created by an
+  // older split+speed-change path and would visually stretch the waveform across silent overflow.
+  // Clamp dur so the bar visually matches the actually-audible source [srcIn, srcDur].
+  // Uses async probe (each source dur cached in _wfDurCache after first probe), so also mark that
+  // we did the repair to avoid re-toasting on every reload.
+  (async () => {
+    const audio = EDL.audio || [];
+    const trimmed = [];
+    for(const a of audio){
+      if(!a || !a.src) continue;
+      let srcDur = _wfDurCache[a.src];
+      if(!srcDur){
+        try { srcDur = await _audDurForFile(a.src); _wfDurCache[a.src] = srcDur; } catch(_){ continue; }
+      }
+      if(!srcDur || srcDur <= 0) continue;
+      const spd = +a.speed || 1;
+      const srcIn = +a.srcIn || 0;
+      const audibleTL = Math.max(0.05, (srcDur - srcIn) / spd);
+      if((+a.dur || 0) > audibleTL + 0.02){
+        trimmed.push({name:(a.src.split('/').pop()), old:(a.dur).toFixed(2), new:audibleTL.toFixed(2)});
+        a.dur = Math.round(audibleTL * 100) / 100;
+      }
+    }
+    if(trimmed.length){
+      renderTracks();
+      toast('Trimmed '+trimmed.length+' audio bar(s) that extended past the source end');
+    }
+  })();
   // Backfill stable per-segment IDs so variant framing (per-aspect zoom/anchor) can key on them
   // even for legacy projects saved before _suid existed.
   (EDL.segments||[]).forEach(sg => { if(sg && !sg._suid) sg._suid = _newSuid(); });
