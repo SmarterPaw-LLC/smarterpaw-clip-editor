@@ -309,7 +309,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.3.6</span>
+  <span class="ver" id="appVer">v2.3.7</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2206,7 +2206,15 @@ function audSyncEditor(){
     const oldSpeed = +a.speed || 1;
     const scale = oldSpeed / v;             // new_dur = old_dur * oldSpeed / newSpeed
     const oldDur = +a.dur || 0;
-    const newDur = Math.max(0.05, oldDur * scale);
+    let newDur = Math.max(0.05, oldDur * scale);
+    // CAP so the bar never plays past the end of the source. Without this, split+speed-change
+    // sequences can produce bars whose (srcIn + dur*speed) > srcDur, which breaks both playback
+    // (silence past the end) and the waveform display (bg-position clamps + shows wrong slice).
+    const _srcDur = (typeof _wfDurCache !== 'undefined' && _wfDurCache[a.src]) ? _wfDurCache[a.src] : 0;
+    if(_srcDur > 0){
+      const maxDurAtNewSpd = Math.max(0.05, (_srcDur - (+a.srcIn || 0)) / v);
+      if(newDur > maxDurAtNewSpd) newDur = maxDurAtNewSpd;
+    }
     a.speed = v;
     a.dur = Math.round(newDur * 100) / 100;
     // Captions tied to this audio (via _capOf) live at absolute timeline positions inside the
@@ -2479,11 +2487,14 @@ function buildAudioBar(a, total){
     if(!srcDur || !b.isConnected) return;
     const srcIn = Math.max(0, Math.min(+a.srcIn || 0, srcDur));
     const spd = +a.speed || 1;
-    const barDurSrc = Math.max(0.01, (+a.dur || 0) * spd);   // source-seconds this bar consumes
-    // background-size >100% zooms in on the waveform image.
-    // background-position % maps 0..100 across (image_size - container_size). To show the slice
-    // starting at srcIn seconds into a srcDur-long track, we anchor at srcIn/(srcDur-barDurSrc).
-    // If the bar shows the entire track (barDurSrc >= srcDur), position doesn't matter — clamp to 0.
+    // Requested source-seconds this bar wants to play. If it exceeds what's actually available
+    // (srcIn + wanted > srcDur), CLAMP to the audible tail. Without this clamp the display's
+    // divisor (srcDur - wanted) shrinks toward 0 and bg-position jumps to 100%, showing the
+    // wrong chunk of the waveform PNG — the classic "waveforms don't match after split + speed
+    // change" bug where a split piece got scaled longer than the source could supply.
+    const wantedSrc = Math.max(0.01, (+a.dur || 0) * spd);
+    const availSrc = Math.max(0.01, srcDur - srcIn);
+    const barDurSrc = Math.min(wantedSrc, availSrc);
     const zoom = Math.max(100, (srcDur / barDurSrc) * 100);
     const visSpan = Math.max(0.001, srcDur - barDurSrc);
     const off  = Math.max(0, Math.min(100, (srcIn / visSpan) * 100));
