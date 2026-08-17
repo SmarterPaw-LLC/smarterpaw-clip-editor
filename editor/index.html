@@ -212,6 +212,7 @@
   #endcard .l1 { color:#fff; font-weight:800; } #endcard .l2 { color:var(--acc); font-weight:800; }
   #endcard .l3 { color:#111; background:var(--acc); font-weight:800; padding:.25em .7em; border-radius:7px; margin-top:4%; }
   .transport { display:flex; gap:8px; align-items:center; }
+  .loopBtn.on { background:var(--acc, #f0a830); color:#1b1d22; font-weight:600; }
   .scrub { width:100%; display:flex; gap:8px; align-items:center; }
   .scrub input[type=range] { flex:1; }
   .tcode { font-variant-numeric:tabular-nums; color:var(--mut); font-size:12px; min-width:90px; }
@@ -309,7 +310,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.3.8</span>
+  <span class="ver" id="appVer">v2.4.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -388,7 +389,9 @@
     </div>
     <div class="transport">
       <button id="btnPlayTl" class="primary">▶ Play timeline</button>
+      <button id="btnPlayFromStart" title="Snap the playhead back to 0 and play from the beginning of the timeline">⏮ From start</button>
       <button id="btnStop">■ Stop</button>
+      <button id="btnLoop" title="Loop the timeline — automatically restart at the beginning when it reaches the end" class="loopBtn">🔁 Loop</button>
       <span class="tcode" id="tlTime">0.0 / 0.0s</span>
     </div>
     <div class="scrub">
@@ -1411,11 +1414,25 @@ function renderTimeline(){
       <div class="nums">
         <label>in<input type="number" step="0.1" data-f="in" value="${s.in}"></label>
         <label>out<input type="number" step="0.1" data-f="out" value="${(+s.in + +s.dur).toFixed(2)}"></label>
-        <label>dur<input type="number" step="0.1" data-f="dur" value="${s.dur}"></label>
+        <label>dur<input type="number" step="0.1" data-f="dur" value="${s.dur}"><button class="mini" data-sa="fillDur" title="Set duration to the max — plays from `in` to the end of the source clip (${fmt(cdur)}s total)" style="font-size:10px;padding:1px 5px;margin-left:2px">↔ max</button></label>
         <label>zoom<input type="number" step="0.05" min="1" data-f="zoom" value="${resolveSegment(s).zoom||1}"></label>
         <label>anchor<select data-f="anchor">${['center','top','bottom','left','right'].map(a=>`<option ${a===(resolveSegment(s).anchor||'center')?'selected':''}>${a}</option>`).join('')}</select></label>
         <label title="Playback speed (slow-mo / fast)">speed<select data-f="speed">${[0.25,0.5,0.75,1,1.5,2,3,4].map(sp=>`<option value="${sp}" ${(+s.speed||1)===sp?'selected':''}>${sp}×</option>`).join('')}</select></label>
       </div>
+      ${(function(){
+        // Timeline fine-tune row — shows this segment's timeline start/end and lets the user
+        // type an exact position. Ch 0 clips are sequenced via seg.gap (lead-time before this
+        // one); upper-channel clips are absolute-positioned via seg.t0.
+        const _L = layout(); const _me = _L.all.find(o => o.seg === s);
+        if(!_me) return '';
+        const _tlStart = _me.start.toFixed(2), _tlEnd = _me.end.toFixed(2);
+        const _ch = +s.ch || 0;
+        const _hint = _ch === 0 ? 'Adjusts the pre-clip GAP so it lands at this time (can\'t overlap earlier clips)' : 'Sets this upper-channel clip\'s absolute timeline start';
+        return `<div class="nums" style="font-size:11px;color:var(--mut);align-items:center" title="${_hint}">
+          <label>on timeline<input type="number" step="0.05" min="0" data-sa="tlStart" value="${_tlStart}" style="width:64px"> s → <span data-sa="tlEndDisplay">${_tlEnd}</span>s</label>
+          ${_ch === 0 ? `<label>lead gap<input type="number" step="0.05" min="0" data-f="gap" value="${(+s.gap||0).toFixed(2)}" style="width:52px"> s</label>` : ''}
+        </div>`;
+      })()}
       <div class="nums"><label>fade in<input type="number" step="0.1" min="0" data-f="fadeIn" value="${s.fadeIn||0}"></label>
         <label>fade out<input type="number" step="0.1" min="0" data-f="fadeOut" value="${s.fadeOut||0}"></label></div>
       <input class="cap" type="text" data-f="cap" placeholder="caption (blank = none)" value="${(s.cap||'').replace(/"/g,'&quot;')}">
@@ -1447,7 +1464,7 @@ function renderTimeline(){
       </div>`;
     el.querySelector('.hd').onclick=()=>selectSeg(i);
     el.querySelectorAll('[data-f]').forEach(inp=>{
-      inp.onchange=()=>{ let v=inp.value; const f=inp.dataset.f; if(['in','dur','zoom','fadeIn','fadeOut','out','speed'].includes(f)) v=parseFloat(v)||0;
+      inp.onchange=()=>{ let v=inp.value; const f=inp.dataset.f; if(['in','dur','zoom','fadeIn','fadeOut','out','speed','gap'].includes(f)) v=parseFloat(v)||0;
         if(f==='speed') v=v||1;
         if(f==='out'){ EDL.segments[i].dur=Math.max(0.1, v-(+EDL.segments[i].in||0)); }
         else setSegField(EDL.segments[i], f, v);   // variant-aware: zoom/anchor land per-aspect on non-primary
@@ -1489,6 +1506,31 @@ function renderTimeline(){
         };
         return;
       }
+      // Timeline start input: for Ch 0 clips this adjusts `gap` (lead-time before this clip in
+      // the sequential base track); for upper channels it sets `t0` (absolute timeline start).
+      if(a === 'tlStart'){
+        b.onchange = (ev) => { ev.stopPropagation(); histCommit();
+          const targetT = Math.max(0, parseFloat(b.value) || 0);
+          const _ch = +s.ch || 0;
+          if(_ch === 0){
+            // Compute where this clip WOULD start if gap=0 (sum of prior gap+dur on Ch 0).
+            let prevEnd = 0;
+            for(const seg of (EDL.segments||[])){
+              if(seg === s) break;
+              if((+seg.ch||0) !== 0 || seg.hidden) continue;
+              prevEnd += Math.max(0, +seg.gap||0) + segLen(seg);
+            }
+            // New gap = requested start - prevEnd. Clamped to 0 (can't overlap earlier clip).
+            const newGap = Math.max(0, targetT - prevEnd);
+            s.gap = Math.round(newGap * 100) / 100;
+            if(targetT < prevEnd) toast('Earlier clip ends at '+fmt(prevEnd)+'s — can\'t start before that. Snapped to '+fmt(prevEnd)+'s.');
+          } else {
+            s.t0 = Math.round(targetT * 100) / 100;
+          }
+          renderTimeline(); selectSeg(i);
+        };
+        return;
+      }
       // Volume slider: 0..2 → clamp to 1 for <video> (which caps at 1); store the true value for render.
       if(a === 'srcAudioVol'){
         b.oninput = (ev) => { ev.stopPropagation(); const v = parseFloat(b.value)||0; s.srcAudioVol = v;
@@ -1509,6 +1551,14 @@ function renderTimeline(){
           const src = MAN.byId && MAN.byId[s.id]; const full = src && src.dur ? +src.dur : (cdur || 60);
           histCommit(); s.in = 0; s.dur = Math.round(full*100)/100;
           renderTimeline(); selectSeg(i); toast('Segment set to full clip ('+fmt(s.dur)+'s)');
+        }
+        else if(a==='fillDur'){
+          // Fill duration to the max — keeps current `in` and extends dur out to the end of the
+          // source clip. Sister to "Full clip" (which also resets in=0) but preserves the trim.
+          const src = MAN.byId && MAN.byId[s.id]; const full = src && src.dur ? +src.dur : (cdur || 60);
+          const newDur = Math.max(0.1, full - (+s.in || 0));
+          histCommit(); s.dur = Math.round(newDur * 100) / 100;
+          renderTimeline(); selectSeg(i); toast('Duration maxed to '+fmt(s.dur)+'s (in→source end)');
         }
         else if(a==='kbStart'){
           // Capture the CURRENT preview framing as the START keyframe. Time is controlled
@@ -1698,7 +1748,15 @@ function playTimeline(){
           else { const a=activeVid(); if(a){try{a.pause();}catch(_){}} } }
         else if(ec.bg.mode==='transparent'){ const a=activeVid(); if(a&&a.paused){ const p=a.play(); if(p&&p.catch)p.catch(()=>{}); } }
       }
-      if(e>=total){ playhead=0; stop(); $('#scrub').value=0; $('#tlTime').textContent='0.0 / '+fmt(total)+'s'; }
+      if(e>=total){
+        // Loop mode: snap playhead back to 0 and restart playback without a stop() flash.
+        // Otherwise stop cleanly at the end (playhead reset to 0 so next ▶ starts from top).
+        if(window._tlLoop){
+          playhead = 0; $('#scrub').value = 0; $('#tlTime').textContent = '0.0 / '+fmt(total)+'s';
+          stop(); playTimeline(); return;
+        }
+        playhead=0; stop(); $('#scrub').value=0; $('#tlTime').textContent='0.0 / '+fmt(total)+'s';
+      }
       renderOverlays(playhead); positionPlayhead();
       return;
     }
@@ -5248,6 +5306,13 @@ $('#fileAddClip').onchange=e=>{ if(e.target.files.length) openAddClip(e.target.f
   wireDrop($('#stageWrap')); wireDrop($('#bin'));
 })();
 $('#btnPlayTl').onclick=()=>{ if(tlPlaying) stop(); else playTimeline(); };
+$('#btnPlayFromStart').onclick=()=>{ stop(); playhead=0; if($('#scrub')) $('#scrub').value=0; playTimeline(); };
+window._tlLoop = false;
+$('#btnLoop').onclick=()=>{ window._tlLoop = !window._tlLoop;
+  $('#btnLoop').classList.toggle('on', window._tlLoop);
+  $('#btnLoop').textContent = window._tlLoop ? '🔁 Loop: ON' : '🔁 Loop';
+  toast(window._tlLoop ? 'Timeline will loop from start when it reaches the end' : 'Loop off — timeline stops at the end');
+};
 $('#btnAddCh').onclick=addChannel;
 $('#btnAddAudCh').onclick=addAudChannel;
 $('#btnStop').onclick=stop;
