@@ -656,11 +656,45 @@ def load_project(fname):
 
 
 def save_project(name, edl):
+    """Save a project to disk with rolling backups (last 5 revisions) + a data-loss guard.
+    If the incoming EDL is significantly smaller than what's on disk (way fewer clips/audio/
+    overlays), we still write it but the backups make the previous state recoverable.
+    Backups live in projects/.backups/<slug>/<timestamp>.json."""
     os.makedirs(PROJECTS, exist_ok=True)
     edl = dict(edl)
     edl["name"] = name
     fname = slug(name) + ".json"
-    with open(os.path.join(PROJECTS, fname), "w", encoding="utf-8") as f:
+    fpath = os.path.join(PROJECTS, fname)
+    # Rolling backup BEFORE we overwrite. Only backs up if there's already a file — and only
+    # if the incoming state actually differs (avoids piling up identical backups on repeat saves).
+    if os.path.exists(fpath):
+        try:
+            with open(fpath, encoding="utf-8") as f: old_raw = f.read()
+            new_raw = json.dumps(edl, indent=2)
+            if old_raw != new_raw:
+                bdir = os.path.join(PROJECTS, ".backups", slug(name))
+                os.makedirs(bdir, exist_ok=True)
+                ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+                # Count content sizes so backup filenames flag suspicious "big → small" saves.
+                try:
+                    old_edl = json.loads(old_raw)
+                    old_n = len(old_edl.get("segments") or []) + len(old_edl.get("audio") or []) + len(old_edl.get("overlays") or [])
+                    new_n = len(edl.get("segments") or []) + len(edl.get("audio") or []) + len(edl.get("overlays") or [])
+                    tag = "-SHRINK" if (old_n >= 3 and new_n < old_n // 2) else ""
+                except Exception:
+                    tag = ""
+                bpath = os.path.join(bdir, ts + tag + ".json")
+                with open(bpath, "w", encoding="utf-8") as bf: bf.write(old_raw)
+                # Prune to last 10 backups per project.
+                try:
+                    backups = sorted([f for f in os.listdir(bdir) if f.endswith(".json")])
+                    for old in backups[:-10]:
+                        try: os.remove(os.path.join(bdir, old))
+                        except OSError: pass
+                except OSError: pass
+        except Exception:
+            pass   # backup best-effort — never block the save
+    with open(fpath, "w", encoding="utf-8") as f:
         json.dump(edl, f, indent=2)
     return {"file": fname, "name": name}
 

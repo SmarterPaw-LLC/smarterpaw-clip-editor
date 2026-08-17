@@ -310,7 +310,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.4.1</span>
+  <span class="ver" id="appVer">v2.5.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -5435,11 +5435,27 @@ async function projLoad(file){
   const edl=await api('/api/project?file='+encodeURIComponent(file));
   if(edl.error){ toast('Load failed'); return; }
   applyEDL(edl); setCur({file, name:edl.name||file.replace(/\.json$/,'')});
+  _lastLoadedSnapshot = _edlContentCount(edl);   // baseline for the save-time content-loss guard
   $('#projSelect').value=file; toast('Loaded “'+(edl.name||file)+'”');
 }
+// Snapshot of what was last LOADED from disk (or last saved) — lets us detect a save that
+// would drastically shrink the project vs what's on disk (usually a bug/race, not intent).
+let _lastLoadedSnapshot = null;
+function _edlContentCount(edl){
+  return (edl?.segments||[]).length + (edl?.audio||[]).length + (edl?.overlays||[]).length;
+}
 async function saveAs(name){
+  // Data-loss guard: if we've drastically fewer segments/audio/overlays than what we last
+  // loaded (possible sign of a race, cleared state, or accidental switch), confirm before
+  // saving. The server also keeps rolling backups under projects/.backups/<slug>/.
+  const currentCount = _edlContentCount(EDL);
+  const loadedCount = _lastLoadedSnapshot != null ? _lastLoadedSnapshot : currentCount;
+  if(loadedCount >= 4 && currentCount < loadedCount / 2){
+    const ok = confirm('Warning: you are about to save "'+name+'" with '+currentCount+' items, but the last loaded state had '+loadedCount+'. This looks like content loss.\n\nContinue saving? (a backup of the previous file is kept in projects/.backups/)');
+    if(!ok){ toast('Save cancelled — no changes written'); return; }
+  }
   const r=await api('/api/project',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name, edl:EDL})});
-  if(r.ok){ setCur({file:r.file,name:r.name}); await loadProjects(r.file); toast('Saved “'+r.name+'”'); }
+  if(r.ok){ setCur({file:r.file,name:r.name}); await loadProjects(r.file); _lastLoadedSnapshot = currentCount; toast('Saved “'+r.name+'”'); }
   else toast('Save failed');
 }
 function projSave(){ if(curProj) saveAs(curProj.name); else projSaveAs(); }
