@@ -310,7 +310,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.5.2</span>
+  <span class="ver" id="appVer">v2.5.3</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2896,16 +2896,23 @@ function buildStickerCanvas(o){
   const font='normal '+sizePx+'px '+fam;
   const gradTop=o.gradStart||'#8ab81d', gradBot=o.gradEnd||'#3c8e14';
   const sh=o.shadow||{};
-  const shadowColor=hexA(sh.color||'#1a4d00',(sh.on&&sh.opacity!=null)?sh.opacity:0.45);
+  const shOn=(sh.on!==false);   // shadow defaults ON for stickers unless explicitly turned off
+  const shadowColor=hexA(sh.color||'#1a4d00', shOn?(sh.opacity!=null?sh.opacity:0.45):0);
   const spread=1.0;
   const align=o.align||'center';
   const kernPx=Math.round((+o.kerning||0)*sizePx);
   const gapPx=Math.round((o.lineGap!=null?o.lineGap:0.08)*sizePx);
   const outlineScale=(o.bleed!=null&&o.bleed>0)?o.bleed:0.22;   // outline thickness as a fraction of font size
   const outline=Math.max(6,Math.round(sizePx*outlineScale));
-  const shadow=Math.max(2,Math.round(sizePx*0.06));
-  const sdx=Math.max(1,Math.round(sizePx*0.04)), sdy=Math.max(2,Math.round(sizePx*0.08));
-  const strokeBleed=Math.ceil(outline*1.5)+sdx+Math.ceil(shadow)+8;
+  // shadow blur/offset from the user's controls (fractions of canvas width). The outline stroke
+  // that gets drawn on top of the shadow-baked layer is thick, so small offsets get eaten — this
+  // is expected: user sees exactly what they dial. Only fall back to hardcoded look when nothing set.
+  const shBlurUser=(sh.blur!=null?sh.blur*exportW:Math.round(sizePx*0.06));
+  const shDxUser =(sh.dx  !=null?sh.dx  *exportW:Math.round(sizePx*0.04));
+  const shDyUser =(sh.dy  !=null?sh.dy  *exportW:Math.round(sizePx*0.08));
+  const shadow=Math.max(0, shBlurUser);
+  const sdx=shDxUser, sdy=shDyUser;
+  const strokeBleed=Math.ceil(outline*1.5)+Math.ceil(Math.abs(sdx))+Math.ceil(shadow)+8;
   function ctxSet(c){ c.font=font; c.textAlign=align; c.textBaseline='alphabetic'; if('letterSpacing' in c){ try{c.letterSpacing=kernPx+'px';}catch(e){} } }
   const m=document.createElement('canvas').getContext('2d'); ctxSet(m);
   const measure=t=>m.measureText(t).width;
@@ -2917,7 +2924,7 @@ function buildStickerCanvas(o){
   const TOP=Math.round(sizePx*0.32)+STROKE_PAD, BOT=Math.round(sizePx*0.32)+STROKE_PAD;
   let y=TOP; const rowPos=[]; rows.forEach((t,i)=>{ y+=sizePx; rowPos.push({text:t,y:y}); if(i<rows.length-1) y+=gapPx; });
   const textBottom=y, textH=textBottom-TOP;
-  const shadowBleed=Math.ceil((sdy+shadow*2)*spread)+8;
+  const shadowBleed=Math.ceil((Math.abs(sdy)+shadow*2)*spread)+8;
   const totalH=Math.ceil(textBottom+BOT+shadowBleed);
   const X=align==='center'?cw/2 : align==='right'? cw-strokeBleed : strokeBleed;
   function grad(c){ const byc=TOP+textH/2;
