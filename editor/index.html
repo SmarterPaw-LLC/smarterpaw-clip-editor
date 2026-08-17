@@ -310,7 +310,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.5.0</span>
+  <span class="ver" id="appVer">v2.5.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1414,7 +1414,7 @@ function renderTimeline(){
       <div class="nums">
         <label>in<input type="number" step="0.1" data-f="in" value="${s.in}"></label>
         <label>out<input type="number" step="0.1" data-f="out" value="${(+s.in + +s.dur).toFixed(2)}"></label>
-        <label>dur<input type="number" step="0.1" data-f="dur" value="${s.dur}"><button class="mini" data-sa="fillDur" title="Set duration to the max — plays from `in` to the end of the source clip (${fmt(cdur)}s total)" style="font-size:10px;padding:1px 5px;margin-left:2px">↔ max</button></label>
+        <label>dur<input type="number" step="0.1" data-f="dur" value="${s.dur}"><button class="mini" data-sa="fillDur" title="Set duration to the max — plays from the current IN point to the end of the source clip (${fmt(cdur)}s total)" style="font-size:10px;padding:1px 5px;margin-left:2px">↔ max</button></label>
         <label>zoom<input type="number" step="0.05" min="1" data-f="zoom" value="${resolveSegment(s).zoom||1}"></label>
         <label>anchor<select data-f="anchor">${['center','top','bottom','left','right'].map(a=>`<option ${a===(resolveSegment(s).anchor||'center')?'selected':''}>${a}</option>`).join('')}</select></label>
         <label title="Playback speed (slow-mo / fast)">speed<select data-f="speed">${[0.25,0.5,0.75,1,1.5,2,3,4].map(sp=>`<option value="${sp}" ${(+s.speed||1)===sp?'selected':''}>${sp}×</option>`).join('')}</select></label>
