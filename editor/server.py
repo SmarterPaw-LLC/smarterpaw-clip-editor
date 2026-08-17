@@ -1088,6 +1088,17 @@ def _anim_exprs(o, s, dur, W, tv="t", H=None):
             term = "if(lt(%s,%g),pow(1-%s/%g,2)*%g,0)" % (lt, d, lt, d, dist)
             term = ("-" if dr in ("left", "up") else "") + term
             (add_dx if dr in ("left", "right") else add_dy)(term)
+        elif ty == "slideOut":
+            # Mirror of slideIn on the trailing edge: during the last `d` seconds of the anim window,
+            # ease from the base position OUT toward the chosen direction by `dist`. Trigger point
+            # (dw - d): before it, offset = 0; after it, quadratic ease outward.
+            d = max(0.01, float(a.get("d", 0.5))); dr = a.get("dir", "right")
+            axis = H if dr in ("up", "down") else W
+            dist = float(a.get("dist", 0.2)) * axis
+            trig = max(0.0, dw - d)
+            term = "if(gt(%s,%g),pow(min(1,(%s-%g)/%g),2)*%g,0)" % (lt, trig, lt, trig, d, dist)
+            term = ("-" if dr in ("left", "up") else "") + term
+            (add_dx if dr in ("left", "right") else add_dy)(term)
         elif ty == "moveTo":   # ease from (o.x, o.y) to (a.x, a.y) over d seconds, then hold
             d = max(0.01, float(a.get("d", 1)))
             tx = float(a.get("x", o.get("x", 0.5)) or o.get("x", 0.5))
