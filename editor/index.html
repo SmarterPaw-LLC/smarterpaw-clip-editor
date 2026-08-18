@@ -310,7 +310,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.5.5</span>
+  <span class="ver" id="appVer">v2.5.6</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -321,7 +321,7 @@
   <button id="btnAudio" title="Add music + sound effects on multiple audio lanes">🎵 Audio</button>
   <button class="ghost" id="btnReload">Reload clips</button>
   <button id="btnSave">Save</button>
-  <button class="primary" id="btnRender">▶ Render MP4</button>
+  <button class="primary" id="btnRender">▶ Render</button>
 </header>
 
 <div id="staleBanner" style="display:none;background:#7a1f1f;color:#fff;padding:8px 14px;font-size:13px;text-align:center">
@@ -740,8 +740,14 @@ EMPHASIS (unreliable — better to CAPS the word in the script, or add , or — 
 
 <div id="exModal" class="cmodal" style="display:none">
   <div class="card">
-    <div class="hd"><span>▶ Render MP4</span><button class="mini" id="exClose">✕</button></div>
+    <div class="hd"><span>▶ Render</span><button class="mini" id="exClose">✕</button></div>
     <div class="bd">
+      <div class="row"><label class="k">Format</label>
+        <select id="exFormat"><option value="mp4">MP4 (H.264 + AAC audio)</option><option value="gif">Animated GIF (no audio)</option></select></div>
+      <div class="row" id="exGifRow" style="display:none"><label class="k">GIF settings</label>
+        <label>Width <input type="number" id="exGifWidth" value="480" min="120" max="1920" step="10" style="width:70px"> px</label>
+        <label>FPS <input type="number" id="exGifFps" value="15" min="5" max="30" step="1" style="width:56px"></label>
+        <span style="font-size:11px;color:var(--mut)">wider + higher fps = bigger file</span></div>
       <div class="row"><label class="k">Canvas</label>
         <select id="exCanvas"><option value="9x16">9:16 Reels / Stories</option>
           <option value="4x5">4:5 Meta feed</option><option value="1x1">1:1 Square</option><option value="16x9">16:9 YouTube</option></select></div>
@@ -4954,7 +4960,9 @@ $('#tlPhGrip').addEventListener('pointerdown', ev=>{ ev.stopPropagation(); start
 $('#btnSave').onclick=()=>projSave();
 function projFileBase(){ const n=(curProj&&curProj.name)?curProj.name:''; return n.replace(/[^A-Za-z0-9_-]+/g,'_').replace(/^_+|_+$/g,''); }
 function exNamePreview(){ const base=($('#exName').value.trim()||projFileBase()||'clip'); const cv=$('#exCanvas').value;
-  if($('#exNamePreview')) $('#exNamePreview').textContent='→ saves as: '+base+($('#exStamp').checked?'_<timestamp>':'')+'_'+cv+'.mp4'; }
+  const ext = ($('#exFormat')&&$('#exFormat').value==='gif') ? '.gif' : '.mp4';
+  if($('#exGifRow')) $('#exGifRow').style.display = ($('#exFormat')&&$('#exFormat').value==='gif') ? '' : 'none';
+  if($('#exNamePreview')) $('#exNamePreview').textContent='→ saves as: '+base+($('#exStamp').checked?'_<timestamp>':'')+'_'+cv+ext; }
 function openExportModal(){ stop();
   $('#exDir').value=(EDL.settings.outDir)||MAN.exportsDir||'';
   $('#exName').value=projFileBase()||(EDL.settings.outName)||'clip';   // default to the project name
@@ -4964,7 +4972,7 @@ function closeExportModal(){ $('#exModal').style.display='none'; }
 $('#btnRender').onclick=openExportModal;
 $('#exClose').onclick=closeExportModal; $('#exCancel').onclick=closeExportModal;
 $('#exModal').onclick=e=>{ if(e.target.id==='exModal') closeExportModal(); };
-['exName','exCanvas','exStamp'].forEach(id=>{ const el=$('#'+id); if(el){ el.oninput=exNamePreview; el.onchange=exNamePreview; } });
+['exName','exCanvas','exStamp','exFormat','exGifFps','exGifWidth'].forEach(id=>{ const el=$('#'+id); if(el){ el.oninput=exNamePreview; el.onchange=exNamePreview; } });
 $('#exGo').onclick=async()=>{
   const canvas=$('#exCanvas').value; EDL.settings.canvas=canvas; $('#setCanvas').value=canvas; sizeStage(); updateTotal();
   const dir=$('#exDir').value.trim(), base=($('#exName').value.trim()||projFileBase()||'clip');
@@ -4979,7 +4987,10 @@ $('#exGo').onclick=async()=>{
     '<div style="height:8px;background:#0006;border-radius:5px;overflow:hidden"><div style="height:100%;width:'+Math.max(3,Math.min(100,pct||0))+'%;background:var(--acc,#8ab81d);transition:width .3s"></div></div>'; };
   showProg('Preparing…',2);
   const baked=await bakeStickersForRender(EDL);   // bake sticker text to the same canvas PNG the preview uses
-  const body=Object.assign({},baked,{_outDir:dir,_outName:name});
+  const fmt = ($('#exFormat')&&$('#exFormat').value) || 'mp4';
+  const body=Object.assign({},baked,{_outDir:dir,_outName:name,_format:fmt,
+    _gifFps:parseInt(($('#exGifFps')&&$('#exGifFps').value)||15,10),
+    _gifWidth:parseInt(($('#exGifWidth')&&$('#exGifWidth').value)||480,10)});
   const finish=r=>{ if(r&&r.ok){ const link=r.output?(' · <a class="dl" href="'+r.output+'" target="_blank">open</a>'):'';
       $('#exStatus').innerHTML='✅ Saved <b>'+r.name+'</b> ('+r.total+'s, '+el()+')<br><span style="color:var(--mut);word-break:break-all">'+r.path+'</span>'+link;
       $('#status').innerHTML='✅ '+r.name+link; toast('Render complete'); }

@@ -2095,7 +2095,31 @@ def _resolve_variants(edl):
     return new_edl
 
 
-def render(edl, out_dir=None, out_name=None, progress=None):
+def _mp4_to_gif(mp4_path, gif_path, fps=15, width=480, progress=None):
+    """Two-pass GIF: palettegen builds a per-clip 256-color palette, paletteuse dithers against it.
+    Way better quality than -c:v gif alone. Width -1 keeps source resolution; else scales W (H auto,
+    forced to an even number by lanczos+flags='full_chroma_int' upstream)."""
+    if progress is not None:
+        progress["stage"] = "Building GIF palette…"; progress["pct"] = max(progress.get("pct", 0), 94)
+    pal = mp4_path + ".pal.png"
+    scale = f"scale={int(width)}:-2:flags=lanczos" if int(width) > 0 else "null"
+    vf_pal = f"fps={int(fps)},{scale},palettegen=stats_mode=diff"
+    r = run([FFMPEG, "-y", "-loglevel", "error", "-i", mp4_path, "-vf", vf_pal, pal])
+    if r.returncode != 0:
+        return False, f"palette pass failed:\n{r.stderr[-1500:]}"
+    if progress is not None:
+        progress["stage"] = "Encoding GIF…"; progress["pct"] = 97
+    vf_use = f"fps={int(fps)},{scale}[x];[x][1:v]paletteuse=dither=sierra2_4a:diff_mode=rectangle"
+    r = run([FFMPEG, "-y", "-loglevel", "error", "-i", mp4_path, "-i", pal,
+             "-lavfi", vf_use, "-loop", "0", gif_path])
+    try: os.remove(pal)
+    except Exception: pass
+    if r.returncode != 0:
+        return False, f"GIF encode failed:\n{r.stderr[-1500:]}"
+    return True, ""
+
+
+def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=15, gif_width=480):
     def prog(stage, pct):
         if progress is not None:
             progress["stage"] = stage; progress["pct"] = int(pct)
@@ -2484,6 +2508,17 @@ def render(edl, out_dir=None, out_name=None, progress=None):
             if "Permission denied" in tail or "being used" in tail or "Invalid argument" in tail:
                 hint = "\n(The file may be open in a video player — close it, or use a new filename.)"
             return {"ok": False, "log": f"Couldn't write the file:\n{tail}{hint}"}
+        # GIF post-pass: after the MP4 lands, transcode with palettegen/paletteuse. Audio is
+        # dropped (GIFs have none). We remove the intermediate MP4 so users don't wind up with
+        # two files per render — if they wanted both, they'd render twice.
+        if str(fmt).lower() == "gif":
+            gif_path = os.path.splitext(out)[0] + ".gif"
+            ok_gif, err = _mp4_to_gif(out, gif_path, fps=gif_fps, width=gif_width, progress=progress)
+            if not ok_gif:
+                return {"ok": False, "log": err}
+            try: os.remove(out)
+            except Exception: pass
+            out = gif_path
         url = None
         try:
             rel = os.path.relpath(out, PROJ)
@@ -3119,6 +3154,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/render":
             out_dir = data.pop("_outDir", None) or None
             out_name = data.pop("_outName", None) or None
+            fmt = (data.pop("_format", "mp4") or "mp4").lower()
+            try: gif_fps = int(data.pop("_gifFps", 15) or 15)
+            except Exception: gif_fps = 15
+            try: gif_width = int(data.pop("_gifWidth", 480) or 480)
+            except Exception: gif_width = 480
             save_edl(data)
             with _render_lock:
                 _render_seq[0] += 1; jid = str(_render_seq[0])
@@ -3127,9 +3167,9 @@ class Handler(BaseHTTPRequestHandler):
                 for old in [k for k in _render_jobs if k != jid and _render_jobs[k].get("done")]:
                     _render_jobs.pop(old, None)   # keep the table small
 
-            def _work(d=data, od=out_dir, on=out_name, j=job):
+            def _work(d=data, od=out_dir, on=out_name, j=job, f=fmt, gf=gif_fps, gw=gif_width):
                 try:
-                    j["result"] = render(d, od, on, progress=j)
+                    j["result"] = render(d, od, on, progress=j, fmt=f, gif_fps=gf, gif_width=gw)
                 except Exception as e:
                     j["result"] = {"ok": False, "log": repr(e)}
                 finally:
