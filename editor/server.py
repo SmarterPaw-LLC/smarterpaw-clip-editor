@@ -1099,16 +1099,53 @@ def _anim_exprs(o, s, dur, W, tv="t", H=None):
             term = "if(gt(%s,%g),pow(min(1,(%s-%g)/%g),2)*%g,0)" % (lt, trig, lt, trig, d, dist)
             term = ("-" if dr in ("left", "up") else "") + term
             (add_dx if dr in ("left", "right") else add_dy)(term)
-        elif ty == "moveTo":   # ease from (o.x, o.y) to (a.x, a.y) over d seconds, then hold
-            d = max(0.01, float(a.get("d", 1)))
-            tx = float(a.get("x", o.get("x", 0.5)) or o.get("x", 0.5))
-            ty_ = float(a.get("y", o.get("y", 0.5)) or o.get("y", 0.5))
+        elif ty == "moveTo":
+            # Multi-stop path. Legacy {d,x,y} is treated as a single-stop shortcut for back-compat.
+            # Each stop's `ease` shapes movement FROM the previous stop TO this one.
             ox = float(o.get("x", 0.5) or 0.5); oy = float(o.get("y", 0.5) or 0.5)
-            # ease-out cubic on k = clamp(lt/d, 0, 1); after t=d it holds at target (k=1 → ease=1)
-            k = "min(1,max(0,%s/%g))" % (lt, d)
-            ease = "(1-pow(1-(%s),3))" % k
-            add_dx("%g*(%s)" % ((tx - ox) * W,  ease))
-            add_dy("%g*(%s)" % ((ty_ - oy) * H, ease))
+            raw_stops = a.get("stops")
+            if not (isinstance(raw_stops, list) and raw_stops):
+                d = max(0.01, float(a.get("d", 1)))
+                tx = float(a.get("x", ox) or ox); ty2 = float(a.get("y", oy) or oy)
+                raw_stops = [{"x": tx, "y": ty2, "t": d, "ease": "cubic-out"}]
+            stops = sorted(
+                [{"x": float(s.get("x", ox) or ox), "y": float(s.get("y", oy) or oy),
+                  "t": max(0.01, float(s.get("t", 1) or 1)),
+                  "ease": (s.get("ease") or "cubic-out")}
+                 for s in raw_stops if isinstance(s, dict)],
+                key=lambda s: s["t"])
+            if not stops:
+                stops = [{"x": ox, "y": oy, "t": 1.0, "ease": "cubic-out"}]
+            # Build nested if-chain across segments. Each segment i:
+            #   base = (prev.x, prev.y),  next = (stop_i.x, stop_i.y),  t in [prev.t, stop_i.t]
+            #   k = (lt - prev.t) / span,  eased with stop_i.ease
+            def ease_expr(name, k):
+                if name == "linear":    return "(%s)" % k
+                if name == "in":        return "((%s)*(%s))" % (k, k)
+                if name == "out":       return "(1-(1-(%s))*(1-(%s)))" % (k, k)
+                if name == "inout":     return "(if(lt(%s,0.5),2*(%s)*(%s),1-pow(-2*(%s)+2,2)/2))" % (k, k, k, k)
+                if name == "cubic-in":  return "((%s)*(%s)*(%s))" % (k, k, k)
+                if name == "back-out":  return "(1+2.70158*pow((%s)-1,3)+1.70158*pow((%s)-1,2))" % (k, k)
+                return "(1-pow(1-(%s),3))" % k   # cubic-out fallback
+            # Walk stops right-to-left, wrapping each new segment as the FALSE branch of the next.
+            # Final (past-last-stop) fallback = the last stop's position (hold).
+            last = stops[-1]
+            x_expr = "%g" % ((last["x"] - ox) * W)
+            y_expr = "%g" % ((last["y"] - oy) * H)
+            pT = 0.0; pX = ox; pY = oy
+            branches = []   # (t_upper, x_lerp_expr, y_lerp_expr) per segment, in stop-order
+            for s in stops:
+                span = max(0.001, s["t"] - pT)
+                k = "min(1,max(0,(%s-%g)/%g))" % (lt, pT, span)
+                e = ease_expr(s["ease"], k)
+                bx = "(%g+(%g)*(%s))" % ((pX - ox) * W, (s["x"] - pX) * W, e)
+                by = "(%g+(%g)*(%s))" % ((pY - oy) * H, (s["y"] - pY) * H, e)
+                branches.append((s["t"], bx, by))
+                pT = s["t"]; pX = s["x"]; pY = s["y"]
+            for t_up, bx, by in reversed(branches):
+                x_expr = "if(lt(%s,%g),%s,%s)" % (lt, t_up, bx, x_expr)
+                y_expr = "if(lt(%s,%g),%s,%s)" % (lt, t_up, by, y_expr)
+            add_dx(x_expr); add_dy(y_expr)
         elif ty == "bounceIn":
             d = max(0.01, float(a.get("d", 0.6))); amp = float(a.get("amp", 0.12)) * W
             add_dy("if(lt(%s,%g),-%g*exp(-3*%s/%g)*cos(2*PI*1.6*%s/%g)*(1-%s/%g),0)" % (lt, d, amp, lt, d, lt, d, lt, d))

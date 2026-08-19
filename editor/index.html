@@ -310,7 +310,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.5.6</span>
+  <span class="ver" id="appVer">v2.6.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2767,7 +2767,11 @@ const ANIM_DEFS={
   bounce:  {label:'Bounce (loop)', def:{amp:0.05,speed:1},  ctrls:[['amp','Height','range',0.01,0.2,0.01],['speed','Speed','range',0.2,3,0.1]]},
   slideIn: {label:'Slide in',      def:{d:0.5,dir:'left',dist:0.2},ctrls:[['d','Seconds','num',0.1,3,0.1],['dir','From','sel',['left','right','up','down']],['dist','Distance','range',0.05,1.2,0.05]]},
   slideOut:{label:'Slide out',     def:{d:0.5,dir:'right',dist:0.2},ctrls:[['d','Seconds','num',0.1,3,0.1],['dir','To','sel',['left','right','up','down']],['dist','Distance','range',0.05,1.2,0.05]]},
-  moveTo:  {label:'Move to (x,y)',  def:{d:1,x:0.5,y:0.5},   ctrls:[['d','Seconds','num',0.1,10,0.1],['x','End X (0–1)','range',0,1,0.01],['y','End Y (0–1)','range',0,1,0.01]]},
+  // Multi-stop path — data is `stops:[{x,y,t,ease},…]`. `t` is seconds from the anim start; each
+  // stop's `ease` shapes travel from the PREVIOUS stop to this one. Legacy {d,x,y} shape is
+  // migrated to a single stop on first render (see _mtStops below). Custom stops-editor UI is
+  // injected in renderAnimList — the empty ctrls[] here suppresses the default control row.
+  moveTo:  {label:'Move to (x,y) · multi-stop', def:{stops:[{x:0.5,y:0.5,t:1,ease:'cubic-out'}]}, ctrls:[]},
   bounceIn:{label:'Bounce in',     def:{d:0.6,amp:0.12},   ctrls:[['d','Seconds','num',0.2,2,0.1],['amp','Height','range',0.02,0.3,0.02]]},
   dropIn:  {label:'Drop in',       def:{d:0.6,dist:0.5},   ctrls:[['d','Seconds','num',0.2,2,0.1],['dist','Height','range',0.1,1,0.05]]},
   popIn:   {label:'Pop in',        def:{d:0.45},           ctrls:[['d','Seconds','num',0.15,1.5,0.05]]},
@@ -2816,6 +2820,30 @@ function sparkleField(a){ const n=Math.max(1,Math.round(a.count||6)), out=[];
     out.push({cx:Math.cos(ang)*r, cy:Math.sin(ang)*r, ph:i*1.7, sc:0.7+0.6*(((i+1)*0.318)%1)}); } return out; }
 function sparkleOp(t, ph, speed){ return Math.pow(Math.max(0,Math.sin(2*Math.PI*speed*t+ph)),3); }   // sharp twinkle pop
 function _easeOutBack(k){ const c1=1.70158,c3=c1+1; return 1+c3*Math.pow(k-1,3)+c1*Math.pow(k-1,2); }
+// Named ease curves used by multi-stop moveTo. Names match the server (see _ease_expr in server.py)
+// so preview and render agree exactly. Keep in sync when adding new curves.
+const EASE_FNS = {
+  'linear':    k => k,
+  'in':        k => k*k,
+  'out':       k => 1 - (1-k)*(1-k),
+  'inout':     k => k<0.5 ? 2*k*k : 1 - Math.pow(-2*k+2, 2)/2,
+  'cubic-in':  k => k*k*k,
+  'cubic-out': k => 1 - Math.pow(1-k, 3),
+  'back-out':  k => { const c1=1.70158, c3=c1+1; return 1 + c3*Math.pow(k-1,3) + c1*Math.pow(k-1,2); }
+};
+function _easeFn(name){ return EASE_FNS[name] || EASE_FNS['cubic-out']; }
+// moveTo waypoints: legacy {d,x,y} becomes a single stop; new {stops:[…]} passes through sorted.
+// Always returns at least one stop so animState can find a segment.
+function _mtStops(a, o){
+  if(Array.isArray(a.stops) && a.stops.length){
+    return a.stops.slice().sort((p,q)=>(+p.t||0)-(+q.t||0)).map(s=>({
+      x:+s.x||0, y:+s.y||0, t:Math.max(0.01,+s.t||0.01), ease:s.ease||'cubic-out'
+    }));
+  }
+  const d=Math.max(0.01,+a.d||1);
+  const tx=(a.x!=null?+a.x:(+o.x||0.5)), ty=(a.y!=null?+a.y:(+o.y||0.5));
+  return [{x:tx, y:ty, t:d, ease:'cubic-out'}];
+}
 // Returns {dx,dy (px in W units), op (0..1), rot (deg), sc (scale)} for overlay o at local time lt.
 function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg=Math.max(0,lt);
   // Derive canvas height for anims that need proper Y-scaling (e.g. moveTo target in canvas fractions).
@@ -2861,13 +2889,25 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg
       const t2 = T - (dur - d);   // dur = overlay duration (animState arg)
       if(t2 > 0){ const e = Math.pow(Math.min(1, t2/d), 2);
         if(dir==='left')dx-=e*dist; else if(dir==='right')dx+=e*dist; else if(dir==='up')dy-=e*dist; else dy+=e*dist; } break; }
-    case 'moveTo': {   // Ease from the overlay's base (x,y) to a new target (a.x, a.y) over d seconds, then hold
-      const d=Math.max(0.01,a.d||1);
-      const tx=(a.x!=null?+a.x:(+o.x||0.5)), ty=(a.y!=null?+a.y:(+o.y||0.5));
+    case 'moveTo': {
+      const stops = _mtStops(a, o);   // waypoints from anim start (t=0 is base). Always ≥1 entry.
       const ox=(+o.x||0.5), oy=(+o.y||0.5);
-      const k=Math.min(1, T/d), ease=1-Math.pow(1-k,3);      // ease-out cubic
-      dx += (tx - ox) * W * ease;
-      dy += (ty - oy) * H * ease;
+      // Base is the implicit t=0 anchor. Find the segment we're currently in.
+      let pX=ox, pY=oy, pT=0;
+      let nX=stops[stops.length-1].x, nY=stops[stops.length-1].y, nT=stops[stops.length-1].t, eK='linear';
+      for(const s of stops){
+        if(T <= s.t){ nX=+s.x; nY=+s.y; nT=+s.t; eK=s.ease||'cubic-out'; break; }
+        pX=+s.x; pY=+s.y; pT=+s.t;
+      }
+      if(T >= stops[stops.length-1].t){   // past the last waypoint: hold at the last position
+        pX=stops[stops.length-1].x; pY=stops[stops.length-1].y;
+        nX=pX; nY=pY; nT=pT+0.01;
+      }
+      const span = Math.max(0.001, nT - pT);
+      const k = Math.max(0, Math.min(1, (T - pT) / span));
+      const e = _easeFn(eK)(k);
+      dx += ((pX + (nX - pX) * e) - ox) * W;
+      dy += ((pY + (nY - pY) * e) - oy) * H;
       break; }
     case 'bounceIn': { const d=Math.max(0.01,a.d||0.6), amp=(a.amp!=null?a.amp:0.12)*W; if(T<d){ const k=T/d; dy+=-amp*Math.exp(-3*k)*Math.cos(2*Math.PI*1.6*k)*(1-k); } break; }
     case 'dropIn': { const d=Math.max(0.01,a.d||0.6), dist=(a.dist!=null?a.dist:0.5)*W; if(T<d){ const k=T/d; dy-=dist*(1-_easeOutBack(k)); } break; }
@@ -3925,11 +3965,50 @@ function buildOvEditor(){
     if(kind==='seed') return `<button class="mini anseed" data-ai="${ai}" title="randomize">🎲 ${label}</button>`;
     if(kind==='sel') return `<label>${label} <select data-ai="${ai}" data-k="${key}" class="anc">${c[3].map(op=>`<option ${op===v?'selected':''}>${op}</option>`).join('')}</select></label>`;
     const t=kind==='num'?'number':'range'; return `<label>${label} <input type="${t}" class="anc" data-ai="${ai}" data-k="${key}" min="${c[3]}" max="${c[4]}" step="${c[5]}" value="${v}" ${kind==='num'?'style="width:50px"':''}></label>`; }
+  // Multi-stop moveTo editor: renders the waypoint table + add/dup/remove buttons. Handlers are
+  // wired below (mtStop / mtStopAdd / mtStopDel). Legacy {d,x,y} shape is migrated on first edit
+  // by writing back a normalized `stops` array before the handler mutates it.
+  function _mtEnsureStops(a){
+    if(Array.isArray(a.stops) && a.stops.length) return;
+    const d=Math.max(0.01,+a.d||1);
+    const tx=(a.x!=null?+a.x:0.5), ty=(a.y!=null?+a.y:0.5);
+    a.stops = [{x:tx, y:ty, t:d, ease:'cubic-out'}];
+    delete a.d; delete a.x; delete a.y;
+  }
+  const EASE_OPTS = ['linear','in','out','inout','cubic-in','cubic-out','back-out'];
+  function _renderMtStops(ai, a, o){
+    _mtEnsureStops(a);
+    const stops = a.stops;
+    const rows = stops.map((s,si)=>{
+      const es = EASE_OPTS.map(e=>`<option value="${e}"${(s.ease||'cubic-out')===e?' selected':''}>${e}</option>`).join('');
+      return `<tr>
+        <td style="color:var(--mut)">${si+1}</td>
+        <td><input type="number" class="mtStop" data-ai="${ai}" data-si="${si}" data-k="t" min="0" step="0.05" value="${(+s.t).toFixed(2)}" style="width:56px"> s</td>
+        <td><input type="number" class="mtStop" data-ai="${ai}" data-si="${si}" data-k="x" min="0" max="1" step="0.01" value="${(+s.x).toFixed(2)}" style="width:56px"></td>
+        <td><input type="number" class="mtStop" data-ai="${ai}" data-si="${si}" data-k="y" min="0" max="1" step="0.01" value="${(+s.y).toFixed(2)}" style="width:56px"></td>
+        <td><select class="mtStop" data-ai="${ai}" data-si="${si}" data-k="ease" title="Curve from the previous point to this one">${es}</select></td>
+        <td><button class="mini mtStopHere" data-ai="${ai}" data-si="${si}" title="Copy the overlay's CURRENT preview position into x,y for this stop">⤓ here</button></td>
+        <td><button class="mini mtStopDel" data-ai="${ai}" data-si="${si}" title="Delete this stop"${stops.length<=1?' disabled':''}>✕</button></td>
+      </tr>`;
+    }).join('');
+    return `<div style="border-top:1px solid var(--line);padding-top:6px;margin-top:4px">
+      <div style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--mut);margin-bottom:4px">
+        <span title="Each row is a waypoint. Ease shapes movement from the previous point to this one. Position 0 is the overlay's base (x,y)."><b>Stops</b> · base (${(+o.x||0.5).toFixed(2)}, ${(+o.y||0.5).toFixed(2)}) → waypoints ↓</span>
+        <button class="mini mtStopAdd" data-ai="${ai}" title="Add a new waypoint at the end">＋ add stop</button>
+      </div>
+      <table style="width:100%;font-size:11px;border-collapse:collapse">
+        <thead style="color:var(--mut)"><tr><th style="text-align:left">#</th><th style="text-align:left">time</th><th style="text-align:left">x</th><th style="text-align:left">y</th><th style="text-align:left">ease</th><th></th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  }
   function renderAnimList(){ const L=$('#ovAnimList'); if(!L) return; const anims=o.anims||[];
     L.innerHTML = anims.length ? anims.map((a,ai)=>{ const def=ANIM_DEFS[a.type]||{label:a.type,ctrls:[]};
       const tsv=(a.tStart!=null?(+a.tStart).toFixed(2):''), tev=(a.tEnd!=null?(+a.tEnd).toFixed(2):'');
       const gfOn=!!(a.gifFps && +a.gifFps>0); const gfv=gfOn?(+a.gifFps):8;
-      return `<div class="ecline" style="flex-direction:column;align-items:stretch;gap:4px"><div style="display:flex;align-items:center;gap:6px"><b style="flex:1;font-size:12px">${def.label}</b><button class="mini anrm" data-ai="${ai}" title="remove">✕</button></div><div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--mut)">${def.ctrls.map(c=>animCtrl(ai,a,c)).join('')}</div>
+      // moveTo shows a stops editor instead of the flat ctrl row — waypoints, per-segment easing.
+      const mtHTML = (a.type==='moveTo') ? _renderMtStops(ai, a, o) : '';
+      return `<div class="ecline" style="flex-direction:column;align-items:stretch;gap:4px"><div style="display:flex;align-items:center;gap:6px"><b style="flex:1;font-size:12px">${def.label}</b><button class="mini anrm" data-ai="${ai}" title="remove">✕</button></div><div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--mut)">${def.ctrls.map(c=>animCtrl(ai,a,c)).join('')}</div>${mtHTML}
         <div style="display:flex;gap:8px;font-size:11px;color:var(--mut);align-items:center;border-top:1px solid var(--line);padding-top:4px">
           <span title="Seconds within the overlay">Plays</span>
           <label>from <input type="number" class="anwin" data-ai="${ai}" data-k="tStart" min="0" step="0.1" value="${tsv}" placeholder="0" style="width:54px"></label>
@@ -3957,6 +4036,25 @@ function buildOvEditor(){
       if(el.checked){ a.gifFps = a.gifFps && +a.gifFps>0 ? +a.gifFps : 8; } else { delete a.gifFps; }
       renderAnimList(); renderOverlays(playhead); }; });
     L.querySelectorAll('.angiff').forEach(el=>{ el.oninput=el.onchange=()=>{ const a=o.anims[+el.dataset.ai], v=Math.max(1, parseFloat(el.value)||8); a.gifFps=v; renderOverlays(playhead); }; });
+    // moveTo stops-editor handlers
+    L.querySelectorAll('.mtStop').forEach(el=>{ el.oninput=el.onchange=()=>{ const a=o.anims[+el.dataset.ai]; _mtEnsureStops(a);
+      const si=+el.dataset.si, k=el.dataset.k; let v = el.value; if(k!=='ease') v = parseFloat(v)||0;
+      if(k==='t') v = Math.max(0.01, v); else if(k==='x'||k==='y') v = Math.max(0, Math.min(1, v));
+      a.stops[si][k] = v; renderOverlays(playhead); }; });
+    L.querySelectorAll('.mtStopAdd').forEach(b=>{ b.onclick=()=>{ histCommit(); const a=o.anims[+b.dataset.ai]; _mtEnsureStops(a);
+      const last=a.stops[a.stops.length-1];   // seed the new stop nearby so the user isn't jumping across the canvas
+      a.stops.push({x:Math.max(0,Math.min(1,(+last.x||0.5))), y:Math.max(0,Math.min(1,(+last.y||0.5)+0.1)), t:(+last.t||1)+0.5, ease:'cubic-out'});
+      renderAnimList(); renderOverlays(playhead); }; });
+    L.querySelectorAll('.mtStopDel').forEach(b=>{ b.onclick=()=>{ histCommit(); const a=o.anims[+b.dataset.ai]; _mtEnsureStops(a);
+      if(a.stops.length<=1) return;
+      a.stops.splice(+b.dataset.si, 1); renderAnimList(); renderOverlays(playhead); }; });
+    L.querySelectorAll('.mtStopHere').forEach(b=>{ b.onclick=()=>{ histCommit(); const a=o.anims[+b.dataset.ai]; _mtEnsureStops(a);
+      // Grab overlay's ACTUAL rendered position (base x/y plus any current animState offset) —
+      // useful for building a path by dragging the overlay and stamping stops as you go.
+      const oxNow=(+o.x||0.5), oyNow=(+o.y||0.5);
+      a.stops[+b.dataset.si].x = Math.max(0,Math.min(1, oxNow));
+      a.stops[+b.dataset.si].y = Math.max(0,Math.min(1, oyNow));
+      renderAnimList(); renderOverlays(playhead); }; });
     addSliderNumbers(L);   // number steppers on animation sliders too
     updSpWarn();
   }
