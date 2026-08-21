@@ -497,9 +497,21 @@ def freeze_frame_clip(src_clip_id, at_seconds, base_dur=3.0):
     cid = base64.urlsafe_b64encode(os.urandom(8)).decode("ascii").rstrip("=")[:11]
     dest = os.path.join(dest_dir, f"{stem}_frozen_{at:0.2f}s_[{cid}].mp4")
     tmp_png = dest + ".tmp.png"
-    # -ss BEFORE -i for fast seek; -frames:v 1 grabs a single frame.
-    r = run([FFMPEG, "-y", "-loglevel", "error", "-ss", f"{at:.3f}", "-i", src,
-             "-frames:v", "1", tmp_png])
+    # ACCURATE seek (‑ss AFTER ‑i) so we always land on a real decoded frame — the fast form
+    # (‑ss before ‑i) snaps to the nearest keyframe and can over-shoot past the last frame on
+    # short clips, producing a black PNG. -update 1 forces writing the single frame; -an drops
+    # audio decoding overhead. Fallback: if the accurate seek somehow yields a black/empty PNG
+    # (rare — very short clips), retry from (at - 0.1s) to grab the previous frame.
+    def _extract(seek_at):
+        return run([FFMPEG, "-y", "-loglevel", "error", "-an",
+                    "-i", src, "-ss", f"{max(0.0, seek_at):.3f}",
+                    "-frames:v", "1", "-update", "1", "-q:v", "2", tmp_png])
+    r = _extract(at)
+    if (r.returncode != 0 or not os.path.exists(tmp_png) or os.path.getsize(tmp_png) < 128) and at > 0.1:
+        try:
+            if os.path.exists(tmp_png): os.remove(tmp_png)
+        except Exception: pass
+        r = _extract(at - 0.1)
     if r.returncode != 0 or not os.path.exists(tmp_png):
         raise RuntimeError(f"frame extract failed:\n{(r.stderr or '')[-800:]}")
     # Loop the still into a base_dur MP4. scale ensures even dims (H.264 requirement).
