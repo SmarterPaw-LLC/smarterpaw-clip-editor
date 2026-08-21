@@ -310,7 +310,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.6.0</span>
+  <span class="ver" id="appVer">v2.6.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -423,6 +423,7 @@
           </select></label>
         <button class="mini" id="btnResetFrame" title="Reset zoom to 1 and re-center">⟲ Reset framing</button>
         <button class="mini" id="btnAddSel">+ Add this clip to timeline</button>
+        <button class="mini" id="btnFreezeEnd" title="Grab the frame at THIS clip's current OUT point and add it as a new still-clip right after this one. Drag the new clip's edge to hold the frame as long as you want.">❄ Freeze last frame</button>
         <span style="color:var(--mut);font-size:11px">Tip: zoom in, then <b>drag the preview</b> to slide the crop (or scroll on the preview to zoom)</span>
       </div>
     </div>
@@ -1822,6 +1823,32 @@ $('#btnResetFrame').onclick=()=>{ if(sel<0) return toast('Select a clip in the t
   applyFraming(s); renderTimeline(); histCommit(); toast('Framing reset for '+curAspect()); };
 $('#btnAddSel').onclick=()=>{ const id=$('#btnAddSel').dataset.id || (sel>=0&&EDL.segments[sel].id); if(!id) return toast('Click a clip first');
   const v=activeVid(); EDL.segments.push({id, in: v?Math.round(v.currentTime*100)/100:0, dur:2.0, cap:'', zoom:1, anchor:'center'}); sel=EDL.segments.length-1; renderTimeline(); selectSeg(sel); toast('Segment added'); };
+// Freeze the LAST source-frame of the selected segment into a new still-backed clip on the
+// timeline right after this one. The still MP4 is base 3s; render's tpad clone-holds beyond
+// that, so dragging the new clip's edge to any length just extends the freeze. Same channel
+// as the parent seg; caption/framing are NOT inherited (a still with a talking caption reads
+// as a bug — user can re-add if they want it).
+$('#btnFreezeEnd').onclick=async()=>{
+  if(sel<0 || !EDL.segments[sel]) return toast('Select a segment first');
+  const seg = EDL.segments[sel];
+  const atSrc = Math.max(0, (+seg.in||0) + (+seg.dur||0) - 0.02);   // 20ms back-off so we don't fall off the clip's tail
+  const btn=$('#btnFreezeEnd'); const label=btn.textContent; btn.disabled=true; btn.textContent='❄ Freezing…';
+  try{
+    const r = await api('/api/freeze-frame', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({clipId: seg.id, at: atSrc, dur: 3})});
+    if(!r || !r.ok){ toast('Freeze failed: '+((r&&r.log)||'unknown')); return; }
+    histCommit();
+    MAN = await api('/api/manifest?_=' + Date.now()); MAN.byId={}; MAN.clips.forEach(c=>MAN.byId[c.id]=c);
+    const insAt = sel + 1;   // right after the source segment
+    const holdDur = Math.min(3, +r.dur || 3);
+    const stillSeg = {id: r.id, in: 0, dur: holdDur, cap: '', zoom: 1, anchor: 'center'};
+    if(seg.ch != null) stillSeg.ch = seg.ch;
+    EDL.segments.splice(insAt, 0, stillSeg);
+    sel = insAt; renderTimeline(); renderTracks(); selectSeg(sel);
+    toast('Freeze frame added — drag its right edge to hold longer');
+  } catch(e){ toast('Freeze failed: '+e); }
+  finally{ btn.disabled=false; btn.textContent=label; }
+};
 
 /* ---------- reframe in the preview: drag to pan · scroll to zoom (active timeline segment) ---------- */
 (function(){

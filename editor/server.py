@@ -465,6 +465,62 @@ def ingest_stopmotion(images, fps, brand, category, name):
     return rel, cat, cid
 
 
+def freeze_frame_clip(src_clip_id, at_seconds, base_dur=3.0):
+    """Extract ONE frame from `src_clip_id` at source-time `at_seconds` and package it as a
+    short (base_dur seconds) MP4. The render pipeline's tpad=stop_mode=clone will hold the last
+    frame indefinitely, so this base file can back a timeline segment of any drag length. Saved
+    into a 'freeze' category under the SAME brand as the source clip so it appears in the bin
+    right next to its parent. Returns (rel_path, category, cid, dur)."""
+    import base64
+    i2f = id_to_file()
+    src = i2f.get(src_clip_id)
+    if not src or not os.path.exists(src):
+        raise RuntimeError(f"source clip not found for id {src_clip_id}")
+    # Snap timestamp into valid range (probe → duration; clamp to <= dur - 1 frame at 30fps).
+    try:
+        d, _w, _h = probe(src); d = float(d)
+    except Exception:
+        d = 0.0
+    at = max(0.0, float(at_seconds or 0))
+    if d > 0.033: at = min(at, d - 0.033)
+    # Pick the brand from the source path so the freeze clip inherits it (falls back to meowijuana).
+    try:
+        rel_src = os.path.relpath(src, SRC_ROOT).replace("\\", "/").split("/")
+        br = rel_src[0].lower() if len(rel_src) >= 3 and rel_src[0].lower() in BRAND_KEYS else "meowijuana"
+    except Exception:
+        br = "meowijuana"
+    dest_dir = os.path.join(SRC_ROOT, br, "freeze")
+    os.makedirs(dest_dir, exist_ok=True)
+    src_stem = os.path.splitext(os.path.basename(src))[0]
+    src_stem = re.sub(r"_frozen_.*$", "", src_stem)   # avoid stacking "_frozen_.._frozen_.." on repeat freezes
+    stem = re.sub(r"[^A-Za-z0-9._-]", "_", src_stem)[:60] or "clip"
+    cid = base64.urlsafe_b64encode(os.urandom(8)).decode("ascii").rstrip("=")[:11]
+    dest = os.path.join(dest_dir, f"{stem}_frozen_{at:0.2f}s_[{cid}].mp4")
+    tmp_png = dest + ".tmp.png"
+    # -ss BEFORE -i for fast seek; -frames:v 1 grabs a single frame.
+    r = run([FFMPEG, "-y", "-loglevel", "error", "-ss", f"{at:.3f}", "-i", src,
+             "-frames:v", "1", tmp_png])
+    if r.returncode != 0 or not os.path.exists(tmp_png):
+        raise RuntimeError(f"frame extract failed:\n{(r.stderr or '')[-800:]}")
+    # Loop the still into a base_dur MP4. scale ensures even dims (H.264 requirement).
+    try:
+        bd = max(0.5, min(30.0, float(base_dur or 3.0)))
+        r = run([FFMPEG, "-y", "-loglevel", "error", "-loop", "1", "-t", f"{bd:.3f}",
+                 "-i", tmp_png, "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=30,format=yuv420p",
+                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                 "-movflags", "+faststart", dest])
+        if r.returncode != 0 or not os.path.exists(dest):
+            raise RuntimeError(f"still encode failed:\n{(r.stderr or '')[-800:]}")
+    finally:
+        try: os.remove(tmp_png)
+        except Exception: pass
+    _probe_cache.pop(dest, None)
+    # Remember the brand mapping so the flat-layout resolver still finds the freeze folder.
+    bm = load_brand_map(); bm["freeze"] = br; save_brand_map(bm)
+    rel = os.path.relpath(dest, PROJ).replace("\\", "/")
+    return rel, "freeze", os.path.splitext(os.path.basename(dest))[0], bd
+
+
 def ingest_upload(raw, orig_name, category):
     """Save an uploaded video into sources/clips/<brand>/<category>/ as a browser-playable
     .mp4 (remux if already H.264, else re-encode). Returns (rel_path, category)."""
@@ -3242,6 +3298,23 @@ class Handler(BaseHTTPRequestHandler):
             with open(os.path.join(ASSETS, name), "wb") as f:
                 f.write(raw)
             return self._json({"ok": True, "src": "assets/" + name})
+        if path == "/api/freeze-frame":
+            src_id = (data.get("clipId") or "").strip()
+            if not src_id:
+                return self._json({"ok": False, "log": "clipId required"}, 400)
+            try:
+                at = float(data.get("at", 0) or 0)
+            except Exception:
+                at = 0.0
+            try:
+                bd = float(data.get("dur", 3) or 3)
+            except Exception:
+                bd = 3.0
+            try:
+                rel, cat, cid, made_dur = freeze_frame_clip(src_id, at, bd)
+            except Exception as e:
+                return self._json({"ok": False, "log": repr(e)}, 500)
+            return self._json({"ok": True, "category": cat, "file": rel, "id": cid, "dur": made_dur})
         if path == "/api/upload-clip":
             import base64
             b64 = data.get("data", "")
