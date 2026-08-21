@@ -530,7 +530,10 @@ def freeze_frame_clip(src_clip_id, at_seconds, base_dur=3.0):
     # Remember the brand mapping so the flat-layout resolver still finds the freeze folder.
     bm = load_brand_map(); bm["freeze"] = br; save_brand_map(bm)
     rel = os.path.relpath(dest, PROJ).replace("\\", "/")
-    return rel, "freeze", os.path.splitext(os.path.basename(dest))[0], bd
+    # Return the 11-char bracketed cid (matches ID_RE in scan_sources) — NOT the full stem.
+    # id_to_file() maps clips by that short id, so returning the stem would leave the freeze
+    # clip unresolvable at render time even though the file lives in the source bin.
+    return rel, "freeze", cid, bd
 
 
 def ingest_upload(raw, orig_name, category):
@@ -2297,7 +2300,17 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
                 continue
             src = i2f.get(seg["id"])
             if not src:
-                return {"ok": False, "log": f"Clip not found for id {seg['id']}"}
+                # Legacy freeze-clip repair: pre-v2.7.2 freezes stored the full filename stem as
+                # the seg id (bug), but id_to_file() indexes by the [XXXXXXXXXXX] bracketed cid.
+                # If the seg id contains a matching bracketed cid, resolve through that instead
+                # of failing the whole render.
+                m_leg = ID_RE.search(str(seg["id"]))
+                if m_leg:
+                    src = i2f.get(m_leg.group(1))
+                    if src:
+                        seg["id"] = m_leg.group(1)   # in-memory repair for the rest of this render
+                if not src:
+                    return {"ok": False, "log": f"Clip not found for id {seg['id']}"}
             z = max(float(seg.get("zoom", 1.0)), 1.0)
             _kb_s = seg.get("kbStart"); _kb_e = seg.get("kbEnd")
             if _kb_s and _kb_e:

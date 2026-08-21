@@ -310,7 +310,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.7.1</span>
+  <span class="ver" id="appVer">v2.7.2</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -5616,6 +5616,11 @@ function applyEDL(edl){
   if(!s.canvas) s.canvas='9x16'; if(s.captionSize==null) s.captionSize=0.058;
   if(s.captionY==null) s.captionY=0.62;
   if(!EDL.segments) EDL.segments=[];
+  // Legacy freeze-clip id repair (pre-v2.7.2 bug): freeze frames stored the FULL filename stem
+  // as their seg.id, but scan_sources indexes clips by the [XXXXXXXXXXX] 11-char bracketed cid.
+  // Extract that bracketed cid and rewrite the seg.id so preview lookups (MAN.byId) work again.
+  const _idBracket = /_\[([A-Za-z0-9_-]{11})\]$/;
+  EDL.segments.forEach(sg=>{ if(sg && sg.id){ const m = _idBracket.exec(String(sg.id)); if(m) sg.id = m[1]; } });
   if(!Array.isArray(EDL.overlays)) EDL.overlays=[];
   if(!Array.isArray(EDL.audio)) EDL.audio=[];   // multi-track audio overlays (music + sfx + voiceover)
   // Legacy audio-src migration: TTS voiceovers used to save into sources/sfx/. Any project
