@@ -2368,6 +2368,22 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
             outlen = dur / spd                          # timeline (output) seconds
             if abs(spd - 1.0) > 1e-3:
                 base = f"setpts={1.0/spd:.6f}*PTS," + base   # slow (<1) / speed up (>1)
+            # Per-clip color grade: CSS filter (preview) → ffmpeg approximation (render).
+            # brightness in CSS is multiplicative (1.0 = neutral); ffmpeg eq brightness is an
+            # additive offset in [-1,1]. Scale factor 0.4 hits a visually similar result across
+            # the useful range without pushing highlights too hard. hue is 1:1 (degrees).
+            b_ = float(seg.get("bright", 1) or 1)
+            c_ = float(seg.get("contrast", 1) or 1)
+            sa_ = float(seg.get("saturation", 1) or 1)
+            hu_ = float(seg.get("hue", 0) or 0)
+            eq_parts = []
+            if abs(b_ - 1) > 0.001: eq_parts.append(f"brightness={max(-1.0, min(1.0, (b_-1)*0.4)):.4f}")
+            if abs(c_ - 1) > 0.001: eq_parts.append(f"contrast={max(-1000.0, min(1000.0, c_)):.4f}")
+            if abs(sa_ - 1) > 0.001: eq_parts.append(f"saturation={max(0.0, min(3.0, sa_)):.4f}")
+            if eq_parts:
+                base += ",eq=" + ":".join(eq_parts)
+            if abs(hu_) > 0.5:
+                base += f",hue=h={hu_:.2f}"
             base += f",tpad=stop_mode=clone:stop_duration={outlen:.3f}"   # freeze-fill the last frame so over-length clips hold (matches preview); -t clamps to outlen
             sfi = float(seg.get("fadeIn", 0) or 0); sfo = float(seg.get("fadeOut", 0) or 0)
             if sfi > 0:
@@ -2612,6 +2628,23 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
             try: os.remove(out)
             except Exception: pass
             out = gif_path
+        # MP4 GIF-look post-pass: if the user asked for < 60fps, re-encode with a fps= drop so
+        # the video shows stepped frames (like a GIF) while keeping the audio track intact —
+        # useful for channels that reject actual .gif uploads (LinkedIn, Meta feed, etc).
+        elif str(fmt).lower() == "mp4" and int(gif_fps or 60) < 60:
+            if progress is not None:
+                progress["stage"] = f"Dropping to {int(gif_fps)}fps (GIF-look)…"; progress["pct"] = max(progress.get("pct", 0), 95)
+            step_path = out + ".fps.mp4"
+            tgt = max(3, min(60, int(gif_fps)))
+            r = run([FFMPEG, "-y", "-loglevel", "error", "-i", out,
+                     "-vf", f"fps={tgt},format=yuv420p",
+                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
+                     "-c:a", "copy", "-movflags", "+faststart", step_path])
+            if r.returncode != 0:
+                return {"ok": False, "log": f"fps drop failed:\n{r.stderr[-1500:]}"}
+            try: os.replace(step_path, out)
+            except Exception as ex:
+                return {"ok": False, "log": f"fps drop swap failed: {ex}"}
         url = None
         try:
             rel = os.path.relpath(out, PROJ)

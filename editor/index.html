@@ -310,7 +310,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.6.3</span>
+  <span class="ver" id="appVer">v2.7.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -424,6 +424,13 @@
         <button class="mini" id="btnResetFrame" title="Reset zoom to 1 and re-center">⟲ Reset framing</button>
         <button class="mini" id="btnAddSel">+ Add this clip to timeline</button>
         <button class="mini" id="btnFreezeEnd" title="Grab the frame at THIS clip's current OUT point and add it as a new still-clip right after this one. Drag the new clip's edge to hold the frame as long as you want.">❄ Freeze last frame</button>
+      </div>
+      <div class="row" title="Per-clip color grade. Preview + render use the same numbers (CSS filter + ffmpeg eq/hue).">
+        <label>bright <input type="range" id="inBright" min="0.3" max="2" step="0.02" value="1" style="width:100px"><input type="number" id="inBrightN" min="0.3" max="2" step="0.02" value="1" style="width:56px"></label>
+        <label>contrast <input type="range" id="inContrast" min="0.3" max="2" step="0.02" value="1" style="width:100px"><input type="number" id="inContrastN" min="0.3" max="2" step="0.02" value="1" style="width:56px"></label>
+        <label>sat <input type="range" id="inSat" min="0" max="2.5" step="0.02" value="1" style="width:100px"><input type="number" id="inSatN" min="0" max="2.5" step="0.02" value="1" style="width:56px"></label>
+        <label>hue <input type="range" id="inHue" min="-180" max="180" step="1" value="0" style="width:100px"><input type="number" id="inHueN" min="-180" max="180" step="1" value="0" style="width:52px">°</label>
+        <button class="mini" id="btnResetColor" title="Reset color grade to normal (1/1/1/0)">⟲ Reset color</button>
         <span style="color:var(--mut);font-size:11px">Tip: zoom in, then <b>drag the preview</b> to slide the crop (or scroll on the preview to zoom)</span>
       </div>
     </div>
@@ -745,10 +752,12 @@ EMPHASIS (unreliable — better to CAPS the word in the script, or add , or — 
     <div class="bd">
       <div class="row"><label class="k">Format</label>
         <select id="exFormat"><option value="mp4">MP4 (H.264 + AAC audio)</option><option value="gif">Animated GIF (no audio)</option></select></div>
-      <div class="row" id="exGifRow" style="display:none"><label class="k">GIF settings</label>
+      <div class="row" id="exFpsRow"><label class="k">Frame rate</label>
+        <label>FPS <input type="number" id="exGifFps" value="60" min="5" max="60" step="1" style="width:56px"></label>
+        <span id="exFpsHint" style="font-size:11px;color:var(--mut)">60 = smooth video · 12–15 = GIF-look stepped frames (audio still kept for MP4)</span></div>
+      <div class="row" id="exGifRow" style="display:none"><label class="k">GIF size</label>
         <label>Width <input type="number" id="exGifWidth" value="480" min="120" max="1920" step="10" style="width:70px"> px</label>
         <button class="mini" type="button" id="exGifMatchCanvas" title="Set width to the Canvas native width — full-fidelity GIF (bigger file)">↔ Match canvas</button>
-        <label>FPS <input type="number" id="exGifFps" value="15" min="5" max="30" step="1" style="width:56px"></label>
         <span id="exGifDims" style="font-size:11px;color:var(--mut)">→ 480×— · aspect matches Canvas · bigger = larger file</span></div>
       <div class="row"><label class="k">Canvas</label>
         <select id="exCanvas"><option value="9x16">9:16 Reels / Stories</option>
@@ -907,6 +916,15 @@ function applyFraming(seg, v, tProgress){ v=v||vids[activeId]; if(!v) return;
   }
   const pos = (posX != null) ? ((posX*100).toFixed(3)+'% '+(posY*100).toFixed(3)+'%') : anchorPos(sr.anchor);
   v.style.objectPosition=pos; v.style.transformOrigin=pos; v.style.transform = z>1?`scale(${z})`:'none';
+  // Per-clip color tweaks: bright/contrast/sat/hue map 1:1 to CSS filter primitives so preview
+  // matches the ffmpeg eq/hue chain the server applies. Unset = 1/1/1/0 → filter is a no-op string.
+  const b=(sr.bright!=null?+sr.bright:1), c=(sr.contrast!=null?+sr.contrast:1), sa=(sr.saturation!=null?+sr.saturation:1), hu=(sr.hue!=null?+sr.hue:0);
+  const parts=[];
+  if(Math.abs(b-1)>0.001) parts.push('brightness('+b.toFixed(3)+')');
+  if(Math.abs(c-1)>0.001) parts.push('contrast('+c.toFixed(3)+')');
+  if(Math.abs(sa-1)>0.001) parts.push('saturate('+sa.toFixed(3)+')');
+  if(Math.abs(hu)>0.5) parts.push('hue-rotate('+hu.toFixed(1)+'deg)');
+  v.style.filter = parts.length ? parts.join(' ') : '';
 }
 function showCap(text){ const o=$('#capOverlay'); if(text&&text.trim()){ o.querySelector('span').textContent=text; o.style.display='block'; } else { o.style.display='none'; } }
 
@@ -1482,7 +1500,7 @@ function renderTimeline(){
     const cscrub=el.querySelector('.cscrub'), csct=el.querySelector('.csct');
     cscrub.oninput=()=>{ const t=parseFloat(cscrub.value)||0; csct.textContent=fmt(t)+'s';
       stop(); sel=i; tl.querySelectorAll('.seg').forEach((x,xi)=>x.classList.toggle('sel',xi===i));
-      { const _sr=resolveSegment(s); $('#inIn').value=s.in; $('#inDur').value=s.dur; $('#inZoom').value=_sr.zoom||1; $('#inZoomR').value=_sr.zoom||1; $('#inAnchor').value=_sr.anchor||'center'; $('#inSpeed').value=String(s.speed||1); updateSpeedHint(s); } $('#trimName').textContent=name;
+      { const _sr=resolveSegment(s); $('#inIn').value=s.in; $('#inDur').value=s.dur; $('#inZoom').value=_sr.zoom||1; $('#inZoomR').value=_sr.zoom||1; $('#inAnchor').value=_sr.anchor||'center'; $('#inSpeed').value=String(s.speed||1); updateSpeedHint(s); fillColorInputs(s); } $('#trimName').textContent=name;
       withClip(s.id, v=>{ if(!v) return; showVid(s.id); applyFraming(s,v); try{v.currentTime=t;}catch(e){} showCap(s.cap); });
     };
     el.querySelectorAll('[data-sa]').forEach(b=>{
@@ -1650,7 +1668,7 @@ function selectSeg(i){ stop(); sel=i; _msel=[]; _lastPick='seg'; renderTimeline(
 function loadSegIntoTrim(){
   if(sel<0||!EDL.segments[sel]) return; const s=EDL.segments[sel]; const c=MAN.byId[s.id];
   $('#trimName').textContent=c?c.label:s.id;
-  { const _sr=resolveSegment(s); $('#inIn').value=s.in; $('#inDur').value=s.dur; $('#inZoom').value=_sr.zoom||1; $('#inZoomR').value=_sr.zoom||1; $('#inAnchor').value=_sr.anchor||'center'; $('#inSpeed').value=String(s.speed||1); updateSpeedHint(s); }
+  { const _sr=resolveSegment(s); $('#inIn').value=s.in; $('#inDur').value=s.dur; $('#inZoom').value=_sr.zoom||1; $('#inZoomR').value=_sr.zoom||1; $('#inAnchor').value=_sr.anchor||'center'; $('#inSpeed').value=String(s.speed||1); updateSpeedHint(s); fillColorInputs(s); }
   withClip(s.id, v=>{ if(!v) return; showVid(s.id); applyFraming(s, v); try{v.currentTime=s.in;}catch(e){} showCap(s.cap); });
 }
 
@@ -1811,6 +1829,34 @@ $('#btnPlaySeg').onclick=()=>{ if(sel<0) return toast('Select a segment first');
 $('#btnSetIn').onclick=()=>{ if(sel<0) return toast('Select a segment first'); const v=activeVid(); if(!v) return; EDL.segments[sel].in=Math.round(v.currentTime*100)/100; loadSegIntoTrim(); renderTimeline(); };
 $('#btnSetOut').onclick=()=>{ if(sel<0) return toast('Select a segment first'); const v=activeVid(); if(!v) return; const s=EDL.segments[sel]; const d=Math.round((v.currentTime-s.in)*100)/100; if(d>0){ s.dur=d; loadSegIntoTrim(); renderTimeline(); } else toast('Playhead must be after IN'); };
 function updateSpeedHint(s){ const el=$('#inSpeedLen'); if(!el) return; const spd=segSpeed(s); el.textContent=(spd!==1)?('= '+fmt(segLen(s))+'s on timeline'):''; }
+// Mirror slider ↔ number pairs for color grade, and seed both from the segment. Called wherever
+// the trim panel picks up a new selection so a fresh clip's controls reflect its own grade.
+function fillColorInputs(s){
+  if(!s || !$('#inBright')) return;
+  const b=(s.bright!=null?+s.bright:1), c=(s.contrast!=null?+s.contrast:1), sa=(s.saturation!=null?+s.saturation:1), hu=(s.hue!=null?+s.hue:0);
+  $('#inBright').value=b; $('#inBrightN').value=b;
+  $('#inContrast').value=c; $('#inContrastN').value=c;
+  $('#inSat').value=sa; $('#inSatN').value=sa;
+  $('#inHue').value=hu; $('#inHueN').value=hu;
+}
+// Slider ↔ number pairing (each edits the other and writes to the segment). histSchedule so
+// dragging doesn't spam undo entries.
+(function wireColorInputs(){
+  const pairs = [['inBright','inBrightN','bright'],['inContrast','inContrastN','contrast'],['inSat','inSatN','saturation'],['inHue','inHueN','hue']];
+  pairs.forEach(([sid,nid,field])=>{
+    const s1=$('#'+sid), n1=$('#'+nid); if(!s1||!n1) return;
+    const push=v=>{ if(sel<0) return; const seg=EDL.segments[sel]; if(!seg) return;
+      seg[field] = (field==='hue') ? Math.max(-180, Math.min(180, +v||0))
+                                   : Math.max(0, Math.min(2.5, +v||1));
+      applyFraming(seg); histSchedule(); };
+    s1.oninput=()=>{ n1.value=s1.value; push(s1.value); };
+    n1.oninput=()=>{ s1.value=n1.value; push(n1.value); };
+  });
+  if($('#btnResetColor')) $('#btnResetColor').onclick=()=>{ if(sel<0) return; histCommit();
+    const seg=EDL.segments[sel]; if(!seg) return;
+    delete seg.bright; delete seg.contrast; delete seg.saturation; delete seg.hue;
+    fillColorInputs(seg); applyFraming(seg); };
+})();
 ['inIn','inDur','inZoom','inAnchor','inSpeed'].forEach(id=>{ $('#'+id).onchange=()=>{ if(sel<0) return; histCommit(); const s=EDL.segments[sel];
   s.in=parseFloat($('#inIn').value)||0; s.dur=parseFloat($('#inDur').value)||1;
   const _z = parseFloat($('#inZoom').value)||1; setSegField(s,'zoom',_z);
@@ -5089,11 +5135,28 @@ $('#tlPhGrip').addEventListener('pointerdown', ev=>{ ev.stopPropagation(); start
 $('#btnSave').onclick=()=>projSave();
 function projFileBase(){ const n=(curProj&&curProj.name)?curProj.name:''; return n.replace(/[^A-Za-z0-9_-]+/g,'_').replace(/^_+|_+$/g,''); }
 function exNamePreview(){ const base=($('#exName').value.trim()||projFileBase()||'clip'); const cv=$('#exCanvas').value;
-  const ext = ($('#exFormat')&&$('#exFormat').value==='gif') ? '.gif' : '.mp4';
-  if($('#exGifRow')) $('#exGifRow').style.display = ($('#exFormat')&&$('#exFormat').value==='gif') ? '' : 'none';
+  const fmt = ($('#exFormat')&&$('#exFormat').value) || 'mp4';
+  const ext = (fmt==='gif') ? '.gif' : '.mp4';
+  if($('#exGifRow')) $('#exGifRow').style.display = (fmt==='gif') ? '' : 'none';
   if($('#exNamePreview')) $('#exNamePreview').textContent='→ saves as: '+base+($('#exStamp').checked?'_<timestamp>':'')+'_'+cv+ext;
-  // Live GIF dims: aspect comes from the selected Canvas; width is user-set. Server uses scale=W:-2
-  // so height auto-computes to keep the exact canvas aspect ratio (even-rounded for H.264 → also GIF-safe).
+  // FPS default: MP4 = 60 (smooth), GIF = 15 (small file). Only auto-flip on FORMAT change (we
+  // store the last-picked format on the input's dataset), so a manual FPS pick isn't stomped.
+  const fpsEl = $('#exGifFps');
+  if(fpsEl){
+    if(fpsEl.dataset.lastFmt !== fmt){
+      fpsEl.value = (fmt==='gif') ? 15 : 60;
+      fpsEl.dataset.lastFmt = fmt;
+    }
+    // Reflect the effect in the hint so the user knows what the number will do.
+    const cur = parseInt(fpsEl.value, 10) || 60;
+    if($('#exFpsHint')){
+      const note = (fmt==='gif')
+        ? (cur >= 24 ? 'smooth GIF (bigger file)' : cur >= 12 ? 'balanced GIF' : 'ultra-choppy GIF (tiny file)')
+        : (cur >= 45 ? 'normal video' : cur >= 20 ? 'slightly stepped' : 'GIF-look stepped frames · audio kept');
+      $('#exFpsHint').textContent = cur + ' fps · ' + note;
+    }
+  }
+  // Live GIF dims: aspect comes from the selected Canvas; width is user-set.
   if($('#exGifDims')){
     const px = CANVAS_PX[cv] || [1080, 1920];
     const w = Math.max(2, parseInt($('#exGifWidth').value, 10) || 480);
