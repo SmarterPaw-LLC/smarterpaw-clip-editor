@@ -310,7 +310,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.6.2</span>
+  <span class="ver" id="appVer">v2.6.3</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -3031,7 +3031,7 @@ function buildTextOverlayCanvas(o){
   // Plain/button collapse everything to one line as before.
   let lines;
   if(isCaption){
-    const maxW = exportW * 0.90;
+    const maxW = exportW * (o.w!=null?+o.w:0.9);
     const wrapLine = (line) => {
       if(m.measureText(line).width <= maxW) return [line];
       const words = line.split(/\s+/).filter(Boolean); const out = []; let buf = '';
@@ -3540,7 +3540,7 @@ function renderOverlays(time){
         el.style.whiteSpace = 'pre-line';        // honor \n from the textarea
         el.style.wordBreak = 'normal';
         el.style.overflowWrap = 'break-word';
-        el.style.maxWidth = (W * 0.90) + 'px';
+        el.style.maxWidth = (W * (o.w!=null?+o.w:0.9)) + 'px';
         el.style.textAlign = 'center';
         el.style.lineHeight = '1.2';
         el.style.boxSizing = 'border-box';
@@ -3792,6 +3792,7 @@ function buildOvEditor(){
       <div id="ovStickRow2"><label>Outline <input type="range" id="ovStBleed" min="0.06" max="0.5" step="0.02" value="${o.bleed!=null?o.bleed:0.22}"></label>
         <label>Kerning <input type="range" id="ovStKern" min="-0.05" max="0.4" step="0.01" value="${o.kerning!=null?o.kerning:0}"></label></div>
       <div id="ovStickRow3"><label>Line spacing <input type="range" id="ovStGap" min="-0.3" max="0.6" step="0.02" value="${o.lineGap!=null?o.lineGap:0.08}"></label></div>
+      <div id="ovCapRow"><label title="Caption box width as a fraction of the canvas. Narrower = text wraps sooner and the dark bar shrinks to match.">Width <input type="range" id="ovCapW" min="0.2" max="1" step="0.02" value="${oR.w!=null?oR.w:0.9}"></label></div>
       <div><label>Size <input type="range" id="ovSize" min="0.02" max="0.18" step="0.005" value="${oR.size}"></label>
         <label>Opacity <input type="range" id="ovTxtOp" min="0" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label>${isPrimary()?'':' <span style="font-size:10px;color:var(--acc)" title="Size is stored per aspect ratio">· size is variant</span>'}</div>`;
   } else if(o.type==='shape'){
@@ -3908,15 +3909,17 @@ function buildOvEditor(){
     $('#ovSolidRow').style.display=g?'none':''; $('#ovGradRow').style.display=g?'':'none';
     $('#ovGradAngRow').style.display=(g && $('#ovGradType').value!=='radial')?'':'none'; }
   if($('#ovFillType')){ $('#ovFillType').value=(o.fillType==='gradient')?'gradient':'solid'; $('#ovGradType').value=o.gradType||'linear'; ovShapeRows(); }
-  function ovTextRows(){ if(!$('#ovStyle')) return; const st=$('#ovStyle').value==='sticker';
+  function ovTextRows(){ if(!$('#ovStyle')) return; const sv=$('#ovStyle').value, st=sv==='sticker', cap=sv==='caption';
     $('#ovPlainRow').style.display=st?'none':''; $('#ovStickRow').style.display=st?'':'none';
     $('#ovStickRow2').style.display=st?'':'none'; $('#ovStickRow3').style.display=st?'':'none';
+    if($('#ovCapRow')) $('#ovCapRow').style.display=cap?'':'none';
     $('#ovStAngRow').style.display=(st && $('#ovStType').value!=='radial')?'':'none'; }
   if($('#ovStyle')){ $('#ovStyle').value=(o.style==='sticker'?'sticker':(o.style==='caption'?'caption':'plain')); $('#ovStType').value=o.gradType||'linear'; ovTextRows(); }
   const upd=()=>{ o.start=parseFloat($('#ovStart').value)||0; o.dur=parseFloat($('#ovDur').value)||1;
     if($('#ovRot')){ const _rv=parseFloat($('#ovRot').value)||0; setOverlayField(o,'rot',_rv); if($('#ovRotV')) $('#ovRotV').textContent=_rv+'°'; }
     const s2=o.shadow||(o.shadow={}); s2.on=$('#ovShOn').checked; s2.color=$('#ovShColor').value; s2.blur=parseFloat($('#ovShBlur').value)||0; s2.opacity=parseFloat($('#ovShOp').value); s2.dx=parseFloat($('#ovShX').value)||0; s2.dy=parseFloat($('#ovShY').value)||0;
     if(o.type==='text'){ o.text=$('#ovText').value; o.font=$('#ovFont').value; setOverlayField(o,'size',parseFloat($('#ovSize').value)||0.06); o.style=$('#ovStyle').value;
+      if($('#ovCapW') && o.style==='caption') setOverlayField(o, 'w', Math.max(0.2, Math.min(1, parseFloat($('#ovCapW').value)||0.9)));
       if($('#ovTxtOp')) o.opacity=parseFloat($('#ovTxtOp').value);
       if(o.style==='sticker'){ o.gradStart=$('#ovStFrom').value; o.gradEnd=$('#ovStTo').value; o.gradType=$('#ovStType').value; o.gradAngle=parseFloat($('#ovStAngle').value);
         o.bleed=parseFloat($('#ovStBleed').value); o.kerning=parseFloat($('#ovStKern').value); o.lineGap=parseFloat($('#ovStGap').value);
