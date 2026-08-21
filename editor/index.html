@@ -310,7 +310,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.6.1</span>
+  <span class="ver" id="appVer">v2.6.2</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -747,8 +747,9 @@ EMPHASIS (unreliable — better to CAPS the word in the script, or add , or — 
         <select id="exFormat"><option value="mp4">MP4 (H.264 + AAC audio)</option><option value="gif">Animated GIF (no audio)</option></select></div>
       <div class="row" id="exGifRow" style="display:none"><label class="k">GIF settings</label>
         <label>Width <input type="number" id="exGifWidth" value="480" min="120" max="1920" step="10" style="width:70px"> px</label>
+        <button class="mini" type="button" id="exGifMatchCanvas" title="Set width to the Canvas native width — full-fidelity GIF (bigger file)">↔ Match canvas</button>
         <label>FPS <input type="number" id="exGifFps" value="15" min="5" max="30" step="1" style="width:56px"></label>
-        <span style="font-size:11px;color:var(--mut)">wider + higher fps = bigger file</span></div>
+        <span id="exGifDims" style="font-size:11px;color:var(--mut)">→ 480×— · aspect matches Canvas · bigger = larger file</span></div>
       <div class="row"><label class="k">Canvas</label>
         <select id="exCanvas"><option value="9x16">9:16 Reels / Stories</option>
           <option value="4x5">4:5 Meta feed</option><option value="1x1">1:1 Square</option><option value="16x9">16:9 YouTube</option></select></div>
@@ -5087,7 +5088,15 @@ function projFileBase(){ const n=(curProj&&curProj.name)?curProj.name:''; return
 function exNamePreview(){ const base=($('#exName').value.trim()||projFileBase()||'clip'); const cv=$('#exCanvas').value;
   const ext = ($('#exFormat')&&$('#exFormat').value==='gif') ? '.gif' : '.mp4';
   if($('#exGifRow')) $('#exGifRow').style.display = ($('#exFormat')&&$('#exFormat').value==='gif') ? '' : 'none';
-  if($('#exNamePreview')) $('#exNamePreview').textContent='→ saves as: '+base+($('#exStamp').checked?'_<timestamp>':'')+'_'+cv+ext; }
+  if($('#exNamePreview')) $('#exNamePreview').textContent='→ saves as: '+base+($('#exStamp').checked?'_<timestamp>':'')+'_'+cv+ext;
+  // Live GIF dims: aspect comes from the selected Canvas; width is user-set. Server uses scale=W:-2
+  // so height auto-computes to keep the exact canvas aspect ratio (even-rounded for H.264 → also GIF-safe).
+  if($('#exGifDims')){
+    const px = CANVAS_PX[cv] || [1080, 1920];
+    const w = Math.max(2, parseInt($('#exGifWidth').value, 10) || 480);
+    const h = Math.round(w * px[1] / px[0] / 2) * 2;
+    $('#exGifDims').textContent = '→ '+w+'×'+h+' · aspect matches Canvas ('+cv+') · bigger = larger file';
+  } }
 function openExportModal(){ stop();
   $('#exDir').value=(EDL.settings.outDir)||MAN.exportsDir||'';
   $('#exName').value=projFileBase()||(EDL.settings.outName)||'clip';   // default to the project name
@@ -5098,6 +5107,9 @@ $('#btnRender').onclick=openExportModal;
 $('#exClose').onclick=closeExportModal; $('#exCancel').onclick=closeExportModal;
 $('#exModal').onclick=e=>{ if(e.target.id==='exModal') closeExportModal(); };
 ['exName','exCanvas','exStamp','exFormat','exGifFps','exGifWidth'].forEach(id=>{ const el=$('#'+id); if(el){ el.oninput=exNamePreview; el.onchange=exNamePreview; } });
+if($('#exGifMatchCanvas')) $('#exGifMatchCanvas').onclick=()=>{
+  const cv=$('#exCanvas').value; const px=CANVAS_PX[cv]||[1080,1920];
+  $('#exGifWidth').value = px[0]; exNamePreview(); };
 $('#exGo').onclick=async()=>{
   const canvas=$('#exCanvas').value; EDL.settings.canvas=canvas; $('#setCanvas').value=canvas; sizeStage(); updateTotal();
   const dir=$('#exDir').value.trim(), base=($('#exName').value.trim()||projFileBase()||'clip');
