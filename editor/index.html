@@ -310,7 +310,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.7.3</span>
+  <span class="ver" id="appVer">v2.7.4</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -5093,10 +5093,13 @@ $('#tlTracksWrap').addEventListener('pointerdown', ev => {
   const wr = wrap.getBoundingClientRect();
   if((ev.clientX - wr.left) > wrap.clientWidth) return;   // vertical scrollbar (right edge)
   if((ev.clientY - wr.top)  > wrap.clientHeight) return;  // horizontal scrollbar (bottom edge)
+  // Ruler-only clicks: always scrub (drag = scrub across the strip), skip marquee entirely so
+  // a click on the tick strip acts like a scrub head no matter how the user drifts vertically.
+  const onRuler = !!ev.target.closest('#tlRuler');
   ev.preventDefault();
   const x0 = ev.clientX, y0 = ev.clientY;
   const additive = ev.shiftKey || ev.ctrlKey || ev.metaKey;
-  let mode = 'pending';   // pending → scrub or marquee on first significant move
+  let mode = onRuler ? 'scrub' : 'pending';   // pending → scrub or marquee on first significant move
   let marquee = null;
   stop();
   scrubToX(ev.clientX);   // commit playhead immediately for the click case
@@ -5142,7 +5145,8 @@ $('#tlTracksWrap').addEventListener('pointerdown', ev => {
   window.addEventListener('pointermove', move);
   window.addEventListener('pointerup',   up);
 });
-$('#tlRuler').addEventListener('pointerdown', ev=>{ ev.stopPropagation(); startScrub(ev); });   // ruler is an explicit scrub strip — click/drag anywhere on it
+// Ruler scrub is handled via delegation on #tlTracksWrap above (target.closest('#tlRuler'))
+// so a single code path drives both the ruler strip and the empty-track area.
 $('#tlPhGrip').addEventListener('pointerdown', ev=>{ ev.stopPropagation(); startScrub(ev); });
 
 /* ---------- save / render ---------- */
