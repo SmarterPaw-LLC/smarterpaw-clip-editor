@@ -310,7 +310,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.7.2</span>
+  <span class="ver" id="appVer">v2.7.3</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -5085,8 +5085,15 @@ function startScrub(ev){ ev.preventDefault(); stop(); scrubToX(ev.clientX);
 // draws a rectangle; on release, every .blk overlapping the rect lands in _msel. Shift/Ctrl = additive.
 $('#tlTracksWrap').addEventListener('pointerdown', ev => {
   if(ev.target.closest('.blk')) return;
-  ev.preventDefault();
   const wrap = $('#tlTracksWrap');
+  // Ignore clicks that landed on the native scrollbars. clientWidth/clientHeight exclude the
+  // scrollbar area; getBoundingClientRect does NOT. If the click's px offset from the wrap's
+  // top-left is beyond the client size, it was on a scrollbar → let the browser handle it and
+  // don't scrub / marquee.
+  const wr = wrap.getBoundingClientRect();
+  if((ev.clientX - wr.left) > wrap.clientWidth) return;   // vertical scrollbar (right edge)
+  if((ev.clientY - wr.top)  > wrap.clientHeight) return;  // horizontal scrollbar (bottom edge)
+  ev.preventDefault();
   const x0 = ev.clientX, y0 = ev.clientY;
   const additive = ev.shiftKey || ev.ctrlKey || ev.metaKey;
   let mode = 'pending';   // pending → scrub or marquee on first significant move
