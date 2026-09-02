@@ -318,7 +318,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.7.16</span>
+  <span class="ver" id="appVer">v2.7.17</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -3595,17 +3595,22 @@ function renderSparkles(o, time, layer){
 const ovShine={}; // shimmer sheen div per overlay id
 function renderShine(o, time, layer){
   const sh=(o.anims||[]).find(a=>a.type==='shimmer'); let el=ovShine[o.id]; const ovel=ovEls[o.id];
-  const active=time>=o.start && time<o.start+(+o.dur||0);
-  if(!sh || !ovel || !active){ if(el){ el.style.display='none'; } if(!sh && el){ el.remove(); delete ovShine[o.id]; } return; }
+  const dur=+o.dur||0;
+  const active=time>=o.start && time<o.start+dur;
+  // Honor the anim's own Plays-from/to window (sh.tStart / sh.tEnd) — otherwise setting Plays
+  // from = 2.2 was ignored and the sweep ran from the overlay's very start. Local time is
+  // measured from the anim window's start so the first sweep begins AT Plays-from, not before.
+  const aS = sh ? Math.max(0, +sh.tStart||0) : 0;
+  const aE = (sh && sh.tEnd!=null && +sh.tEnd>0) ? Math.min(dur, +sh.tEnd) : dur;
+  const inWindow = active && sh && (time - o.start) >= aS && (time - o.start) < aE;
+  if(!sh || !ovel || !inWindow){ if(el){ el.style.display='none'; } if(!sh && el){ el.remove(); delete ovShine[o.id]; } return; }
   if(!el){ el=document.createElement('div'); el.style.position='absolute'; el.style.pointerEvents='none'; el.style.mixBlendMode='screen'; layer.appendChild(el); ovShine[o.id]=el; }
   el.style.display='';
   const lr=layer.getBoundingClientRect(), r=ovel.getBoundingClientRect();   // overlap the overlay's on-screen box
   el.style.left=(r.left-lr.left)+'px'; el.style.top=(r.top-lr.top)+'px'; el.style.width=r.width+'px'; el.style.height=r.height+'px';
-  // Sit JUST above the target overlay — not the whole layer. Old +9998 shoved shimmer above
-  // every other overlay across channels, which is why glint bled over things it should be under.
   const parentZ = parseInt(ovel.style.zIndex || '0', 10) || 0;
   el.style.zIndex = String(parentZ + 1);
-  const amount=sh.amount!=null?sh.amount:0.7, bw=(sh.width!=null?sh.width:0.22)*100, speed=sh.speed||1, lt=time-o.start;
+  const amount=sh.amount!=null?sh.amount:0.7, bw=(sh.width!=null?sh.width:0.22)*100, speed=sh.speed||1, lt=(time - o.start) - aS;
   const pos=(((lt*speed)%1)*(100+2*bw))-bw;   // band center sweeps across (-bw .. 100+bw)
   el.style.background='linear-gradient(115deg, transparent '+(pos-bw)+'%, rgba(255,255,255,'+amount+') '+pos+'%, transparent '+(pos+bw)+'%)';
   if(ovel.tagName==='IMG'){ const u=ovel.getAttribute('src')||''; el.style.webkitMaskImage='url("'+u+'")'; el.style.maskImage='url("'+u+'")'; el.style.webkitMaskSize='100% 100%'; el.style.maskSize='100% 100%'; el.style.borderRadius=''; }
