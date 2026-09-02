@@ -315,7 +315,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.7.8</span>
+  <span class="ver" id="appVer">v2.7.9</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -4845,23 +4845,50 @@ function buildOverlayBar(o,total){ const b=document.createElement('div'); b.data
       const d = document.createElement('div');
       d.className = 'mtDia' + (si === stops.length - 1 ? ' hd' : '');
       d.style.left = pct + '%';
-      d.title = 'moveTo stop '+(si+1)+' @ '+(+tRel).toFixed(2)+'s → ('+(+s.x||0).toFixed(2)+', '+(+s.y||0).toFixed(2)+') · ease: '+(s.ease||'cubic-out') + ' · click to edit';
-      // Diamond click: select the overlay, open the anim panel, scroll to the stops table and
-      // focus THIS stop's time input so a keystroke lands on the right row. stopPropagation so
-      // the wrap's pointerdown handler doesn't scrub the playhead underneath.
-      d.onpointerdown = ev => ev.stopPropagation();
-      d.onclick = ev => {
-        ev.stopPropagation();
-        ovSel = o.id; _lastPick = 'ov';
-        if(!ovEdit) openOvModal(); else { renderOvList(); buildOvEditor(); }
-        setTimeout(()=>{
-          const inp = document.querySelector('input.mtStop[data-si="'+si+'"][data-k="t"]');
-          if(inp){ inp.focus(); inp.select && inp.select();
-            const row = inp.closest('tr'); if(row){ row.style.background='rgba(255,213,74,0.18)';
-              setTimeout(()=>{ row.style.background=''; }, 1500); }
-            inp.scrollIntoView({block:'center', behavior:'smooth'});
-          }
-        }, 50);
+      d.title = 'moveTo stop '+(si+1)+' @ '+(+tRel).toFixed(2)+'s → ('+(+s.x||0).toFixed(2)+', '+(+s.y||0).toFixed(2)+') · ease: '+(s.ease||'cubic-out') + ' · drag to move · click to edit';
+      // Diamond interaction: drag horizontally to change this stop's TIME; click (no move) opens
+      // the stops editor and focuses this row. stopPropagation so the wrap's scrub handler doesn't
+      // fire underneath. Time is stored relative to anim window start (subtract aS before writing
+      // back), clamped to (0.01, overlay dur - aS) so stops stay inside the bar.
+      d.onpointerdown = ev => {
+        ev.stopPropagation(); ev.preventDefault();
+        const bRect = b.getBoundingClientRect();
+        const barW = bRect.width || 1;
+        const t0 = +s.t || 0;
+        const x0 = ev.clientX;
+        let moved = false;
+        histCommit();
+        const mv = e => {
+          const dx = e.clientX - x0;
+          if(!moved && Math.abs(dx) > 3) moved = true;
+          if(!moved) return;
+          const dSec = dx / barW * barDur;
+          const upper = Math.max(0.01, barDur - aS - 0.01);
+          const newT = Math.max(0.01, Math.min(upper, t0 + dSec));
+          s.t = Math.round(newT * 100) / 100;
+          // Sort stays deterministic on read via _mtStops; the data array can stay in insertion order.
+          d.style.left = ((aS + s.t) / barDur * 100) + '%';
+          d.title = 'moveTo stop '+(si+1)+' @ '+((aS+s.t)).toFixed(2)+'s → ('+(+s.x||0).toFixed(2)+', '+(+s.y||0).toFixed(2)+') · ease: '+(s.ease||'cubic-out') + ' · drag to move · click to edit';
+          renderOverlays(playhead);
+        };
+        const up = e => {
+          window.removeEventListener('pointermove', mv);
+          window.removeEventListener('pointerup', up);
+          if(moved){ renderTracks(); if(ovEdit && ovSel === o.id) renderAnimList(); return; }
+          // Zero-movement release = click behavior (open + focus the stop's row).
+          ovSel = o.id; _lastPick = 'ov';
+          if(!ovEdit) openOvModal(); else { renderOvList(); buildOvEditor(); }
+          setTimeout(()=>{
+            const inp = document.querySelector('input.mtStop[data-si="'+si+'"][data-k="t"]');
+            if(inp){ inp.focus(); inp.select && inp.select();
+              const row = inp.closest('tr'); if(row){ row.style.background='rgba(255,213,74,0.18)';
+                setTimeout(()=>{ row.style.background=''; }, 1500); }
+              inp.scrollIntoView({block:'center', behavior:'smooth'});
+            }
+          }, 50);
+        };
+        window.addEventListener('pointermove', mv);
+        window.addEventListener('pointerup', up);
       };
       b.appendChild(d);
     });
