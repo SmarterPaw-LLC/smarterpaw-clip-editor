@@ -310,7 +310,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.7.5</span>
+  <span class="ver" id="appVer">v2.7.6</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2913,6 +2913,22 @@ const EASE_FNS = {
   'back-out':  k => { const c1=1.70158, c3=c1+1; return 1 + c3*Math.pow(k-1,3) + c1*Math.pow(k-1,2); }
 };
 function _easeFn(name){ return EASE_FNS[name] || EASE_FNS['cubic-out']; }
+// Anim types that expose a general-purpose Ease selector in the UI. Loop-style anims
+// (pulse/spin/jitter/float/…) don't get one — they aren't interpolating between fixed endpoints.
+const EASE_ANIMS = new Set(['fadeIn','fadeOut','slideIn','slideOut','dropIn','popIn','bounceIn','bubbleUp','scaleUp','scaleDown']);
+// UI list: [key, human label]. Blank key = keep each anim's own default curve.
+const EASE_UI_OPTS = [
+  ['',          'default'],
+  ['linear',    'linear'],
+  ['in',        'ease-in (quad)'],
+  ['out',       'ease-out (quad)'],
+  ['inout',     'ease-in-out'],
+  ['cubic-in',  'cubic-in'],
+  ['cubic-out', 'cubic-out'],
+  ['back-out',  'back-out (overshoot)']
+];
+// Pick the ease curve for an anim: user override → provided default. Return the fn.
+function _easeFor(a, defKey){ return _easeFn(a && a.ease ? a.ease : defKey); }
 // moveTo waypoints: legacy {d,x,y} becomes a single stop; new {stops:[…]} passes through sorted.
 // Always returns at least one stop so animState can find a segment.
 function _mtStops(a, o){
@@ -2946,8 +2962,8 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg
       rot += amp*10*Math.sin(2*Math.PI*sp*tq); const j=amp*0.01*W;
       dx += j*Math.sin(2*Math.PI*sp*1.3*tq+1.7); dy += j*Math.cos(2*Math.PI*sp*0.9*tq+0.6); break; }
     case 'spin': { const sp=a.speed||0.5, sign=(a.dir==='ccw')?-1:1; rot+=sign*360*sp*T; break; }
-    case 'fadeIn': { const d=Math.max(0.01,a.d||0.5); op*=Math.max(0,Math.min(1,T/d)); break; }
-    case 'fadeOut': { const d=Math.max(0.01,a.d||0.5); op*=Math.max(0,Math.min(1,(dw-T)/d)); break; }
+    case 'fadeIn': { const d=Math.max(0.01,a.d||0.5); const k=Math.max(0,Math.min(1,T/d)); op*=_easeFor(a,'linear')(k); break; }
+    case 'fadeOut': { const d=Math.max(0.01,a.d||0.5); const k=Math.max(0,Math.min(1,(dw-T)/d)); op*=_easeFor(a,'linear')(k); break; }
     case 'pulse': { const amp=a.amp!=null?a.amp:0.5, sp=a.speed||1.5; op*=1-amp*(0.5-0.5*Math.cos(2*Math.PI*sp*T)); break; }
     case 'jitter': { const amp=(a.amp!=null?a.amp:0.012)*W, sp=a.speed||11;
       dx+=amp*(Math.sin(2*Math.PI*sp*T)+0.7*Math.sin(2*Math.PI*sp*1.7*T+1.1))/1.7;
@@ -2955,20 +2971,17 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg
     case 'float': { const amp=(a.amp!=null?a.amp:0.02)*W, sp=a.speed||0.6; dy+=amp*Math.sin(2*Math.PI*sp*T); break; }
     case 'bounce': { const amp=(a.amp!=null?a.amp:0.05)*W, sp=a.speed||1; dy-=amp*Math.abs(Math.sin(Math.PI*sp*T)); break; }
     case 'slideIn': { const d=Math.max(0.01,a.d||0.5), dir=a.dir||'left';
-      // Use H for up/down so distance is a fraction of the actual travel axis — otherwise on tall
-      // canvases (9x16) `dist*W` can't reach off-screen top/bottom even at max slider value.
       const axis = (dir==='up'||dir==='down') ? H : W;
       const dist = (a.dist!=null?a.dist:0.2) * axis;
-      if(T<d){ const e=Math.pow(1-T/d,2);
+      // Distance remaining = 1 - ease(k). Custom ease overrides the default quadratic-out.
+      if(T<d){ const k=T/d; const rem = 1 - _easeFor(a,'out')(k); const e = rem;
         if(dir==='left')dx-=e*dist; else if(dir==='right')dx+=e*dist; else if(dir==='up')dy-=e*dist; else dy+=e*dist; } break; }
     case 'slideOut': { const d=Math.max(0.01,a.d||0.5), dir=a.dir||'right';
-      // Mirror of slideIn but at the END: during the last d seconds of the overlay, ease from
-      // the base position OUT past the edge in the chosen direction. Distance is a fraction of
-      // the travel axis (H for up/down, W for left/right) so up/down works on tall canvases.
       const axis = (dir==='up'||dir==='down') ? H : W;
       const dist = (a.dist!=null?a.dist:0.2) * axis;
-      const t2 = T - (dur - d);   // dur = overlay duration (animState arg)
-      if(t2 > 0){ const e = Math.pow(Math.min(1, t2/d), 2);
+      // Trailing edge: 0 at t2=0, 1 at t2=d. Default = quadratic-in (accelerates off-screen).
+      const t2 = T - (dw - d);
+      if(t2 > 0){ const k=Math.min(1, t2/d); const e = _easeFor(a,'in')(k);
         if(dir==='left')dx-=e*dist; else if(dir==='right')dx+=e*dist; else if(dir==='up')dy-=e*dist; else dy+=e*dist; } break; }
     case 'moveTo': {
       const stops = _mtStops(a, o);   // waypoints from anim start (t=0 is base). Always ≥1 entry.
@@ -2991,19 +3004,19 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg
       dy += ((pY + (nY - pY) * e) - oy) * H;
       break; }
     case 'bounceIn': { const d=Math.max(0.01,a.d||0.6), amp=(a.amp!=null?a.amp:0.12)*W; if(T<d){ const k=T/d; dy+=-amp*Math.exp(-3*k)*Math.cos(2*Math.PI*1.6*k)*(1-k); } break; }
-    case 'dropIn': { const d=Math.max(0.01,a.d||0.6), dist=(a.dist!=null?a.dist:0.5)*W; if(T<d){ const k=T/d; dy-=dist*(1-_easeOutBack(k)); } break; }
-    case 'popIn': { const d=Math.max(0.01,a.d||0.45); if(T<d){ const k=T/d; sc*=Math.max(0,_easeOutBack(k)); op*=Math.min(1,k/0.3); } break; }
+    case 'dropIn': { const d=Math.max(0.01,a.d||0.6), dist=(a.dist!=null?a.dist:0.5)*W; if(T<d){ const k=T/d; const e = a.ease ? _easeFor(a,'back-out')(k) : _easeOutBack(k); dy-=dist*(1-e); } break; }
+    case 'popIn': { const d=Math.max(0.01,a.d||0.45); if(T<d){ const k=T/d; const e = a.ease ? _easeFor(a,'back-out')(k) : _easeOutBack(k); sc*=Math.max(0,e); op*=Math.min(1,k/0.3); } break; }
     case 'bubbleUp': { const d=Math.max(0.01,a.d||0.7), dist=(a.dist!=null?a.dist:0.15)*W, sway=(a.sway!=null?a.sway:0.02)*W;
-      if(T<d){ const k=T/d, ease=1-Math.pow(1-k,3);
-        dy += dist*(1-ease);                       // start +dist below, rise to 0 with ease-out cubic
+      if(T<d){ const k=T/d, ease=_easeFor(a,'cubic-out')(k);
+        dy += dist*(1-ease);                       // start +dist below, rise to 0 (ease shapes the rise curve)
         sc *= Math.max(0, _easeOutBack(k));         // scale 0 → 1 with slight overshoot (bubble pop)
         op *= Math.min(1, k/0.3);                   // fade in over first 30%
         dx += sway*Math.sin(k*Math.PI*2);           // gentle horizontal sway during the rise
       } break; }
     case 'scaleUp': { const d=Math.max(0.01,a.d||0.5), from=(a.from!=null?a.from:0.3);
-      if(T<d){ const k=T/d, ease=1-Math.pow(1-k,3); sc *= from + (1-from)*ease; } break; }
+      if(T<d){ const k=T/d, ease=_easeFor(a,'cubic-out')(k); sc *= from + (1-from)*ease; } break; }
     case 'scaleDown': { const d=Math.max(0.01,a.d||0.5), to=(a.to!=null?a.to:0), tail=dw-T;
-      if(tail<d){ const k=Math.max(0,tail)/d, ease=1-Math.pow(1-k,3); sc *= to + (1-to)*ease; } break; }
+      if(tail<d){ const k=Math.max(0,tail)/d, ease=_easeFor(a,'cubic-out')(k); sc *= to + (1-to)*ease; } break; }
     case 'scaleBeat': { const amp=(a.amp!=null?a.amp:0.15), sp=a.speed||1.5; sc *= 1 + amp*Math.sin(2*Math.PI*sp*T); break; }
     case 'cycleHue': { const sp=a.speed||0.5, off=a.offset||0; hue += off + sp*360*T; break; }
     case 'reshuffle': { const freq=Math.max(0.2,a.freq||2), amt=(a.amt!=null?a.amt:0.15), st=Math.floor(T*freq), sd=a.seed||1;
@@ -4106,7 +4119,17 @@ function buildOvEditor(){
       const gfOn=!!(a.gifFps && +a.gifFps>0); const gfv=gfOn?(+a.gifFps):8;
       // moveTo shows a stops editor instead of the flat ctrl row — waypoints, per-segment easing.
       const mtHTML = (a.type==='moveTo') ? _renderMtStops(ai, a, o) : '';
-      return `<div class="ecline" style="flex-direction:column;align-items:stretch;gap:4px"><div style="display:flex;align-items:center;gap:6px"><b style="flex:1;font-size:12px">${def.label}</b><button class="mini anrm" data-ai="${ai}" title="remove">✕</button></div><div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--mut)">${def.ctrls.map(c=>animCtrl(ai,a,c)).join('')}</div>${mtHTML}
+      // Ease selector — shown for one-shot entrance/exit anims where the curve makes sense.
+      // Loop-style anims (pulse/spin/jitter/…) don't get one because they aren't interpolating
+      // between a fixed start and end. Blank = each anim's own default curve.
+      const easeHTML = EASE_ANIMS.has(a.type) ? `
+        <div style="display:flex;gap:8px;font-size:11px;color:var(--mut);align-items:center;border-top:1px solid var(--line);padding-top:4px">
+          <label>Ease <select class="aneas" data-ai="${ai}">
+            ${EASE_UI_OPTS.map(([k,lbl])=>`<option value="${k}"${(a.ease||'')===k?' selected':''}>${lbl}</option>`).join('')}
+          </select></label>
+          <span style="color:var(--mut);font-size:10px">shape of the ${a.type.endsWith('Out')?'exit':'entrance'} curve</span>
+        </div>` : '';
+      return `<div class="ecline" style="flex-direction:column;align-items:stretch;gap:4px"><div style="display:flex;align-items:center;gap:6px"><b style="flex:1;font-size:12px">${def.label}</b><button class="mini anrm" data-ai="${ai}" title="remove">✕</button></div><div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--mut)">${def.ctrls.map(c=>animCtrl(ai,a,c)).join('')}</div>${mtHTML}${easeHTML}
         <div style="display:flex;gap:8px;font-size:11px;color:var(--mut);align-items:center;border-top:1px solid var(--line);padding-top:4px">
           <span title="Seconds within the overlay">Plays</span>
           <label>from <input type="number" class="anwin" data-ai="${ai}" data-k="tStart" min="0" step="0.1" value="${tsv}" placeholder="0" style="width:54px"></label>
@@ -4134,6 +4157,7 @@ function buildOvEditor(){
       if(el.checked){ a.gifFps = a.gifFps && +a.gifFps>0 ? +a.gifFps : 8; } else { delete a.gifFps; }
       renderAnimList(); renderOverlays(playhead); }; });
     L.querySelectorAll('.angiff').forEach(el=>{ el.oninput=el.onchange=()=>{ const a=o.anims[+el.dataset.ai], v=Math.max(1, parseFloat(el.value)||8); a.gifFps=v; renderOverlays(playhead); }; });
+    L.querySelectorAll('.aneas').forEach(el=>{ el.onchange=()=>{ const a=o.anims[+el.dataset.ai]; if(el.value) a.ease=el.value; else delete a.ease; renderOverlays(playhead); }; });
     // moveTo stops-editor handlers
     L.querySelectorAll('.mtStop').forEach(el=>{ el.oninput=el.onchange=()=>{ const a=o.anims[+el.dataset.ai]; _mtEnsureStops(a);
       const si=+el.dataset.si, k=el.dataset.k; let v = el.value; if(k!=='ease') v = parseFloat(v)||0;

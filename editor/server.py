@@ -1103,6 +1103,19 @@ def build_sticker_png(o, W, H, out):
     _with_shadow(img, {"shadow": so}, W).save(out)
 
 
+# Ease curves matched to the client's EASE_FNS. Takes a variable-name/expression string `k` in
+# [0,1] and returns an ffmpeg-eval expression for the eased value. Used by anims that expose an
+# Ease selector in the UI (fadeIn/fadeOut/slideIn/slideOut/dropIn/popIn/bubbleUp/scaleUp/scaleDown/moveTo).
+def _ease_expr(name, k):
+    if name == "linear":    return "(%s)" % k
+    if name == "in":        return "((%s)*(%s))" % (k, k)
+    if name == "out":       return "(1-(1-(%s))*(1-(%s)))" % (k, k)
+    if name == "inout":     return "(if(lt(%s,0.5),2*(%s)*(%s),1-pow(-2*(%s)+2,2)/2))" % (k, k, k, k)
+    if name == "cubic-in":  return "((%s)*(%s)*(%s))" % (k, k, k)
+    if name == "back-out":  return "(1+2.70158*pow((%s)-1,3)+1.70158*pow((%s)-1,2))" % (k, k)
+    return "(1-pow(1-(%s),3))" % k   # cubic-out fallback
+
+
 def _anim_exprs(o, s, dur, W, tv="t", H=None):
     """Build ffmpeg expressions (time var `tv`) for overlay animations:
     (dx_px, dy_px position offsets, alpha multiplier 0..1, has_opacity). Mirrors animState() in the UI.
@@ -1137,10 +1150,16 @@ def _anim_exprs(o, s, dur, W, tv="t", H=None):
         def add_rot(expr): rots.append(("if(%s,%s,0)" % (gate, expr)) if windowed else expr)
         def add_amul(expr): amul.append(("if(%s,%s,1)" % (gate, expr)) if windowed else expr)
         ty = a.get("type")
+        # User-selectable ease overrides each anim's built-in default curve (matches client _easeFor).
+        _ease_user = a.get("ease")
         if ty == "fadeIn":
-            d = max(0.01, float(a.get("d", 0.5))); add_amul("min(1,max(0,(%s)/%g))" % (lt, d))
+            d = max(0.01, float(a.get("d", 0.5)))
+            k = "min(1,max(0,(%s)/%g))" % (lt, d)
+            add_amul(_ease_expr(_ease_user or "linear", k))
         elif ty == "fadeOut":
-            d = max(0.01, float(a.get("d", 0.5))); add_amul("min(1,max(0,(%g-%s)/%g))" % (eA, tv, d))
+            d = max(0.01, float(a.get("d", 0.5)))
+            k = "min(1,max(0,(%g-%s)/%g))" % (eA, tv, d)
+            add_amul(_ease_expr(_ease_user or "linear", k))
         elif ty == "pulse":
             amp = float(a.get("amp", 0.5)); sp = float(a.get("speed", 1.5)); add_amul("(1-%g*(0.5-0.5*cos(2*PI*%g*%s)))" % (amp, sp, lt))
         elif ty == "jitter":
@@ -1153,21 +1172,22 @@ def _anim_exprs(o, s, dur, W, tv="t", H=None):
             amp = float(a.get("amp", 0.05)) * W; sp = float(a.get("speed", 1)); add_dy("-%g*abs(sin(PI*%g*%s))" % (amp, sp, lt))
         elif ty == "slideIn":
             d = max(0.01, float(a.get("d", 0.5))); dr = a.get("dir", "left")
-            # Use H for up/down so distance scales with the actual travel axis (matches preview).
             axis = H if dr in ("up", "down") else W
             dist = float(a.get("dist", 0.2)) * axis
-            term = "if(lt(%s,%g),pow(1-%s/%g,2)*%g,0)" % (lt, d, lt, d, dist)
+            # remaining = 1 - ease(k). Default ease = quadratic-out (matches client).
+            k = "min(1,max(0,%s/%g))" % (lt, d)
+            rem = "(1-%s)" % _ease_expr(_ease_user or "out", k)
+            term = "if(lt(%s,%g),%s*%g,0)" % (lt, d, rem, dist)
             term = ("-" if dr in ("left", "up") else "") + term
             (add_dx if dr in ("left", "right") else add_dy)(term)
         elif ty == "slideOut":
-            # Mirror of slideIn on the trailing edge: during the last `d` seconds of the anim window,
-            # ease from the base position OUT toward the chosen direction by `dist`. Trigger point
-            # (dw - d): before it, offset = 0; after it, quadratic ease outward.
             d = max(0.01, float(a.get("d", 0.5))); dr = a.get("dir", "right")
             axis = H if dr in ("up", "down") else W
             dist = float(a.get("dist", 0.2)) * axis
             trig = max(0.0, dw - d)
-            term = "if(gt(%s,%g),pow(min(1,(%s-%g)/%g),2)*%g,0)" % (lt, trig, lt, trig, d, dist)
+            k = "min(1,max(0,(%s-%g)/%g))" % (lt, trig, d)
+            e = _ease_expr(_ease_user or "in", k)
+            term = "if(gt(%s,%g),%s*%g,0)" % (lt, trig, e, dist)
             term = ("-" if dr in ("left", "up") else "") + term
             (add_dx if dr in ("left", "right") else add_dy)(term)
         elif ty == "moveTo":
@@ -1190,14 +1210,7 @@ def _anim_exprs(o, s, dur, W, tv="t", H=None):
             # Build nested if-chain across segments. Each segment i:
             #   base = (prev.x, prev.y),  next = (stop_i.x, stop_i.y),  t in [prev.t, stop_i.t]
             #   k = (lt - prev.t) / span,  eased with stop_i.ease
-            def ease_expr(name, k):
-                if name == "linear":    return "(%s)" % k
-                if name == "in":        return "((%s)*(%s))" % (k, k)
-                if name == "out":       return "(1-(1-(%s))*(1-(%s)))" % (k, k)
-                if name == "inout":     return "(if(lt(%s,0.5),2*(%s)*(%s),1-pow(-2*(%s)+2,2)/2))" % (k, k, k, k)
-                if name == "cubic-in":  return "((%s)*(%s)*(%s))" % (k, k, k)
-                if name == "back-out":  return "(1+2.70158*pow((%s)-1,3)+1.70158*pow((%s)-1,2))" % (k, k)
-                return "(1-pow(1-(%s),3))" % k   # cubic-out fallback
+            # (ease_expr is now the module-level _ease_expr helper — shared with fadeIn/slide/etc.)
             # Walk stops right-to-left, wrapping each new segment as the FALSE branch of the next.
             # Final (past-last-stop) fallback = the last stop's position (hold).
             last = stops[-1]
@@ -1208,7 +1221,7 @@ def _anim_exprs(o, s, dur, W, tv="t", H=None):
             for s in stops:
                 span = max(0.001, s["t"] - pT)
                 k = "min(1,max(0,(%s-%g)/%g))" % (lt, pT, span)
-                e = ease_expr(s["ease"], k)
+                e = _ease_expr(s["ease"], k)
                 bx = "(%g+(%g)*(%s))" % ((pX - ox) * W, (s["x"] - pX) * W, e)
                 by = "(%g+(%g)*(%s))" % ((pY - oy) * H, (s["y"] - pY) * H, e)
                 branches.append((s["t"], bx, by))
@@ -1222,18 +1235,22 @@ def _anim_exprs(o, s, dur, W, tv="t", H=None):
             add_dy("if(lt(%s,%g),-%g*exp(-3*%s/%g)*cos(2*PI*1.6*%s/%g)*(1-%s/%g),0)" % (lt, d, amp, lt, d, lt, d, lt, d))
         elif ty == "dropIn":
             d = max(0.01, float(a.get("d", 0.6))); dist = float(a.get("dist", 0.5)) * W
-            k = "((%s)/%g)" % (lt, d); eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (k, k)
+            k = "min(1,max(0,%s/%g))" % (lt, d)
+            eb = _ease_expr(_ease_user or "back-out", k)
             add_dy("if(lt(%s,%g),-%g*(1-%s),0)" % (lt, d, dist, eb))
         elif ty == "popIn":
             d = max(0.01, float(a.get("d", 0.45)))   # scale isn't animatable on an ffmpeg overlay → render as a quick fade-in
-            add_amul("min(1,max(0,(%s)/%g))" % (lt, d * 0.5))
+            k = "min(1,max(0,%s/%g))" % (lt, d * 0.5)
+            add_amul(_ease_expr(_ease_user or "linear", k))
         elif ty == "bubbleUp":
             d = max(0.01, float(a.get("d", 0.7)))
             dist = float(a.get("dist", 0.15)) * W
             sway = float(a.get("sway", 0.02)) * W
-            add_dy("if(lt(%s,%g),%g*pow(1-%s/%g,3),0)" % (lt, d, dist, lt, d))           # rise (+dist → 0, cubic ease-out)
-            add_dx("if(lt(%s,%g),%g*sin(2*PI*%s/%g),0)" % (lt, d, sway, lt, d))          # gentle horizontal sway
-            add_amul("min(1,max(0,(%s)/%g))" % (lt, d * 0.3))                            # fade in over first 30%
+            k = "min(1,max(0,%s/%g))" % (lt, d)
+            rise = "(1-%s)" % _ease_expr(_ease_user or "cubic-out", k)   # remaining = 1 - ease
+            add_dy("if(lt(%s,%g),%g*%s,0)" % (lt, d, dist, rise))
+            add_dx("if(lt(%s,%g),%g*sin(2*PI*%s/%g),0)" % (lt, d, sway, lt, d))          # sway stays sinusoidal
+            add_amul("min(1,max(0,(%s)/%g))" % (lt, d * 0.3))                            # fade-in remains fixed 30%
         elif ty == "reshuffle":   # seeded per-step randomization; same hash math as _rsHash() in the UI
             freq = max(0.2, float(a.get("freq", 2))); amt = float(a.get("amt", 0.15)); rseed = float(a.get("seed", 1))
             def _H(salt):
@@ -1905,26 +1922,31 @@ def apply_overlays(silent, overlays, W, H, tmp):
                 aEv = a.get("tEnd"); aE = s + min(dur_o, float(aEv)) if (aEv is not None and float(aEv) > 0) else (s + dur_o)
                 if aE <= aS: continue
                 lt = "(t-%g)" % aS; dw = aE - aS
+                # Honor a user-picked ease on the same anims here too so scale animation matches.
+                _u = a.get("ease")
                 if ty == "popIn":
                     d = max(0.01, float(a.get("d", 0.45)))
-                    kk = "(%s/%g)" % (lt, d); eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (kk, kk)
+                    kk = "min(1,max(0,%s/%g))" % (lt, d)
+                    eb = _ease_expr(_u or "back-out", kk)
                     sc_factors.append("if(between(t,%g,%g),max(0.05,%s),1)" % (aS, aS + d, eb))
                 elif ty == "scaleUp":
                     d = max(0.01, float(a.get("d", 0.5))); fr = float(a.get("from", 0.3))
-                    kk = "(%s/%g)" % (lt, d); ease = "(1-pow(1-%s,3))" % kk
+                    kk = "min(1,max(0,%s/%g))" % (lt, d)
+                    ease = _ease_expr(_u or "cubic-out", kk)
                     sc_factors.append("if(between(t,%g,%g),%g+(1-%g)*%s,1)" % (aS, aS + d, fr, fr, ease))
                 elif ty == "scaleDown":
                     d = max(0.01, float(a.get("d", 0.5))); to = float(a.get("to", 0))
                     tail = aE - d
-                    kk = "((%g-t)/%g)" % (aE, d); ease = "(1-pow(1-%s,3))" % kk
+                    kk = "min(1,max(0,(%g-t)/%g))" % (aE, d)
+                    ease = _ease_expr(_u or "cubic-out", kk)
                     sc_factors.append("if(between(t,%g,%g),%g+(1-%g)*%s,1)" % (tail, aE, to, to, ease))
                 elif ty == "scaleBeat":
                     amp = float(a.get("amp", 0.15)); sp = float(a.get("speed", 1.5))
                     sc_factors.append("if(between(t,%g,%g),max(0.05,1+%g*sin(2*PI*%g*%s)),1)" % (aS, aE, amp, sp, lt))
                 elif ty == "bubbleUp":
-                    # scale 0 → 1 with ease-out-back (same overshoot curve as popIn — the bubble "pops" in as it rises)
                     d = max(0.01, float(a.get("d", 0.7)))
-                    kk = "(%s/%g)" % (lt, d); eb = "(1+2.70158*pow(%s-1,3)+1.70158*pow(%s-1,2))" % (kk, kk)
+                    kk = "min(1,max(0,%s/%g))" % (lt, d)
+                    eb = _ease_expr(_u or "back-out", kk)
                     sc_factors.append("if(between(t,%g,%g),max(0.05,%s),1)" % (aS, aS + d, eb))
             srot = float(o.get("rot", 0) or 0)                          # static rotation (degrees) + any anim rotation
             rot_terms = ([orot] if orot else []) + ([f"{math.radians(srot):.6f}"] if abs(srot) > 1e-6 else [])
