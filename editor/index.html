@@ -240,9 +240,10 @@
   .blk.clip.clhidden { opacity:.4; filter:grayscale(.6); }
   .blk.clip.cllocked { box-shadow:inset 0 0 0 2px #d9a441; }
   .blk.clip.cllocked .hL, .blk.clip.cllocked .hR { display:none; }
-  .blk .mtDia { position:absolute; top:50%; width:10px; height:10px; margin-left:-5px; margin-top:-5px;
+  .blk .mtDia { position:absolute; top:50%; width:11px; height:11px; margin-left:-5.5px; margin-top:-5.5px;
      transform:rotate(45deg); background:#ffd54a; border:1px solid #7a5a10; box-shadow:0 0 4px #000a;
-     z-index:7; pointer-events:none; }
+     z-index:8; cursor:pointer; }
+  .blk .mtDia:hover { background:#fff3a0; transform:rotate(45deg) scale(1.25); }
   .blk .mtDia.hd { background:#fff3a0; }   /* head (last / current) — brighter so the destination reads */
   .blk .freeze { position:absolute; top:0; bottom:0; z-index:1; pointer-events:none;
      background:repeating-linear-gradient(45deg, #ffffff14, #ffffff14 5px, #ffffff30 5px, #ffffff30 10px);
@@ -314,7 +315,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.7.7</span>
+  <span class="ver" id="appVer">v2.7.8</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -4844,7 +4845,24 @@ function buildOverlayBar(o,total){ const b=document.createElement('div'); b.data
       const d = document.createElement('div');
       d.className = 'mtDia' + (si === stops.length - 1 ? ' hd' : '');
       d.style.left = pct + '%';
-      d.title = 'moveTo stop '+(si+1)+' @ '+(+tRel).toFixed(2)+'s → ('+(+s.x||0).toFixed(2)+', '+(+s.y||0).toFixed(2)+') · ease: '+(s.ease||'cubic-out');
+      d.title = 'moveTo stop '+(si+1)+' @ '+(+tRel).toFixed(2)+'s → ('+(+s.x||0).toFixed(2)+', '+(+s.y||0).toFixed(2)+') · ease: '+(s.ease||'cubic-out') + ' · click to edit';
+      // Diamond click: select the overlay, open the anim panel, scroll to the stops table and
+      // focus THIS stop's time input so a keystroke lands on the right row. stopPropagation so
+      // the wrap's pointerdown handler doesn't scrub the playhead underneath.
+      d.onpointerdown = ev => ev.stopPropagation();
+      d.onclick = ev => {
+        ev.stopPropagation();
+        ovSel = o.id; _lastPick = 'ov';
+        if(!ovEdit) openOvModal(); else { renderOvList(); buildOvEditor(); }
+        setTimeout(()=>{
+          const inp = document.querySelector('input.mtStop[data-si="'+si+'"][data-k="t"]');
+          if(inp){ inp.focus(); inp.select && inp.select();
+            const row = inp.closest('tr'); if(row){ row.style.background='rgba(255,213,74,0.18)';
+              setTimeout(()=>{ row.style.background=''; }, 1500); }
+            inp.scrollIntoView({block:'center', behavior:'smooth'});
+          }
+        }, 50);
+      };
       b.appendChild(d);
     });
   }
