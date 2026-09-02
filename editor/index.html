@@ -54,7 +54,7 @@
   #tlRuler { height:22px; position:relative; background:var(--panel2); border-bottom:1px solid var(--line); }
   #tlRuler:hover { background:#2a2f38; }
   #tlRuler .tick { position:absolute; top:0; bottom:0; border-left:1px solid var(--line); padding-left:3px; font-size:9px; color:var(--mut); }
-  .trk { position:relative; height:28px; border-bottom:1px solid var(--line); }
+  .trk { position:relative; height:var(--trkH, 28px); border-bottom:1px solid var(--line); }
   .trk .lab { position:absolute; left:4px; top:50%; transform:translateY(-50%); font-size:9px; color:var(--mut); z-index:3; pointer-events:none; background:rgba(21,23,28,.7); padding:0 3px; border-radius:3px; }
   .trk .grip { position:absolute; left:1px; top:50%; transform:translateY(-50%); z-index:4; cursor:ns-resize; color:var(--mut); font-size:13px; line-height:1; pointer-events:auto; user-select:none; }
   .trk .grip:hover { color:var(--txt); }
@@ -64,7 +64,7 @@
   .blk.clip { background:#34415a; box-shadow:inset 0 0 0 1px #5b8cff44; cursor:pointer; }
   .blk.endcard { background:#4a3f1a; box-shadow:inset 0 0 0 1px var(--acc); cursor:pointer; }
   .blk.ov-text { background:#2c6e49; } .blk.ov-shape { background:#5d539e; } .blk.ov-image { background:#7a5230; } .blk.ov-sprinkle { background:#8a5a2b; } .blk.ov-arrow { background:#9e4b3a; }
-  .trk.audiolane { height:30px; background:#1a2620; }
+  .trk.audiolane { height:var(--audTrkH, 30px); background:#1a2620; }
   .blk.audio { background:#1f5b46; box-shadow:inset 0 0 0 1px #3fae7e55; cursor:default; display:flex; align-items:center; gap:8px; padding:2px 8px; }
   .blk.audio.empty { background:#26201a; color:var(--mut); box-shadow:inset 0 0 0 1px var(--line); }
   .blk.audio .anm { flex:none; max-width:42%; overflow:hidden; text-overflow:ellipsis; }
@@ -318,7 +318,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.7.13</span>
+  <span class="ver" id="appVer">v2.7.14</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -470,6 +470,10 @@
         <span id="tlZoomLbl" style="min-width:38px;text-align:center;font-variant-numeric:tabular-nums">100%</span>
         <button class="mini" id="btnTlZoomIn" title="Zoom in (Ctrl+wheel on the timeline)">+</button>
         <button class="mini" id="btnTlZoomFit" title="Fit timeline to window (zoom 100%)">Fit</button>
+        <span title="Row height — taller bars are easier to grab" style="margin-left:8px;display:inline-flex;align-items:center;gap:3px">Height
+          <input type="range" id="tlRowH" min="18" max="70" step="2" style="width:80px;vertical-align:middle">
+          <span id="tlRowHLbl" style="min-width:26px;text-align:right;font-variant-numeric:tabular-nums">28</span>
+        </span>
       </span>
       <button class="mini" id="btnAddCh" title="Add a clip channel above (higher channels cover lower ones)" style="margin-left:8px">＋ Channel</button>
       <button class="mini" id="btnAddAudCh" title="Add an audio lane (drag audio clips up into it)" style="margin-left:4px">＋ Audio lane</button></h2>
@@ -5334,6 +5338,24 @@ $('#btnTlZoomIn').onclick=()=>setTlZoom(tlZoom*1.25);
 $('#btnTlZoomOut').onclick=()=>setTlZoom(tlZoom/1.25);
 $('#btnTlZoomFit').onclick=()=>setTlZoom(1);
 applyTlZoom();   // honor saved zoom on first load (positionPlayhead inside will no-op until boot loads EDL)
+// Row-height slider: tweaks the CSS vars driving .trk / .trk.audiolane so all clip/overlay/audio
+// bars grow together. Persists to localStorage under scl_tlrowh. Audio lane gets a small offset
+// to keep the same visual proportion (audio uses volume sliders inside so needs extra breathing room).
+(function(){
+  const saved = parseInt(localStorage.getItem('scl_tlrowh')||'28', 10);
+  const H = (isFinite(saved) && saved>=18 && saved<=100) ? saved : 28;
+  const apply = h => {
+    document.documentElement.style.setProperty('--trkH',    h + 'px');
+    document.documentElement.style.setProperty('--audTrkH', (h + 2) + 'px');
+    const lbl = $('#tlRowHLbl'); if(lbl) lbl.textContent = h;
+    try{ if(typeof positionPlayhead === 'function') positionPlayhead(); }catch(e){}
+  };
+  const sl = $('#tlRowH'); if(sl){
+    sl.value = H;
+    sl.oninput = ()=>{ const v=parseInt(sl.value,10)||28; apply(v); localStorage.setItem('scl_tlrowh', String(v)); };
+  }
+  apply(H);
+})();
 function startScrub(ev){ ev.preventDefault(); stop(); scrubToX(ev.clientX);
   const mv=e=>scrubToX(e.clientX); const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); };
   window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up); }
