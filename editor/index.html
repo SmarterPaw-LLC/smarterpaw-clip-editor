@@ -318,7 +318,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.7.14</span>
+  <span class="ver" id="appVer">v2.7.15</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -4319,7 +4319,38 @@ function buildOvEditor(){
   if($('#ovRepLib'))    $('#ovRepLib').onclick    = () => openLibrary(_swapSet);
 }
 function ovPlace(o){ const p=placeAtPlayhead(+o.dur||3, 0); o.start=p.t0; o.ch=p.ch; return o; }   // new overlays start at the playhead on the topmost free channel
-function pickImage(cb){ const f=$('#ovFile'); f.onchange=()=>{ const file=f.files[0]; if(!file) return; const r=new FileReader();
+// Rasterize an SVG blob to a PNG data URI. ffmpeg on Windows doesn't decode SVG (no librsvg
+// in the Gyan build), and the preview <img> handles SVG fine, so the mismatch would silently
+// break render — always convert on upload. Target 1024px on the longer side keeps enough
+// resolution for the biggest canvas without blowing up the file.
+async function _svgBlobToPngDataUri(blob, targetSize){
+  const svgText = await blob.text();
+  const url = URL.createObjectURL(new Blob([svgText], {type: 'image/svg+xml'}));
+  try {
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('svg decode failed')); img.src = url; });
+    let w = img.naturalWidth || 0, h = img.naturalHeight || 0;
+    if(!w || !h){ w = h = 1024; }   // SVG without explicit dims — pick a sane raster size
+    const target = targetSize || 1024;
+    const sc = target / Math.max(w, h);
+    if(sc > 1){ w = Math.round(w * sc); h = Math.round(h * sc); }
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    cv.getContext('2d').drawImage(img, 0, 0, w, h);
+    return cv.toDataURL('image/png');
+  } finally { URL.revokeObjectURL(url); }
+}
+function pickImage(cb){ const f=$('#ovFile'); f.onchange=()=>{ const file=f.files[0]; if(!file) return;
+  const isSvg = (file.type === 'image/svg+xml') || /\.svg$/i.test(file.name || '');
+  if(isSvg){
+    (async ()=>{ try{
+      const png = await _svgBlobToPngDataUri(file, 1024);
+      const pngName = (file.name || 'image.svg').replace(/\.svg$/i, '.png');
+      const res = await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:pngName,data:png})});
+      if(res && res.ok) cb(res.src); else toast('SVG upload failed');
+    }catch(e){ toast('Couldn\'t read SVG: '+e.message); } f.value=''; })();
+    return;
+  }
+  const r=new FileReader();
   r.onload=async()=>{ try{ const res=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:file.name,data:r.result})}); if(res.ok) cb(res.src); else toast('Upload failed'); }catch(e){ toast('Upload failed'); } f.value=''; };
   r.readAsDataURL(file); }; f.click(); }
 function addTextOverlay(){ histCommit(); EDL.overlays=EDL.overlays||[]; const g=brandGrad();
@@ -4808,8 +4839,16 @@ async function pickLibraryImage(it){
   $('#libStatus').textContent='Adding '+(it.name||'image')+'…';
   try{
     const blob=await fetch(libPublicUrl(it.storage_path)).then(r=>{ if(!r.ok) throw new Error('download failed'); return r.blob(); });
-    const data=await new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(blob); });
-    const nm='lib_'+((it.name||'image').replace(/[^a-z0-9]+/gi,'_').slice(0,40))+'_'+(it.id)+'.'+((it.storage_path.split('.').pop()||'png').toLowerCase());
+    // SVG assets from the shared library get rasterized here so the render pipeline can composite
+    // them (ffmpeg on Windows doesn't decode SVG). Extension is rewritten to .png.
+    const isSvg = /\.svg$/i.test(it.storage_path) || blob.type === 'image/svg+xml';
+    let data, extOut;
+    if(isSvg){ data = await _svgBlobToPngDataUri(blob, 1024); extOut = 'png'; }
+    else {
+      data = await new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(blob); });
+      extOut = (it.storage_path.split('.').pop()||'png').toLowerCase();
+    }
+    const nm='lib_'+((it.name||'image').replace(/[^a-z0-9]+/gi,'_').slice(0,40))+'_'+(it.id)+'.'+extOut;
     const res=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nm,data})});
     if(!res||!res.ok){ $('#libStatus').textContent='Upload failed.'; return; }
     if(_pickInto){ const cb=_pickInto; _pickInto=null; closeLibrary(); cb(res.src); return; }   // "pick into" mode (e.g. sprinkle piece)
