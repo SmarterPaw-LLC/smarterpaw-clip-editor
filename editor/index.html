@@ -240,6 +240,10 @@
   .blk.clip.clhidden { opacity:.4; filter:grayscale(.6); }
   .blk.clip.cllocked { box-shadow:inset 0 0 0 2px #d9a441; }
   .blk.clip.cllocked .hL, .blk.clip.cllocked .hR { display:none; }
+  .blk .mtDia { position:absolute; top:50%; width:10px; height:10px; margin-left:-5px; margin-top:-5px;
+     transform:rotate(45deg); background:#ffd54a; border:1px solid #7a5a10; box-shadow:0 0 4px #000a;
+     z-index:7; pointer-events:none; }
+  .blk .mtDia.hd { background:#fff3a0; }   /* head (last / current) — brighter so the destination reads */
   .blk .freeze { position:absolute; top:0; bottom:0; z-index:1; pointer-events:none;
      background:repeating-linear-gradient(45deg, #ffffff14, #ffffff14 5px, #ffffff30 5px, #ffffff30 10px);
      border-left:1px dashed #ffffffaa; display:flex; align-items:center; justify-content:center; overflow:hidden; }
@@ -310,7 +314,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.7.6</span>
+  <span class="ver" id="appVer">v2.7.7</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -3700,7 +3704,21 @@ function renderOverlays(time){
 function dragify(el,o){ el.onpointerdown=ev=>{ if(o.locked){ ev.stopPropagation(); return; }   // locked: no preview-canvas reposition
   ev.preventDefault(); if(document.activeElement&&document.activeElement.blur)document.activeElement.blur(); histCommit(); ovSel=o.id; _lastPick='ov'; renderOvList(); buildOvEditor();
   const wrap=$('#stageWrap').getBoundingClientRect(); const TH=0.012;   // center-snap threshold (≈1.2%)
-  const move=e=>{ let nx=(e.clientX-wrap.left)/wrap.width, ny=(e.clientY-wrap.top)/wrap.height;
+  // Anim-offset compensation: for moveTo (and other anims that shift dx/dy at the current time),
+  // the on-screen position = base(x,y) + anim offset. If we naively set base = mouse, the visual
+  // sits at mouse + offset — feels like the overlay is dragging away from the cursor. So subtract
+  // the current anim offset in canvas fractions BEFORE writing base, so visual = mouse exactly.
+  const _hasOffsetAnim = (o.anims||[]).some(a => ['moveTo','slideIn','slideOut','dropIn','bubbleUp','float','bounce','jitter'].includes(a.type));
+  let offFx = 0, offFy = 0;
+  if(_hasOffsetAnim){
+    const Wc = wrap.width;
+    const px = (typeof CANVAS_PX!=='undefined' && EDL && EDL.settings) ? (CANVAS_PX[EDL.settings.canvas]||[1080,1920]) : [1080,1920];
+    const Hc = Wc * px[1] / px[0];
+    const lt = Math.max(0, (playhead||0) - (+o.start||0));
+    try{ const A = animState(resolveOverlay(o), lt, +o.dur||0.001, Wc);
+      offFx = (A.dx||0) / Wc; offFy = (A.dy||0) / Hc; } catch(e){}
+  }
+  const move=e=>{ let nx=(e.clientX-wrap.left)/wrap.width - offFx, ny=(e.clientY-wrap.top)/wrap.height - offFy;
     const sx=Math.abs(nx-0.5)<TH, sy=Math.abs(ny-0.5)<TH; if(sx) nx=0.5; if(sy) ny=0.5;   // snap to center
     // Variant-aware writes: on a non-primary aspect, x/y land in EDL.variants[aspect].overlays[id]; on the primary, base.
     setOverlayField(o, 'x', Math.max(-1,Math.min(2,nx)));
@@ -4155,28 +4173,28 @@ function buildOvEditor(){
       if(v==='') delete a[k]; else a[k]=parseFloat(v)||0; renderOverlays(playhead); }; });
     L.querySelectorAll('.angif').forEach(el=>{ el.onchange=()=>{ const a=o.anims[+el.dataset.ai];
       if(el.checked){ a.gifFps = a.gifFps && +a.gifFps>0 ? +a.gifFps : 8; } else { delete a.gifFps; }
-      renderAnimList(); renderOverlays(playhead); }; });
+      renderAnimList(); renderOverlays(playhead); renderTracks(); }; });
     L.querySelectorAll('.angiff').forEach(el=>{ el.oninput=el.onchange=()=>{ const a=o.anims[+el.dataset.ai], v=Math.max(1, parseFloat(el.value)||8); a.gifFps=v; renderOverlays(playhead); }; });
     L.querySelectorAll('.aneas').forEach(el=>{ el.onchange=()=>{ const a=o.anims[+el.dataset.ai]; if(el.value) a.ease=el.value; else delete a.ease; renderOverlays(playhead); }; });
     // moveTo stops-editor handlers
     L.querySelectorAll('.mtStop').forEach(el=>{ el.oninput=el.onchange=()=>{ const a=o.anims[+el.dataset.ai]; _mtEnsureStops(a);
       const si=+el.dataset.si, k=el.dataset.k; let v = el.value; if(k!=='ease') v = parseFloat(v)||0;
       if(k==='t') v = Math.max(0.01, v); else if(k==='x'||k==='y') v = Math.max(0, Math.min(1, v));
-      a.stops[si][k] = v; renderOverlays(playhead); }; });
+      a.stops[si][k] = v; renderOverlays(playhead); renderTracks(); }; });
     L.querySelectorAll('.mtStopAdd').forEach(b=>{ b.onclick=()=>{ histCommit(); const a=o.anims[+b.dataset.ai]; _mtEnsureStops(a);
       const last=a.stops[a.stops.length-1];   // seed the new stop nearby so the user isn't jumping across the canvas
       a.stops.push({x:Math.max(0,Math.min(1,(+last.x||0.5))), y:Math.max(0,Math.min(1,(+last.y||0.5)+0.1)), t:(+last.t||1)+0.5, ease:'cubic-out'});
-      renderAnimList(); renderOverlays(playhead); }; });
+      renderAnimList(); renderOverlays(playhead); renderTracks(); }; });
     L.querySelectorAll('.mtStopDel').forEach(b=>{ b.onclick=()=>{ histCommit(); const a=o.anims[+b.dataset.ai]; _mtEnsureStops(a);
       if(a.stops.length<=1) return;
-      a.stops.splice(+b.dataset.si, 1); renderAnimList(); renderOverlays(playhead); }; });
+      a.stops.splice(+b.dataset.si, 1); renderAnimList(); renderOverlays(playhead); renderTracks(); }; });
     L.querySelectorAll('.mtStopHere').forEach(b=>{ b.onclick=()=>{ histCommit(); const a=o.anims[+b.dataset.ai]; _mtEnsureStops(a);
       // Grab overlay's ACTUAL rendered position (base x/y plus any current animState offset) —
       // useful for building a path by dragging the overlay and stamping stops as you go.
       const oxNow=(+o.x||0.5), oyNow=(+o.y||0.5);
       a.stops[+b.dataset.si].x = Math.max(0,Math.min(1, oxNow));
       a.stops[+b.dataset.si].y = Math.max(0,Math.min(1, oyNow));
-      renderAnimList(); renderOverlays(playhead); }; });
+      renderAnimList(); renderOverlays(playhead); renderTracks(); }; });
     addSliderNumbers(L);   // number steppers on animation sliders too
     updSpWarn();
   }
@@ -4810,6 +4828,26 @@ function buildOverlayBar(o,total){ const b=document.createElement('div'); b.data
   ic.appendChild(mk(o.locked?'🔒':'🔓', o.locked?'Locked — click to unlock':'Click to lock (prevents drag/resize)',
     ()=>{ histCommit(); o.locked=!o.locked; renderTimeline(); }));
   b.appendChild(ic);
+  // moveTo stop diamonds — one per waypoint, placed at (aStart + stop.t) / bar-width. Helps you
+  // see WHERE on the segment each stop lands without opening the anim panel.
+  const _mt = (o.anims||[]).find(a => a.type==='moveTo');
+  if(_mt){
+    const aS = Math.max(0, +_mt.tStart||0);
+    const stops = (Array.isArray(_mt.stops) && _mt.stops.length)
+      ? _mt.stops.slice().sort((p,q)=>(+p.t||0)-(+q.t||0))
+      : [{x:_mt.x, y:_mt.y, t:+_mt.d||1, ease:_mt.ease||'cubic-out'}];
+    const barDur = Math.max(0.001, +o.dur||0);
+    stops.forEach((s, si)=>{
+      const tRel = aS + (+s.t || 0);        // seconds inside the overlay bar
+      if(tRel < -0.001 || tRel > barDur + 0.001) return;
+      const pct = Math.max(0, Math.min(100, tRel / barDur * 100));
+      const d = document.createElement('div');
+      d.className = 'mtDia' + (si === stops.length - 1 ? ' hd' : '');
+      d.style.left = pct + '%';
+      d.title = 'moveTo stop '+(si+1)+' @ '+(+tRel).toFixed(2)+'s → ('+(+s.x||0).toFixed(2)+', '+(+s.y||0).toFixed(2)+') · ease: '+(s.ease||'cubic-out');
+      b.appendChild(d);
+    });
+  }
   ovBarInteract(b,hL,hR,o,total); return b; }
 // Split an overlay at the playhead into two overlays (same model as splitAtPlayhead for clips).
 function splitOverlayAtPlayhead(o){
