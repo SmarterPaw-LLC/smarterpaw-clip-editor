@@ -318,7 +318,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.7.12</span>
+  <span class="ver" id="appVer">v2.7.13</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2923,9 +2923,11 @@ const EASE_FNS = {
 function _easeFn(name){ return EASE_FNS[name] || EASE_FNS['cubic-out']; }
 // Anims that already CONSUME `a.ease` inside their own formula (entrance/exit anims where
 // ease shapes the interpolation curve). Everything else applies ease as a GAIN ENVELOPE on
-// the anim's delta over its window — turning a Spin's ease-in into rotation that accelerates,
-// a Pulse's ease-out into a pulse that fades out at the end, etc.
-const EASE_INTERNAL = new Set(['fadeIn','fadeOut','slideIn','slideOut','dropIn','popIn','bubbleUp','scaleUp','scaleDown','moveTo']);
+// the anim's delta over its window — turning a Pulse's ease-out into a pulse that fades out
+// at the end, etc.
+// Spin and cycleHue are ACCUMULATORS (rotation/hue add per frame), so the generic envelope
+// makes them look delayed. Their cases handle a.ease directly (see animState) — env is skipped.
+const EASE_INTERNAL = new Set(['fadeIn','fadeOut','slideIn','slideOut','dropIn','popIn','bubbleUp','scaleUp','scaleDown','moveTo','spin','cycleHue']);
 // UI list: [key, human label]. Blank key = keep each anim's own default curve. Labels describe
 // what the curve DOES (slow→fast, fast→slow) so users don't have to remember which side "ease-in"
 // vs "ease-out" refers to. Underlying keys stay the same for saved projects.
@@ -2963,7 +2965,36 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg
     // Per-animation "plays from / to" window within the overlay; defaults play for the whole overlay.
     const aS=Math.max(0, +a.tStart||0);
     const aE=(a.tEnd!=null && +a.tEnd>0) ? Math.min(dur, +a.tEnd) : dur;
-    if(Tg < aS || Tg >= aE) return;
+    // Pre-window state: for entrance anims, the overlay should already be in its "not yet
+    // started" pose BEFORE Plays-from (otherwise a fade-in set to start at 0.3s would show
+    // the overlay fully visible for 0.3s, then fade — makes the delay useless).
+    if(Tg < aS){
+      switch(a.type){
+        case 'fadeIn': op *= 0; break;
+        case 'slideIn': { const dir=a.dir||'left', axis=(dir==='up'||dir==='down')?H:W, dist=(a.dist!=null?a.dist:0.2)*axis;
+          if(dir==='left') dx -= dist; else if(dir==='right') dx += dist; else if(dir==='up') dy -= dist; else dy += dist; break; }
+        case 'dropIn': { const dist=(a.dist!=null?a.dist:0.5)*W; dy -= dist; break; }
+        case 'bubbleUp': { const dist=(a.dist!=null?a.dist:0.15)*W; dy += dist; op *= 0; break; }
+        case 'popIn': sc *= 0; op *= 0; break;
+        case 'scaleUp': sc *= (a.from!=null?a.from:0.3); break;
+        case 'bounceIn': /* rest at base */ break;
+      }
+      return;
+    }
+    // Post-window state: exit anims should stay in their finished pose AFTER Plays-to (otherwise
+    // a fade-out ending at 2s would pop the overlay back to full opacity at 2.01s).
+    if(Tg >= aE){
+      switch(a.type){
+        case 'fadeOut': op *= 0; break;
+        case 'slideOut': { const dir=a.dir||'right', axis=(dir==='up'||dir==='down')?H:W, dist=(a.dist!=null?a.dist:0.2)*axis;
+          if(dir==='left') dx -= dist; else if(dir==='right') dx += dist; else if(dir==='up') dy -= dist; else dy += dist; break; }
+        case 'scaleDown': sc *= (a.to!=null?a.to:0); break;
+        case 'moveTo': { const stops = _mtStops(a, o); const last = stops[stops.length-1];
+          const ox=(+o.x||0.5), oy=(+o.y||0.5);
+          dx += (last.x - ox) * W; dy += (last.y - oy) * H; break; }
+      }
+      return;
+    }
     let T = Tg - aS; const dw = aE - aS;
     if(a.gifFps && +a.gifFps>0) T = Math.floor(T * +a.gifFps) / +a.gifFps;   // GIF-look: quantize this anim's time
     // Snapshot the accumulators. For loops (anims not in EASE_INTERNAL), if the user picked an
@@ -2978,7 +3009,14 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg
       const fps=Math.max(2,a.fps||8), amp=(a.amp!=null?a.amp:0.6), sp=a.speed||2, tq=Math.floor(T*fps)/fps;
       rot += amp*10*Math.sin(2*Math.PI*sp*tq); const j=amp*0.01*W;
       dx += j*Math.sin(2*Math.PI*sp*1.3*tq+1.7); dy += j*Math.cos(2*Math.PI*sp*0.9*tq+0.6); break; }
-    case 'spin': { const sp=a.speed||0.5, sign=(a.dir==='ccw')?-1:1; rot+=sign*360*sp*T; break; }
+    case 'spin': { const sp=a.speed||0.5, sign=(a.dir==='ccw')?-1:1;
+      // Total rotation over the anim window = 360 * sp * dw. With no ease picked, distribute
+      // linearly (rot += sign*360*sp*T). With an ease, distribute along the ease curve so the
+      // SPEED profile is eased (ease-in-out = slow start, fast middle, slow end) while total
+      // revs stay the same.
+      if(a.ease){ const kk=Math.max(0,Math.min(1,T/dw)); rot += sign*360*sp*dw*_easeFor(a,'linear')(kk); }
+      else       { rot += sign*360*sp*T; }
+      break; }
     case 'fadeIn': { const d=Math.max(0.01,a.d||0.5); const k=Math.max(0,Math.min(1,T/d)); op*=_easeFor(a,'linear')(k); break; }
     case 'fadeOut': { const d=Math.max(0.01,a.d||0.5); const k=Math.max(0,Math.min(1,(dw-T)/d)); op*=_easeFor(a,'linear')(k); break; }
     case 'pulse': { const amp=a.amp!=null?a.amp:0.5, sp=a.speed||1.5; op*=1-amp*(0.5-0.5*Math.cos(2*Math.PI*sp*T)); break; }
@@ -3035,7 +3073,10 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg
     case 'scaleDown': { const d=Math.max(0.01,a.d||0.5), to=(a.to!=null?a.to:0), tail=dw-T;
       if(tail<d){ const k=Math.max(0,tail)/d, ease=_easeFor(a,'cubic-out')(k); sc *= to + (1-to)*ease; } break; }
     case 'scaleBeat': { const amp=(a.amp!=null?a.amp:0.15), sp=a.speed||1.5; sc *= 1 + amp*Math.sin(2*Math.PI*sp*T); break; }
-    case 'cycleHue': { const sp=a.speed||0.5, off=a.offset||0; hue += off + sp*360*T; break; }
+    case 'cycleHue': { const sp=a.speed||0.5, off=a.offset||0;
+      if(a.ease){ const kk=Math.max(0,Math.min(1,T/dw)); hue += off + sp*360*dw*_easeFor(a,'linear')(kk); }
+      else       { hue += off + sp*360*T; }
+      break; }
     case 'reshuffle': { const freq=Math.max(0.2,a.freq||2), amt=(a.amt!=null?a.amt:0.15), st=Math.floor(T*freq), sd=a.seed||1;
       if(a.posX) dx+=_rsHash(st,sd,1.1)*amt*W; if(a.posY) dy+=_rsHash(st,sd,2.3)*amt*W;
       if(a.rot) rot+=_rsHash(st,sd,3.7)*amt*180; if(a.opacity) op*=Math.max(0,1-(_rsHash(st,sd,6.1)*0.5+0.5)*amt*1.4); break; }
@@ -4960,6 +5001,34 @@ function buildOverlayBar(o,total){ const b=document.createElement('div'); b.data
       b.appendChild(d);
     });
   }
+  // Anim-window markers for every OTHER anim (not moveTo, which already has its own diamonds).
+  // Shows a small cyan diamond at Plays-from and one at Plays-to so users can see where each
+  // anim runs. Click opens the editor. No drag yet — keep this pass simple.
+  (o.anims||[]).forEach((a, ai) => {
+    if(a.type === 'moveTo') return;
+    const barDur = Math.max(0.001, +o.dur||0);
+    const aS = Math.max(0, +a.tStart||0);
+    const aE = (a.tEnd!=null && +a.tEnd>0) ? Math.min(barDur, +a.tEnd) : barDur;
+    [['s', aS, 'start'], ['e', aE, 'end']].forEach(([kind, tVal, lbl])=>{
+      const oob = tVal < 0 || tVal > barDur;
+      const pct = Math.max(0, Math.min(100, tVal / barDur * 100));
+      const d = document.createElement('div');
+      d.className = 'mtDia aw' + (kind==='s' ? ' aws' : '') + (oob?' oob':'');
+      d.style.left = pct + '%';
+      d.title = a.type+' '+lbl+' @ '+tVal.toFixed(2)+'s · click to edit';
+      d.onpointerdown = ev => ev.stopPropagation();
+      d.onclick = ev => {
+        ev.stopPropagation();
+        ovSel = o.id; _lastPick = 'ov';
+        if(!ovEdit) openOvModal(); else { renderOvList(); buildOvEditor(); }
+        setTimeout(()=>{
+          const inp = document.querySelector('input.anwin[data-ai="'+ai+'"][data-k="'+(kind==='s'?'tStart':'tEnd')+'"]');
+          if(inp){ inp.focus(); inp.select && inp.select(); inp.scrollIntoView({block:'center', behavior:'smooth'}); }
+        }, 50);
+      };
+      b.appendChild(d);
+    });
+  });
   ovBarInteract(b,hL,hR,o,total); return b; }
 // Split an overlay at the playhead into two overlays (same model as splitAtPlayhead for clips).
 function splitOverlayAtPlayhead(o){

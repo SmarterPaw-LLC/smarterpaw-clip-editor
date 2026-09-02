@@ -1155,11 +1155,15 @@ def _anim_exprs(o, s, dur, W, tv="t", H=None):
         if ty == "fadeIn":
             d = max(0.01, float(a.get("d", 0.5)))
             k = "min(1,max(0,(%s)/%g))" % (lt, d)
-            add_amul(_ease_expr(_ease_user or "linear", k))
+            curve = _ease_expr(_ease_user or "linear", k)
+            # Before Plays-from: 0 (invisible). Between: fade curve. After: 1 (fully visible).
+            amul.append("if(lt(%s,%g),0,if(gt(%s,%g),1,%s))" % (tv, win_open, tv, win_close, curve))
         elif ty == "fadeOut":
             d = max(0.01, float(a.get("d", 0.5)))
             k = "min(1,max(0,(%g-%s)/%g))" % (eA, tv, d)
-            add_amul(_ease_expr(_ease_user or "linear", k))
+            curve = _ease_expr(_ease_user or "linear", k)
+            # Before Plays-from: 1 (fully visible). Between: fade curve. After: 0 (invisible).
+            amul.append("if(lt(%s,%g),1,if(gt(%s,%g),0,%s))" % (tv, win_open, tv, win_close, curve))
         elif ty == "pulse":
             amp = float(a.get("amp", 0.5)); sp = float(a.get("speed", 1.5)); add_amul("(1-%g*(0.5-0.5*cos(2*PI*%g*%s)))" % (amp, sp, lt))
         elif ty == "jitter":
