@@ -318,7 +318,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.7.11</span>
+  <span class="ver" id="appVer">v2.7.12</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2926,16 +2926,18 @@ function _easeFn(name){ return EASE_FNS[name] || EASE_FNS['cubic-out']; }
 // the anim's delta over its window — turning a Spin's ease-in into rotation that accelerates,
 // a Pulse's ease-out into a pulse that fades out at the end, etc.
 const EASE_INTERNAL = new Set(['fadeIn','fadeOut','slideIn','slideOut','dropIn','popIn','bubbleUp','scaleUp','scaleDown','moveTo']);
-// UI list: [key, human label]. Blank key = keep each anim's own default curve.
+// UI list: [key, human label]. Blank key = keep each anim's own default curve. Labels describe
+// what the curve DOES (slow→fast, fast→slow) so users don't have to remember which side "ease-in"
+// vs "ease-out" refers to. Underlying keys stay the same for saved projects.
 const EASE_UI_OPTS = [
-  ['',          'default'],
-  ['linear',    'linear'],
-  ['in',        'ease-in (quad)'],
-  ['out',       'ease-out (quad)'],
-  ['inout',     'ease-in-out'],
-  ['cubic-in',  'cubic-in'],
-  ['cubic-out', 'cubic-out'],
-  ['back-out',  'back-out (overshoot)']
+  ['',          'default (each anim\'s own curve)'],
+  ['linear',    'linear (constant speed)'],
+  ['in',        'ease-in — slow start → fast end'],
+  ['out',       'ease-out — fast start → slow end'],
+  ['inout',     'ease-in-out — slow, fast middle, slow'],
+  ['cubic-in',  'cubic-in — very slow start → very fast end'],
+  ['cubic-out', 'cubic-out — very fast start → very slow end'],
+  ['back-out',  'back-out — overshoot then settle']
 ];
 // Pick the ease curve for an anim: user override → provided default. Return the fn.
 function _easeFor(a, defKey){ return _easeFn(a && a.ease ? a.ease : defKey); }
