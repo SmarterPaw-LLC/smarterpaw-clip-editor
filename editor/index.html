@@ -246,6 +246,8 @@
   .blk .mtDia:hover { background:#fff3a0; transform:rotate(45deg) scale(1.25); }
   .blk .mtDia.hd { background:#fff3a0; }   /* head (last / current) — brighter so the destination reads */
   .blk .mtDia.oob { background:#c04040; border-color:#4a0e0e; opacity:.75; }   /* Plays-from pushed the stop off the bar — flag it red so the user knows to drag it back */
+  .blk .mtDia.st  { background:transparent; border:1.5px solid #ffd54a; }        /* start anchor — hollow diamond at the anim's Plays-from time, marks where the overlay's BASE position sits */
+  .blk .mtDia.st:hover { background:#ffd54a44; }
   .blk .freeze { position:absolute; top:0; bottom:0; z-index:1; pointer-events:none;
      background:repeating-linear-gradient(45deg, #ffffff14, #ffffff14 5px, #ffffff30 5px, #ffffff30 10px);
      border-left:1px dashed #ffffffaa; display:flex; align-items:center; justify-content:center; overflow:hidden; }
@@ -316,7 +318,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.7.10</span>
+  <span class="ver" id="appVer">v2.7.11</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2919,9 +2921,11 @@ const EASE_FNS = {
   'back-out':  k => { const c1=1.70158, c3=c1+1; return 1 + c3*Math.pow(k-1,3) + c1*Math.pow(k-1,2); }
 };
 function _easeFn(name){ return EASE_FNS[name] || EASE_FNS['cubic-out']; }
-// Anim types that expose a general-purpose Ease selector in the UI. Loop-style anims
-// (pulse/spin/jitter/float/…) don't get one — they aren't interpolating between fixed endpoints.
-const EASE_ANIMS = new Set(['fadeIn','fadeOut','slideIn','slideOut','dropIn','popIn','bounceIn','bubbleUp','scaleUp','scaleDown']);
+// Anims that already CONSUME `a.ease` inside their own formula (entrance/exit anims where
+// ease shapes the interpolation curve). Everything else applies ease as a GAIN ENVELOPE on
+// the anim's delta over its window — turning a Spin's ease-in into rotation that accelerates,
+// a Pulse's ease-out into a pulse that fades out at the end, etc.
+const EASE_INTERNAL = new Set(['fadeIn','fadeOut','slideIn','slideOut','dropIn','popIn','bubbleUp','scaleUp','scaleDown','moveTo']);
 // UI list: [key, human label]. Blank key = keep each anim's own default curve.
 const EASE_UI_OPTS = [
   ['',          'default'],
@@ -2960,6 +2964,11 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg
     if(Tg < aS || Tg >= aE) return;
     let T = Tg - aS; const dw = aE - aS;
     if(a.gifFps && +a.gifFps>0) T = Math.floor(T * +a.gifFps) / +a.gifFps;   // GIF-look: quantize this anim's time
+    // Snapshot the accumulators. For loops (anims not in EASE_INTERNAL), if the user picked an
+    // ease we treat it as a per-anim gain envelope: multiply the delta THIS anim contributes by
+    // ease(T/dw). Entrance/exit anims already consume a.ease inside their formula so we skip
+    // the envelope for them.
+    const _dx0=dx,_dy0=dy,_rot0=rot,_sc0=sc,_op0=op,_hue0=hue;
     switch(a.type){
     case 'blink': { const sp=a.speed||2; op*=(Math.sin(2*Math.PI*sp*T)>=0)?1:0; break; }
     case 'wiggle': { const amp=a.amp!=null?a.amp:8, sp=a.speed||2; rot+=amp*Math.sin(2*Math.PI*sp*T); break; }
@@ -3031,7 +3040,20 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg
     case 'distort': {   // pixel warp itself lives in an SVG filter (see _distortFilterUpdate);
       // only hue-cycle contributes to the standard transform pipeline here.
       const hsp=(a.hue!=null?a.hue:0.35); hue += hsp*360*T; break; }
-  }});
+  }
+    // Gain-envelope for loop-style anims: fade the delta contributed by THIS anim in/out with
+    // the user's picked ease curve. Entrance/exit anims already ate a.ease inside their case.
+    if(a.ease && !EASE_INTERNAL.has(a.type)){
+      const k = Math.max(0, Math.min(1, T / Math.max(0.001, dw)));
+      const env = _easeFor(a, 'linear')(k);
+      dx  = _dx0  + (dx  - _dx0 ) * env;
+      dy  = _dy0  + (dy  - _dy0 ) * env;
+      rot = _rot0 + (rot - _rot0) * env;
+      hue = _hue0 + (hue - _hue0) * env;
+      if(_sc0 !== 0 && sc !== _sc0) sc = _sc0 * (1 + (sc/_sc0 - 1) * env);
+      if(_op0 !== 0 && op !== _op0) op = _op0 * (1 + (op/_op0 - 1) * env);
+    }
+  });
   return {dx,dy,op:Math.max(0,Math.min(1,op)),rot,sc,hue}; }
 function migrateAnims(o){ if(o.anims) return; o.anims=[];   // legacy fadeIn/fadeOut → animation entries
   if(+o.fadeIn>0) o.anims.push({type:'fadeIn',d:+o.fadeIn}); if(+o.fadeOut>0) o.anims.push({type:'fadeOut',d:+o.fadeOut}); }
@@ -4139,16 +4161,21 @@ function buildOvEditor(){
       const gfOn=!!(a.gifFps && +a.gifFps>0); const gfv=gfOn?(+a.gifFps):8;
       // moveTo shows a stops editor instead of the flat ctrl row — waypoints, per-segment easing.
       const mtHTML = (a.type==='moveTo') ? _renderMtStops(ai, a, o) : '';
-      // Ease selector — shown for one-shot entrance/exit anims where the curve makes sense.
-      // Loop-style anims (pulse/spin/jitter/…) don't get one because they aren't interpolating
-      // between a fixed start and end. Blank = each anim's own default curve.
-      const easeHTML = EASE_ANIMS.has(a.type) ? `
+      // Ease selector — on EVERY anim. For entrance/exit anims (fade/slide/drop/pop/bubble/scale
+      // /moveTo) it shapes the interpolation curve; for loops (spin/pulse/jitter/…) it acts as a
+      // gain envelope over the anim window, so ease-in accelerates the effect in, ease-out fades
+      // it out, etc. Blank keeps each anim's own default behavior (no envelope for loops).
+      const _easeInternal = EASE_INTERNAL.has(a.type);
+      const _easeHint = _easeInternal
+        ? ('shape of the '+(a.type.endsWith('Out')?'exit':'entrance')+' curve')
+        : 'envelope: gain the effect in/out across the anim window';
+      const easeHTML = `
         <div style="display:flex;gap:8px;font-size:11px;color:var(--mut);align-items:center;border-top:1px solid var(--line);padding-top:4px">
           <label>Ease <select class="aneas" data-ai="${ai}">
             ${EASE_UI_OPTS.map(([k,lbl])=>`<option value="${k}"${(a.ease||'')===k?' selected':''}>${lbl}</option>`).join('')}
           </select></label>
-          <span style="color:var(--mut);font-size:10px">shape of the ${a.type.endsWith('Out')?'exit':'entrance'} curve</span>
-        </div>` : '';
+          <span style="color:var(--mut);font-size:10px">${_easeHint}</span>
+        </div>`;
       return `<div class="ecline" style="flex-direction:column;align-items:stretch;gap:4px"><div style="display:flex;align-items:center;gap:6px"><b style="flex:1;font-size:12px">${def.label}</b><button class="mini anrm" data-ai="${ai}" title="remove">✕</button></div><div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--mut)">${def.ctrls.map(c=>animCtrl(ai,a,c)).join('')}</div>${mtHTML}${easeHTML}
         <div style="display:flex;gap:8px;font-size:11px;color:var(--mut);align-items:center;border-top:1px solid var(--line);padding-top:4px">
           <span title="Seconds within the overlay">Plays</span>
@@ -4839,6 +4866,43 @@ function buildOverlayBar(o,total){ const b=document.createElement('div'); b.data
       ? _mt.stops.slice().sort((p,q)=>(+p.t||0)-(+q.t||0))
       : [{x:_mt.x, y:_mt.y, t:+_mt.d||1, ease:_mt.ease||'cubic-out'}];
     const barDur = Math.max(0.001, +o.dur||0);
+    // Start anchor: hollow diamond at aS marking where the overlay's BASE (x,y) sits — the
+    // implicit t=0 waypoint the animation eases OUT from. Drag it horizontally to shift the
+    // whole anim window (updates a.tStart; stops keep their relative offsets).
+    {
+      const startPct = Math.max(0, Math.min(100, aS / barDur * 100));
+      const startD = document.createElement('div');
+      startD.className = 'mtDia st';
+      startD.style.left = startPct + '%';
+      startD.title = 'moveTo START @ '+aS.toFixed(2)+'s → overlay base position ('+(+o.x||0.5).toFixed(2)+', '+(+o.y||0.5).toFixed(2)+') · drag to shift the anim window';
+      startD.onpointerdown = ev => {
+        ev.stopPropagation(); ev.preventDefault();
+        const bRect = b.getBoundingClientRect();
+        const barW = bRect.width || 1;
+        const t0 = aS;
+        const lastRel = stops.reduce((mx,s)=>Math.max(mx, +s.t||0), 0);
+        const upper = Math.max(0, barDur - lastRel - 0.01);   // don't let start push last stop past the bar
+        const x0 = ev.clientX; let moved = false;
+        histCommit();
+        const mv = e => {
+          const dx = e.clientX - x0; if(!moved && Math.abs(dx) > 3) moved = true; if(!moved) return;
+          const dSec = dx / barW * barDur;
+          const newT = Math.max(0, Math.min(upper, t0 + dSec));
+          _mt.tStart = Math.round(newT * 100) / 100;
+          renderOverlays(playhead);
+        };
+        const up = () => {
+          window.removeEventListener('pointermove', mv);
+          window.removeEventListener('pointerup', up);
+          if(moved){ renderTracks(); if(ovEdit && ovSel === o.id) renderAnimList(); return; }
+          ovSel = o.id; _lastPick = 'ov';
+          if(!ovEdit) openOvModal(); else { renderOvList(); buildOvEditor(); }
+        };
+        window.addEventListener('pointermove', mv);
+        window.addEventListener('pointerup', up);
+      };
+      b.appendChild(startD);
+    }
     stops.forEach((s, si)=>{
       const tRel = aS + (+s.t || 0);        // seconds inside the overlay bar
       const oob = tRel < 0 || tRel > barDur;   // out-of-bar (Plays-from pushed it past the edge) — clamp visually but keep it grabbable so the user can drag it back in
