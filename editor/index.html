@@ -245,6 +245,7 @@
      z-index:8; cursor:pointer; }
   .blk .mtDia:hover { background:#fff3a0; transform:rotate(45deg) scale(1.25); }
   .blk .mtDia.hd { background:#fff3a0; }   /* head (last / current) — brighter so the destination reads */
+  .blk .mtDia.oob { background:#c04040; border-color:#4a0e0e; opacity:.75; }   /* Plays-from pushed the stop off the bar — flag it red so the user knows to drag it back */
   .blk .freeze { position:absolute; top:0; bottom:0; z-index:1; pointer-events:none;
      background:repeating-linear-gradient(45deg, #ffffff14, #ffffff14 5px, #ffffff30 5px, #ffffff30 10px);
      border-left:1px dashed #ffffffaa; display:flex; align-items:center; justify-content:center; overflow:hidden; }
@@ -315,7 +316,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.7.9</span>
+  <span class="ver" id="appVer">v2.7.10</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -4171,7 +4172,7 @@ function buildOvEditor(){
     L.querySelectorAll('.anpick').forEach(b=>{ b.onclick=()=>{ const ai=+b.dataset.ai, k=b.dataset.k; pickImage(src=>{ histCommit(); o.anims[ai][k]=src; renderAnimList(); renderOverlays(playhead); }); }; });
     L.querySelectorAll('.anrm').forEach(b=>{ b.onclick=()=>{ histCommit(); o.anims.splice(+b.dataset.ai,1); renderAnimList(); renderOverlays(playhead); }; });
     L.querySelectorAll('.anwin').forEach(el=>{ el.oninput=el.onchange=()=>{ const a=o.anims[+el.dataset.ai], k=el.dataset.k, v=el.value.trim();
-      if(v==='') delete a[k]; else a[k]=parseFloat(v)||0; renderOverlays(playhead); }; });
+      if(v==='') delete a[k]; else a[k]=parseFloat(v)||0; renderOverlays(playhead); renderTracks(); }; });
     L.querySelectorAll('.angif').forEach(el=>{ el.onchange=()=>{ const a=o.anims[+el.dataset.ai];
       if(el.checked){ a.gifFps = a.gifFps && +a.gifFps>0 ? +a.gifFps : 8; } else { delete a.gifFps; }
       renderAnimList(); renderOverlays(playhead); renderTracks(); }; });
@@ -4840,12 +4841,12 @@ function buildOverlayBar(o,total){ const b=document.createElement('div'); b.data
     const barDur = Math.max(0.001, +o.dur||0);
     stops.forEach((s, si)=>{
       const tRel = aS + (+s.t || 0);        // seconds inside the overlay bar
-      if(tRel < -0.001 || tRel > barDur + 0.001) return;
+      const oob = tRel < 0 || tRel > barDur;   // out-of-bar (Plays-from pushed it past the edge) — clamp visually but keep it grabbable so the user can drag it back in
       const pct = Math.max(0, Math.min(100, tRel / barDur * 100));
       const d = document.createElement('div');
-      d.className = 'mtDia' + (si === stops.length - 1 ? ' hd' : '');
+      d.className = 'mtDia' + (si === stops.length - 1 ? ' hd' : '') + (oob ? ' oob' : '');
       d.style.left = pct + '%';
-      d.title = 'moveTo stop '+(si+1)+' @ '+(+tRel).toFixed(2)+'s → ('+(+s.x||0).toFixed(2)+', '+(+s.y||0).toFixed(2)+') · ease: '+(s.ease||'cubic-out') + ' · drag to move · click to edit';
+      d.title = 'moveTo stop '+(si+1)+' @ '+(+tRel).toFixed(2)+'s → ('+(+s.x||0).toFixed(2)+', '+(+s.y||0).toFixed(2)+') · ease: '+(s.ease||'cubic-out') + (oob?' · outside the anim window — drag me back':' · drag to move · click to edit');
       // Diamond interaction: drag horizontally to change this stop's TIME; click (no move) opens
       // the stops editor and focuses this row. stopPropagation so the wrap's scrub handler doesn't
       // fire underneath. Time is stored relative to anim window start (subtract aS before writing
