@@ -310,7 +310,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.7.4</span>
+  <span class="ver" id="appVer">v2.7.5</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -3787,9 +3787,23 @@ function addSliderNumbers(scope){
   scope.querySelectorAll('input[type=range]').forEach(r=>{
     if(r._numPair) return; r._numPair=true;
     const n=document.createElement('input'); n.type='number'; n.className='rngnum';
-    if(r.min!=='') n.min=r.min; if(r.max!=='') n.max=r.max; if(r.step!=='') n.step=r.step; n.value=r.value;
+    // Only copy `step` — deliberately leave the number's min/max unset so the user can type
+    // beyond the slider's UI range. The slider itself would silently clamp a beyond-range
+    // assignment (browser behavior on <input type=range>), so we EXPAND the slider's own
+    // min/max first, then write. The slider knob will visually sit at the new extreme; the
+    // number keeps the exact value the user typed.
+    if(r.step!=='') n.step=r.step; n.value=r.value;
+    n.title = 'Slider range: '+(r.min||'0')+' to '+(r.max||'∞')+' — type a value here to go beyond.';
     r.addEventListener('input', ()=>{ if(n.value!==r.value) n.value=r.value; });
-    const push=ev=>{ r.value=n.value; r.dispatchEvent(new Event(ev,{bubbles:true})); };
+    const push=ev=>{
+      const raw = parseFloat(n.value);
+      if(isFinite(raw)){
+        if(r.max!=='' && raw > +r.max) r.max = String(raw);
+        if(r.min!=='' && raw < +r.min) r.min = String(raw);
+      }
+      r.value=n.value;
+      r.dispatchEvent(new Event(ev,{bubbles:true}));
+    };
     n.addEventListener('input', ()=>push('input'));
     n.addEventListener('change', ()=>push('change'));
     r.insertAdjacentElement('afterend', n);
