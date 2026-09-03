@@ -1736,12 +1736,75 @@ def prerender_clipframe(o, W, H, tmp, k):
     return out
 
 
+def _explode_expand(overlays, W, H):
+    """Replace each overlay that has an `explode` anim with N synthetic image copies flying out
+    from the base position. Matches the client's renderExplosion math exactly (same _rsHash so
+    piece #i lands in the same spot preview and render). The parent overlay is DROPPED — pieces
+    stack at the base before Plays-from and fly during the window (moveTo pre-window state keeps
+    them at base offset)."""
+    out = []
+    for o in overlays:
+        if not isinstance(o, dict):
+            out.append(o); continue
+        ex = None
+        for a in (o.get("anims") or []):
+            if isinstance(a, dict) and a.get("type") == "explode":
+                ex = a; break
+        # Only expand image overlays (they have an .src to clone). Everything else passes through.
+        if not ex or o.get("type") != "image" or not o.get("src"):
+            out.append(o); continue
+        count = int(max(2, min(30, round(float(ex.get("count", 8))))))
+        spd_frac = float(ex.get("speed", 0.6))                    # canvas widths per second
+        speed_px = spd_frac * W                                   # px per second, W is the unit for BOTH axes (matches client)
+        spread   = float(ex.get("spread", 180)) * math.pi / 180.0
+        rot_max  = float(ex.get("rotate", 60))
+        fade     = ex.get("fade") is not False
+        seed     = int(ex.get("seed") or 1)
+        aS = max(0.0, float(ex.get("tStart", 0) or 0))
+        dur_ov = float(o.get("dur", 0) or 0)
+        aE = min(dur_ov, float(ex.get("tEnd") or 0)) if ex.get("tEnd") else dur_ov
+        window = max(0.01, aE - aS)
+        base_x = float(o.get("x", 0.5) or 0.5)
+        base_y = float(o.get("y", 0.5) or 0.5)
+        other_anims = [a for a in (o.get("anims") or []) if not (isinstance(a, dict) and a.get("type") == "explode")]
+        for i in range(count):
+            # Deterministic 0..1 hash (same math as client _rsHash → _hash01)
+            def h01(salt):
+                x = math.sin(i * 12.9898 + (seed or 1) * 78.233 + salt * 45.13) * 43758.5453
+                return ((x - math.floor(x)) * 2 - 1 + 1) / 2
+            r1, r2, r3 = h01(1.13), h01(3.71), h01(7.13)
+            base_ang = (i / count) * 2 * math.pi - math.pi / 2
+            ang = base_ang + (r1 - 0.5) * spread
+            spd = speed_px * (0.5 + r2)                           # 50–150% of nominal
+            rot_v = (r3 - 0.5) * 2 * rot_max                      # ±rot_max deg/sec
+            dx_final = math.cos(ang) * spd * window
+            dy_final = math.sin(ang) * spd * window
+            piece_anims = list(other_anims) + [{
+                "type": "moveTo", "tStart": aS, "tEnd": aE,
+                "stops": [{"x": base_x + dx_final / W, "y": base_y + dy_final / H, "t": window, "ease": "linear"}]
+            }]
+            if abs(rot_v) > 0.1:
+                piece_anims.append({
+                    "type": "spin", "tStart": aS, "tEnd": aE,
+                    "speed": abs(rot_v) / 360.0,
+                    "dir": ("cw" if rot_v >= 0 else "ccw"),
+                })
+            if fade:
+                piece_anims.append({"type": "fadeOut", "tStart": aS, "tEnd": aE, "d": window})
+            piece = dict(o)
+            piece["id"] = (o.get("id") or "") + "_ex%d" % i
+            piece["anims"] = piece_anims
+            out.append(piece)
+    return out
+
+
 def apply_overlays(silent, overlays, W, H, tmp):
     """Composite free-floating text/image/shape overlays over the full timeline (global time),
     preserving list order as z-order (later = on top)."""
     overlays = [o for o in (overlays or []) if isinstance(o, dict) and o.get("type") in ("text", "image", "shape", "piececlip", "clipframe") and not o.get("hidden")]
     if not overlays:
         return silent, None
+    overlays = _explode_expand(overlays, W, H)   # explode → N synthetic image copies (before the sort so ch/z-order lands right)
     overlays = sorted(overlays, key=lambda o: int(o.get("ch", 0) or 0))   # higher channel composited later = on top (stable within a channel)
     # Per-piece sprinkles arrive as a single 'piececlip'. Pre-render their pieces onto a SHORT
     # transparent clip (only the [start,end] window), so the heavy N-piece composite runs once

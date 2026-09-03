@@ -318,7 +318,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.7.17</span>
+  <span class="ver" id="appVer">v2.8.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2879,6 +2879,19 @@ const ANIM_DEFS={
   spin:    {label:'Spin',          png:true,def:{speed:0.5,dir:'cw'},ctrls:[['speed','Rev/sec','range',0.05,2,0.05],['dir','Direction','sel',['cw','ccw']]]},
   sparkle: {label:'Sparkle',def:{emoji:'✨',src:'',count:6,size:0.06,spread:0.12,speed:1.2},ctrls:[['emoji','Emoji','text'],['src','or PNG','img'],['count','Count','range',1,16,1],['size','Size','range',0.02,0.16,0.005],['spread','Spread','range',0.02,0.35,0.01],['speed','Twinkle','range',0.3,4,0.1]]},
   shimmer: {label:'Shimmer / glint',png:true,def:{amount:0.7,width:0.22,speed:1.0},ctrls:[['amount','Brightness','range',0.1,1,0.05],['width','Band','range',0.08,0.5,0.02],['speed','Speed','range',0.2,3,0.1]]},
+  // Explosion: spawn N copies of the overlay and fling them outward with random speed/rotation.
+  // Base overlay hides while active; a fade toggle controls whether pieces fade as they fly off.
+  // Preview uses div copies of the overlay image; render bakes per-piece overlay calls (ffmpeg).
+  explode: {label:'Explode (fly apart)', png:true,
+    def:{count:8, speed:0.6, spread:180, rotate:60, fade:true, seed:1},
+    ctrls:[
+      ['count','Copies','range',2,30,1],
+      ['speed','Speed (canvas widths/s)','range',0.1,4,0.1],
+      ['spread','Direction jitter (°)','range',0,360,10],
+      ['rotate','Max spin (°/s)','range',0,720,20],
+      ['fade','Fade out','bool'],
+      ['seed','Seed','seed']
+    ]},
   reshuffle:{label:'Reshuffle (random)',def:{freq:2,amt:0.15,posX:true,posY:true,rot:false,opacity:false,seed:1},
     ctrls:[['freq','Per sec','range',0.2,8,0.2],['amt','Amount','range',0.02,0.6,0.02],['posX','Move X','bool'],['posY','Move Y','bool'],['rot','Rotate','bool'],['opacity','Opacity','bool'],['seed','Seed','seed']]},
   // TRUE psychedelic warp: SVG feDisplacementMap in preview + ffmpeg geq sine-warp on render.
@@ -3592,6 +3605,78 @@ function renderSparkles(o, time, layer){
   });
   ovSpark[o.id]=perAnim;
 }
+const ovExplode={}; // explosion piece divs per overlay id (array of clones)
+// Deterministic 0..1 hash (wraps the -1..1 _rsHash used elsewhere so ffmpeg preview<->render can share math).
+function _hash01(i, seed, salt){ return (_rsHash(i, seed, salt) + 1) / 2; }
+function renderExplosion(o, time, layer){
+  const ex = (o.anims||[]).find(a => a.type === 'explode');
+  let arr = ovExplode[o.id] || [];
+  const ovel = ovEls[o.id];
+  if(!ex || !ovel){
+    if(arr.length){ arr.forEach(el=>el.remove()); delete ovExplode[o.id]; }
+    return;
+  }
+  const dur = +o.dur||0;
+  const aS = Math.max(0, +ex.tStart||0);
+  const aE = (ex.tEnd!=null && +ex.tEnd>0) ? Math.min(dur, +ex.tEnd) : dur;
+  const t0 = o.start + aS, t1 = o.start + aE;
+  const preWindow  = time < t0;
+  const postWindow = time >= t1;
+  const overlayActive = time >= o.start && time < o.start + dur;
+  if(preWindow || !overlayActive){
+    // Before Plays-from OR outside overlay window: hide pieces, show base overlay normally.
+    arr.forEach(el=>el.style.display='none');
+    return;
+  }
+  const count = Math.max(2, Math.round(+ex.count || 8));
+  const W = $('#stageWrap').clientWidth || 360, Hs = $('#stageWrap').clientHeight || 640;
+  const speed = (ex.speed != null ? +ex.speed : 0.6) * W;   // canvas widths per second
+  const spread = ((ex.spread != null ? +ex.spread : 180) * Math.PI) / 180;
+  const rotMax = (ex.rotate != null ? +ex.rotate : 60);
+  const fade = ex.fade !== false;
+  const seed = +ex.seed || 1;
+  // Grow / shrink pool
+  while(arr.length < count){
+    const d = document.createElement('div');
+    d.style.position='absolute'; d.style.pointerEvents='none';
+    d.style.transformOrigin='50% 50%'; d.style.backgroundSize='contain';
+    d.style.backgroundRepeat='no-repeat'; d.style.backgroundPosition='center';
+    layer.appendChild(d); arr.push(d);
+  }
+  while(arr.length > count){ arr.pop().remove(); }
+  ovExplode[o.id] = arr;
+  // Hide the base overlay while exploding — pieces stand in for it.
+  ovel.style.display = 'none';
+  const T = postWindow ? (aE - aS) : (time - t0);
+  const cxp = (o.x||0.5) * W, cyp = (o.y||0.5) * Hs;
+  const pw = ovel.offsetWidth  || (W * 0.2);
+  const ph = ovel.offsetHeight || (W * 0.2);
+  const src = (ovel.tagName === 'IMG') ? ovel.getAttribute('src') : null;
+  const parentZ = parseInt(ovel.style.zIndex || '0', 10) || 0;
+  const animDur = Math.max(0.001, aE - aS);
+  arr.forEach((el, i) => {
+    const r1 = _hash01(i, seed, 1.13);  // direction jitter
+    const r2 = _hash01(i, seed, 3.71);  // speed variance
+    const r3 = _hash01(i, seed, 7.13);  // spin
+    const baseAng = (i / count) * 2 * Math.PI - Math.PI/2;   // start at 12 o'clock, spread clockwise
+    const ang = baseAng + (r1 - 0.5) * spread;
+    const spd = speed * (0.5 + r2);                          // 50–150% of nominal
+    const rotV = (r3 - 0.5) * 2 * rotMax;                    // ±rotMax deg/s
+    const dx = Math.cos(ang) * spd * T;
+    const dy = Math.sin(ang) * spd * T;
+    const rot = rotV * T;
+    el.style.display = '';
+    el.style.left = (cxp + dx - pw/2) + 'px';
+    el.style.top  = (cyp + dy - ph/2) + 'px';
+    el.style.width = pw + 'px'; el.style.height = ph + 'px';
+    el.style.transform = 'rotate(' + rot.toFixed(2) + 'deg)';
+    el.style.zIndex = String(parentZ);
+    if(src) el.style.backgroundImage = 'url("' + src + '")';
+    else    el.style.backgroundImage = ovel.style.backgroundImage || '';
+    const kf = Math.max(0, Math.min(1, T / animDur));
+    el.style.opacity = fade ? (1 - kf) : 1;
+  });
+}
 const ovShine={}; // shimmer sheen div per overlay id
 function renderShine(o, time, layer){
   const sh=(o.anims||[]).find(a=>a.type==='shimmer'); let el=ovShine[o.id]; const ovel=ovEls[o.id];
@@ -3624,6 +3709,7 @@ function renderOverlays(time){
   for(const id in ovSpark){ if(!ids.has(id)){ (ovSpark[id]||[]).forEach(arr=>arr&&arr.forEach(el=>el.remove())); delete ovSpark[id]; } }
   for(const id in ovPieces){ if(!ids.has(id)){ removeSprinklePieces(id); } }
   for(const id in ovShine){ if(!ids.has(id)){ ovShine[id].remove(); delete ovShine[id]; } }
+  for(const id in ovExplode){ if(!ids.has(id)){ (ovExplode[id]||[]).forEach(el=>el.remove()); delete ovExplode[id]; } }
   (EDL.overlays||[]).forEach((oRaw,idx)=>{
     migrateAnims(oRaw);
     const o = resolveOverlay(oRaw);   // shadow with variant-resolved view; oRaw kept for write-back via dragify/editor handlers
@@ -3777,6 +3863,7 @@ function renderOverlays(time){
     else { el.style.pointerEvents='none'; el.style.outline='none'; }
     renderSparkles(o, time, layer);
     renderShine(o, time, layer);
+    renderExplosion(o, time, layer);
   });
   histSchedule();
 }
