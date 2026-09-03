@@ -318,7 +318,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.8.3</span>
+  <span class="ver" id="appVer">v2.8.4</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2995,6 +2995,11 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg
         case 'popIn': sc *= 0; op *= 0; break;
         case 'scaleUp': sc *= (a.from!=null?a.from:0.3); break;
         case 'bounceIn': /* rest at base */ break;
+        case 'moveTo': {   // pre-window: sit at the anim's START position (explicit or base)
+          const ox=(+o.x||0.5), oy=(+o.y||0.5);
+          const sX=(a.startX!=null?+a.startX:ox), sY=(a.startY!=null?+a.startY:oy);
+          dx += (sX - ox) * W; dy += (sY - oy) * H;
+          break; }
       }
       return;
     }
@@ -3056,10 +3061,13 @@ function animState(o, lt, dur, W){ let dx=0,dy=0,op=1,rot=0,sc=1,hue=0; const Tg
       if(t2 > 0){ const k=Math.min(1, t2/d); const e = _easeFor(a,'in')(k);
         if(dir==='left')dx-=e*dist; else if(dir==='right')dx+=e*dist; else if(dir==='up')dy-=e*dist; else dy+=e*dist; } break; }
     case 'moveTo': {
-      const stops = _mtStops(a, o);   // waypoints from anim start (t=0 is base). Always ≥1 entry.
+      const stops = _mtStops(a, o);   // waypoints from anim start (t=0 is anchor). Always ≥1 entry.
       const ox=(+o.x||0.5), oy=(+o.y||0.5);
-      // Base is the implicit t=0 anchor. Find the segment we're currently in.
-      let pX=ox, pY=oy, pT=0;
+      // Anim start position: uses explicit a.startX / a.startY when set, else overlay base (o.x,o.y).
+      // Lets you set both endpoints of a moveTo without dragging the overlay's rest position around.
+      const sX=(a.startX!=null?+a.startX:ox), sY=(a.startY!=null?+a.startY:oy);
+      // Find the segment we're currently in — the start anchor is the implicit t=0 waypoint.
+      let pX=sX, pY=sY, pT=0;
       let nX=stops[stops.length-1].x, nY=stops[stops.length-1].y, nT=stops[stops.length-1].t, eK='linear';
       for(const s of stops){
         if(T <= s.t){ nX=+s.x; nY=+s.y; nT=+s.t; eK=s.ease||'cubic-out'; break; }
@@ -4294,14 +4302,28 @@ function buildOvEditor(){
         <td><button class="mini mtStopDel" data-ai="${ai}" data-si="${si}" title="Delete this stop"${stops.length<=1?' disabled':''}>✕</button></td>
       </tr>`;
     }).join('');
+    // START anchor row — editable. Writes to a.startX / a.startY so the anim has its own
+    // start point independent of the overlay's rest position (drops "Reset to base" clears them).
+    const sX = (a.startX != null ? +a.startX : (+o.x||0.5));
+    const sY = (a.startY != null ? +a.startY : (+o.y||0.5));
+    const explicit = (a.startX != null || a.startY != null);
+    const startRow = `<tr style="background:rgba(255,213,74,0.06)">
+      <td style="color:var(--mut)" title="Implicit t=0 waypoint — the position the animation starts from">▷</td>
+      <td style="color:var(--mut)">0.00 s</td>
+      <td><input type="number" class="mtStart" data-ai="${ai}" data-k="startX" min="0" max="1" step="0.01" value="${sX.toFixed(2)}" style="width:56px"></td>
+      <td><input type="number" class="mtStart" data-ai="${ai}" data-k="startY" min="0" max="1" step="0.01" value="${sY.toFixed(2)}" style="width:56px"></td>
+      <td style="color:var(--mut)">—</td>
+      <td><button class="mini mtStartHere" data-ai="${ai}" title="Copy the overlay's CURRENT preview position into the start x,y">⤓ here</button></td>
+      <td><button class="mini mtStartReset" data-ai="${ai}" title="Use the overlay's base position (o.x, o.y) as the start" ${explicit?'':'disabled'}>⟲</button></td>
+    </tr>`;
     return `<div style="border-top:1px solid var(--line);padding-top:6px;margin-top:4px">
       <div style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--mut);margin-bottom:4px">
-        <span title="Each row is a waypoint. Ease shapes movement from the previous point to this one. Position 0 is the overlay's base (x,y)."><b>Stops</b> · base (${(+o.x||0.5).toFixed(2)}, ${(+o.y||0.5).toFixed(2)}) → waypoints ↓</span>
+        <span title="First row (▷) is the START — where the overlay sits at Plays-from. Numbered rows are waypoints; ease is the curve FROM the previous row TO this one."><b>Stops</b> ${explicit?'· custom start':'· start = overlay base'}</span>
         <button class="mini mtStopAdd" data-ai="${ai}" title="Add a new waypoint at the end">＋ add stop</button>
       </div>
       <table style="width:100%;font-size:11px;border-collapse:collapse">
         <thead style="color:var(--mut)"><tr><th style="text-align:left">#</th><th style="text-align:left">time</th><th style="text-align:left">x</th><th style="text-align:left">y</th><th style="text-align:left">ease</th><th></th><th></th></tr></thead>
-        <tbody>${rows}</tbody>
+        <tbody>${startRow}${rows}</tbody>
       </table>
     </div>`;
   }
@@ -4360,6 +4382,17 @@ function buildOvEditor(){
       const si=+el.dataset.si, k=el.dataset.k; let v = el.value; if(k!=='ease') v = parseFloat(v)||0;
       if(k==='t') v = Math.max(0.01, v); else if(k==='x'||k==='y') v = Math.max(0, Math.min(1, v));
       a.stops[si][k] = v; renderOverlays(playhead); renderTracks(); }; });
+    // Start-anchor (t=0) handlers — write a.startX / a.startY (or clear them to fall back to o.x/o.y)
+    L.querySelectorAll('.mtStart').forEach(el=>{ el.oninput=el.onchange=()=>{ const a=o.anims[+el.dataset.ai];
+      const k=el.dataset.k; const v = Math.max(0, Math.min(1, parseFloat(el.value)||0));
+      a[k] = v; renderOverlays(playhead); renderTracks(); }; });
+    L.querySelectorAll('.mtStartHere').forEach(b=>{ b.onclick=()=>{ histCommit(); const a=o.anims[+b.dataset.ai];
+      a.startX = Math.max(0, Math.min(1, (+o.x||0.5)));
+      a.startY = Math.max(0, Math.min(1, (+o.y||0.5)));
+      renderAnimList(); renderOverlays(playhead); renderTracks(); }; });
+    L.querySelectorAll('.mtStartReset').forEach(b=>{ b.onclick=()=>{ histCommit(); const a=o.anims[+b.dataset.ai];
+      delete a.startX; delete a.startY;
+      renderAnimList(); renderOverlays(playhead); renderTracks(); }; });
     L.querySelectorAll('.mtStopAdd').forEach(b=>{ b.onclick=()=>{ histCommit(); const a=o.anims[+b.dataset.ai]; _mtEnsureStops(a);
       const last=a.stops[a.stops.length-1];   // seed the new stop nearby so the user isn't jumping across the canvas
       a.stops.push({x:Math.max(0,Math.min(1,(+last.x||0.5))), y:Math.max(0,Math.min(1,(+last.y||0.5)+0.1)), t:(+last.t||1)+0.5, ease:'cubic-out'});

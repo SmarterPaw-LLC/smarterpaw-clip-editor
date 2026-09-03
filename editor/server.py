@@ -1203,8 +1203,11 @@ def _anim_exprs(o, s, dur, W, tv="t", H=None):
             (dxs if dr in ("left", "right") else dys).append(three)
         elif ty == "moveTo":
             # Multi-stop path. Legacy {d,x,y} is treated as a single-stop shortcut for back-compat.
-            # Each stop's `ease` shapes movement FROM the previous stop TO this one.
+            # Each stop's `ease` shapes movement FROM the previous stop TO this one. The anim's
+            # START anchor is a.startX / a.startY when set, otherwise the overlay's rest position.
             ox = float(o.get("x", 0.5) or 0.5); oy = float(o.get("y", 0.5) or 0.5)
+            sX = float(a.get("startX", ox) or ox) if a.get("startX") is not None else ox
+            sY = float(a.get("startY", oy) or oy) if a.get("startY") is not None else oy
             raw_stops = a.get("stops")
             if not (isinstance(raw_stops, list) and raw_stops):
                 d = max(0.01, float(a.get("d", 1)))
@@ -1218,16 +1221,11 @@ def _anim_exprs(o, s, dur, W, tv="t", H=None):
                 key=lambda s: s["t"])
             if not stops:
                 stops = [{"x": ox, "y": oy, "t": 1.0, "ease": "cubic-out"}]
-            # Build nested if-chain across segments. Each segment i:
-            #   base = (prev.x, prev.y),  next = (stop_i.x, stop_i.y),  t in [prev.t, stop_i.t]
-            #   k = (lt - prev.t) / span,  eased with stop_i.ease
-            # (ease_expr is now the module-level _ease_expr helper — shared with fadeIn/slide/etc.)
-            # Walk stops right-to-left, wrapping each new segment as the FALSE branch of the next.
-            # Final (past-last-stop) fallback = the last stop's position (hold).
+            # Build nested if-chain across segments. Start anchor (sX, sY) is the implicit t=0.
             last = stops[-1]
             x_expr = "%g" % ((last["x"] - ox) * W)
             y_expr = "%g" % ((last["y"] - oy) * H)
-            pT = 0.0; pX = ox; pY = oy
+            pT = 0.0; pX = sX; pY = sY
             branches = []   # (t_upper, x_lerp_expr, y_lerp_expr) per segment, in stop-order
             # NOTE: use `st` here — the outer scope's `s` is the overlay start time (float). A
             # `for s in stops` would clobber it with a stop-dict, then the NEXT anim's iteration
@@ -1244,11 +1242,14 @@ def _anim_exprs(o, s, dur, W, tv="t", H=None):
             for t_up, bx, by in reversed(branches):
                 x_expr = "if(lt(%s,%g),%s,%s)" % (lt, t_up, bx, x_expr)
                 y_expr = "if(lt(%s,%g),%s,%s)" % (lt, t_up, by, y_expr)
-            # Pre-window: 0,0 (at base). Post-window: hold at last stop offset (matches client).
+            # Pre-window: sit at the START anchor offset from base (sX-ox, sY-oy). Post-window:
+            # hold at the LAST stop's offset. Both match client animState's pre/post handling.
+            start_dx = "%g" % ((sX - ox) * W)
+            start_dy = "%g" % ((sY - oy) * H)
             last_dx = "%g" % ((stops[-1]["x"] - ox) * W)
             last_dy = "%g" % ((stops[-1]["y"] - oy) * H)
-            dxs.append("if(lt(%s,%g),0,if(gt(%s,%g),%s,%s))" % (tv, win_open, tv, win_close, last_dx, x_expr))
-            dys.append("if(lt(%s,%g),0,if(gt(%s,%g),%s,%s))" % (tv, win_open, tv, win_close, last_dy, y_expr))
+            dxs.append("if(lt(%s,%g),%s,if(gt(%s,%g),%s,%s))" % (tv, win_open, start_dx, tv, win_close, last_dx, x_expr))
+            dys.append("if(lt(%s,%g),%s,if(gt(%s,%g),%s,%s))" % (tv, win_open, start_dy, tv, win_close, last_dy, y_expr))
         elif ty == "bounceIn":
             d = max(0.01, float(a.get("d", 0.6))); amp = float(a.get("amp", 0.12)) * W
             add_dy("if(lt(%s,%g),-%g*exp(-3*%s/%g)*cos(2*PI*1.6*%s/%g)*(1-%s/%g),0)" % (lt, d, amp, lt, d, lt, d, lt, d))
