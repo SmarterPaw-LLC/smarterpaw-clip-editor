@@ -3445,7 +3445,9 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     j["result"] = render(d, od, on, progress=j, fmt=f, gif_fps=gf, gif_width=gw)
                 except Exception as e:
-                    j["result"] = {"ok": False, "log": repr(e)}
+                    import traceback
+                    tb = traceback.format_exc()
+                    j["result"] = {"ok": False, "log": repr(e) + "\n" + tb}
                 finally:
                     j["pct"] = 100; j["done"] = True
             threading.Thread(target=_work, daemon=True).start()
