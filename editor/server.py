@@ -1229,14 +1229,18 @@ def _anim_exprs(o, s, dur, W, tv="t", H=None):
             y_expr = "%g" % ((last["y"] - oy) * H)
             pT = 0.0; pX = ox; pY = oy
             branches = []   # (t_upper, x_lerp_expr, y_lerp_expr) per segment, in stop-order
-            for s in stops:
-                span = max(0.001, s["t"] - pT)
+            # NOTE: use `st` here — the outer scope's `s` is the overlay start time (float). A
+            # `for s in stops` would clobber it with a stop-dict, then the NEXT anim's iteration
+            # crashes on line 1140 (`eA = s + aE` → dict + float TypeError). Bug repro: any
+            # overlay with a moveTo followed by another anim (fade/slide/etc).
+            for st in stops:
+                span = max(0.001, st["t"] - pT)
                 k = "min(1,max(0,(%s-%g)/%g))" % (lt, pT, span)
-                e = _ease_expr(s["ease"], k)
-                bx = "(%g+(%g)*(%s))" % ((pX - ox) * W, (s["x"] - pX) * W, e)
-                by = "(%g+(%g)*(%s))" % ((pY - oy) * H, (s["y"] - pY) * H, e)
-                branches.append((s["t"], bx, by))
-                pT = s["t"]; pX = s["x"]; pY = s["y"]
+                e = _ease_expr(st["ease"], k)
+                bx = "(%g+(%g)*(%s))" % ((pX - ox) * W, (st["x"] - pX) * W, e)
+                by = "(%g+(%g)*(%s))" % ((pY - oy) * H, (st["y"] - pY) * H, e)
+                branches.append((st["t"], bx, by))
+                pT = st["t"]; pX = st["x"]; pY = st["y"]
             for t_up, bx, by in reversed(branches):
                 x_expr = "if(lt(%s,%g),%s,%s)" % (lt, t_up, bx, x_expr)
                 y_expr = "if(lt(%s,%g),%s,%s)" % (lt, t_up, by, y_expr)
