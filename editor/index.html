@@ -318,7 +318,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.8.5</span>
+  <span class="ver" id="appVer">v2.8.6</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -3248,7 +3248,10 @@ function buildTextOverlayCanvas(o){
     cw=Math.ceil(tw+pad*2); ch=Math.ceil(size*1.5+pad*2);
     cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; c=cv.getContext('2d'); c.font=font; c.textAlign='center'; c.textBaseline='middle';
     if(useSh){ c.save(); c.shadowColor=shCol; c.shadowBlur=shBlur; c.shadowOffsetX=shDx; c.shadowOffsetY=shDy; c.fillStyle=o.color||'#ffffff'; c.fillText(lines[0]||'',cw/2,ch/2); c.restore(); }
-    c.save(); c.shadowColor='rgba(0,0,0,0.55)'; c.shadowBlur=softBlur; c.shadowOffsetX=0; c.shadowOffsetY=softDy; c.fillStyle=o.color||'#ffffff'; c.fillText(lines[0]||'',cw/2,ch/2); c.restore();
+    // Only draw the soft baseline shadow when Drop shadow is ON — matches preview.
+    c.save();
+    if(useSh){ c.shadowColor='rgba(0,0,0,0.55)'; c.shadowBlur=softBlur; c.shadowOffsetX=0; c.shadowOffsetY=softDy; }
+    c.fillStyle=o.color||'#ffffff'; c.fillText(lines[0]||'',cw/2,ch/2); c.restore();
   }
   return {canvas:cv, cw, exportW};
 }
@@ -3800,7 +3803,7 @@ function renderOverlays(time){
         const bgHex = o.capBg || '#000000';
         const bgOp = o.capBgOpacity != null ? +o.capBgOpacity : 0.72;
         el.style.background = hexA(bgHex, bgOp);
-        el.style.textShadow = '0 2px 4px rgba(0,0,0,0.5)';
+        el.style.textShadow = ((o.shadow||{}).on) ? '0 2px 4px rgba(0,0,0,0.5)' : 'none';
       } else if(o.button){
         el.textContent = o.text || '';
         el.style.whiteSpace='nowrap'; el.style.lineHeight='1';
@@ -3810,7 +3813,8 @@ function renderOverlays(time){
         el.textContent = o.text || '';
         el.style.whiteSpace='nowrap'; el.style.lineHeight='1';
         el.style.background='none'; el.style.padding='0'; el.style.borderRadius='0';
-        el.style.textShadow='0 2px 6px rgba(0,0,0,.6)';
+        // Shadow only when the Drop shadow checkbox is on — otherwise NO textShadow at all.
+        el.style.textShadow = ((o.shadow||{}).on) ? '0 2px 6px rgba(0,0,0,.6)' : 'none';
       } }
     const A=animState(o, time-o.start, +o.dur||0, W);   // overlay animations (offset + opacity)
     el.style.left=((o.x||0.5)*100)+'%'; el.style.top=((o.y||0.5)*100)+'%';
