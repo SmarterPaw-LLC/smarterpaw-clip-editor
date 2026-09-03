@@ -318,7 +318,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.8.0</span>
+  <span class="ver" id="appVer">v2.8.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -3645,14 +3645,22 @@ function renderExplosion(o, time, layer){
   }
   while(arr.length > count){ arr.pop().remove(); }
   ovExplode[o.id] = arr;
-  // Hide the base overlay while exploding — pieces stand in for it.
+  // Read piece dimensions BEFORE hiding — once ovel is display:none its offsetWidth reads 0
+  // and pieces come out invisible-sized. Fall back to the overlay's declared scale if the size
+  // hasn't been laid out yet (e.g. image still loading on the very first frame).
+  const src = (ovel.tagName === 'IMG') ? ovel.getAttribute('src') : null;
+  const parentZ = parseInt(ovel.style.zIndex || '0', 10) || 0;
+  let pw = ovel.offsetWidth, ph = ovel.offsetHeight;
+  if(!pw || !ph){
+    const nw = ovel.naturalWidth || 0, nh = ovel.naturalHeight || 0;
+    const ar = (nw && nh) ? (nh / nw) : 1;
+    pw = (o.scale != null ? +o.scale : 0.3) * W;
+    ph = pw * ar;
+  }
+  // Now safe to hide the base overlay — pieces stand in for it.
   ovel.style.display = 'none';
   const T = postWindow ? (aE - aS) : (time - t0);
   const cxp = (o.x||0.5) * W, cyp = (o.y||0.5) * Hs;
-  const pw = ovel.offsetWidth  || (W * 0.2);
-  const ph = ovel.offsetHeight || (W * 0.2);
-  const src = (ovel.tagName === 'IMG') ? ovel.getAttribute('src') : null;
-  const parentZ = parseInt(ovel.style.zIndex || '0', 10) || 0;
   const animDur = Math.max(0.001, aE - aS);
   arr.forEach((el, i) => {
     const r1 = _hash01(i, seed, 1.13);  // direction jitter
