@@ -204,7 +204,10 @@
                      padding:.1em .3em; border-radius:5px; -webkit-text-stroke:2px rgba(0,0,0,.9); paint-order:stroke fill; }
   #endcard { position:absolute; inset:0; background:#111; display:none; flex-direction:column;
              align-items:center; justify-content:center; gap:2%; }
-  #overlayLayer { position:absolute; inset:0; pointer-events:none; z-index:1; }
+  /* No z-index on the layer itself — that would create a stacking context and trap every
+     child above the sibling video element. Per-overlay z-index (set in renderOverlays) then
+     competes with video z:auto, so channel-0 overlays with z:-1 land BEHIND the video. */
+  #overlayLayer { position:absolute; inset:0; pointer-events:none; }
   #guideV, #guideH { position:absolute; display:none; z-index:40; pointer-events:none; background:#ff35d0; box-shadow:0 0 3px #ff35d0; }
   #guideV { left:50%; top:0; bottom:0; width:1px; transform:translateX(-0.5px); }
   #guideH { top:50%; left:0; right:0; height:1px; transform:translateY(-0.5px); }   /* own stacking context so overlay z-indexes don't escape above modals */
@@ -318,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.3</span>
+  <span class="ver" id="appVer">v2.9.4</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -3803,7 +3806,11 @@ function renderOverlays(time){
     let el=ovEls[o.id];
     if(el && (el.dataset.t!==ekey || (wantImg?el.tagName!=='IMG':el.tagName!=='DIV'))){ if(el._cfVid){ el._cfVid.remove(); } el.remove(); el=null; if(ovCfVids[o.id]){ delete ovCfVids[o.id]; } }
     if(!el){ el = wantImg?document.createElement('img'):document.createElement('div'); el.dataset.t=ekey; el.style.position='absolute'; ovEls[o.id]=el; layer.appendChild(el); }
-    el.style.zIndex=(+o.ch||0)*1000+idx;   // higher channel on top; array order breaks ties within a channel
+    // Per-overlay z-index. Channel 0 lands BEHIND the sibling <video> element (z:auto = 0) via
+    // a negative z so upper-channel video clips cover it, matching the timeline stacking rule.
+    // Channel ≥1 stacks above with room for many overlays per channel (idx breaks ties).
+    const _oCh = (+o.ch||0);
+    el.style.zIndex = _oCh === 0 ? String(-1000 + idx) : String(_oCh * 1000 + idx);
     if(!visible){ el.style.display='none';
       // hide child effect nodes too — sparkle / shimmer / per-piece sprinkle live on the overlay LAYER,
       // not as children of el, so they don't inherit el's display:none and would stick around at last opacity
