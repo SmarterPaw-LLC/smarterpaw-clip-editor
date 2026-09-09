@@ -321,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.5</span>
+  <span class="ver" id="appVer">v2.9.6</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1443,10 +1443,14 @@ function renderTimeline(){
   if(!EDL.segments.length){ const h=document.createElement('div'); h.className='emptyhint';
     h.innerHTML='No clips yet. <b>Drag a source clip here</b>, or hover a clip and click <b>＋</b>.'; tl.appendChild(h); }
   EDL.segments.forEach((s,i)=>{
-    const c=MAN.byId[s.id]; const name=c?c.label:s.id; const cdur=(c&&c.dur)||60;
+    const c=MAN.byId[s.id];
+    // Per-segment label (s.label) overrides the source clip label so splits can be named
+    // independently. Empty/unset falls back to the source clip name.
+    const name = (s.label && s.label.trim()) ? s.label.trim() : (c ? c.label : s.id);
+    const cdur=(c&&c.dur)||60;
     const el=document.createElement('div'); el.className='seg'+(i===sel?' sel':'');
     el.innerHTML=`
-      <div class="top"><span class="hd" title="Click to rename this clip (renames the source everywhere — filename on disk isn't touched)">${i+1}. <span class="clipRename" data-cid="${s.id}" contenteditable="true" spellcheck="false" style="outline:none;cursor:text;border-bottom:1px dotted transparent">${(name||'').replace(/</g,'&lt;')}</span></span>
+      <div class="top"><span class="hd" title="Click to rename this segment (only THIS instance — other splits/uses of the same source keep their name)">${i+1}. <span class="clipRename" contenteditable="true" spellcheck="false" style="outline:none;cursor:text;border-bottom:1px dotted transparent">${(name||'').replace(/</g,'&lt;')}</span></span>
         <div class="ctl">
           <button class="mini" data-a="view" title="Open the full source clip in the preview modal (same as ▶ in the source bin)">🔍</button>
           <button class="mini modebtn${s.editMode==='free'?' on':''}" data-a="mode" title="${s.editMode==='free'?'Edge-drag: Independent — resizing this clip opens/closes gaps (click to link to neighbor)':'Edge-drag: Linked — neighbor absorbs the resize, total length fixed (click to make independent)'}">${s.editMode==='free'?'✂':'🔗'}</button>
@@ -1505,22 +1509,21 @@ function renderTimeline(){
         <button class="mini cbtn" data-sa="kbClear" ${_kbEmpty(s)?'disabled':''} style="margin-left:auto">✕ Clear anim</button>
       </div>`;
     el.querySelector('.hd').onclick=ev=>{ if(ev.target.classList.contains('clipRename')) return; selectSeg(i); };
-    // Inline clip rename — persists to the clip_labels sidecar so every future project sees it.
-    // Empty string clears the override (back to filename-derived name). Enter commits + blurs.
+    // Inline segment rename — writes s.label on THIS segment only, so splits of the same source
+    // stay independent. Empty string clears the override (falls back to the source clip's name).
     const _cr = el.querySelector('.clipRename');
     if(_cr){
       _cr.onclick = ev => ev.stopPropagation();
-      _cr.onkeydown = async ev => { if(ev.key==='Enter'){ ev.preventDefault(); _cr.blur(); }
+      _cr.onkeydown = ev => { if(ev.key==='Enter'){ ev.preventDefault(); _cr.blur(); }
         else if(ev.key==='Escape'){ ev.preventDefault(); _cr.textContent = name; _cr.blur(); } };
-      _cr.onblur = async () => {
+      _cr.onblur = () => {
         const nlabel = (_cr.textContent||'').trim();
         if(nlabel === (name||'').trim()) return;   // no change
-        try{
-          const r = await api('/api/clip/rename', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: s.id, label: nlabel})});
-          if(!r || !r.ok){ toast('Rename failed: '+((r&&r.log)||'')); _cr.textContent = name; return; }
-          MAN = await api('/api/manifest?_=' + Date.now()); MAN.byId={}; MAN.clips.forEach(c=>MAN.byId[c.id]=c);
-          renderBin(); renderTimeline(); toast('Renamed to "'+(nlabel||MAN.byId[s.id]?.label||s.id)+'"');
-        }catch(e){ toast('Rename failed'); _cr.textContent = name; }
+        histCommit();
+        const src = MAN.byId[s.id]; const srcName = src ? (src.label||'').trim() : '';
+        if(nlabel && nlabel !== srcName) s.label = nlabel;
+        else delete s.label;   // matches source name (or blank) → drop the override
+        renderTimeline(); toast(nlabel ? ('Renamed to "'+nlabel+'"') : 'Rename cleared');
       };
     }
     el.querySelectorAll('[data-f]').forEach(inp=>{
