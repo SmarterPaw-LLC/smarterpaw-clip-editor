@@ -318,7 +318,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.1</span>
+  <span class="ver" id="appVer">v2.9.2</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -535,7 +535,8 @@
   <div class="modal-card" style="max-width:440px">
     <div class="modal-hd"><b>＋ Add clips</b><button class="mini" id="acCancel">✕ Cancel</button></div>
     <div class="modal-body">
-      <div id="acFiles" style="color:var(--mut);font-size:12px;margin-bottom:12px;word-break:break-word"></div>
+      <div id="acFilesLbl" style="color:var(--mut);font-size:12px;margin-bottom:6px"></div>
+      <div id="acFiles" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:12px;max-height:340px;overflow:auto"></div>
       <div class="row"><label style="min-width:78px">Category</label>
         <select id="acCat" style="flex:1"></select></div>
       <div class="row" id="acNewRow" style="display:none"><label style="min-width:78px">New name</label>
@@ -5876,6 +5877,32 @@ $('#btnReload').onclick=()=>boot(true);
 function fileToB64(f){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(r.error); r.readAsDataURL(f); }); }
 function isVideoFile(f){ return (f.type||'').startsWith('video/') || /\.(mp4|mov|webm|m4v|mkv|avi)$/i.test(f.name||''); }
 let _acFiles=null;
+// Track blob URLs so we can revoke them when the modal closes (keeps memory clean on big batches).
+let _acBlobUrls=[];
+function _acRenderFiles(){
+  const grid=$('#acFiles'); if(!grid) return;
+  // Revoke old URLs before rebuild (in case user removed some).
+  _acBlobUrls.forEach(u=>{ try{ URL.revokeObjectURL(u); }catch(e){} });
+  _acBlobUrls=[];
+  grid.innerHTML='';
+  (_acFiles||[]).forEach((f, i)=>{
+    const url = URL.createObjectURL(f); _acBlobUrls.push(url);
+    const cell = document.createElement('div');
+    cell.style.cssText='position:relative;background:#111;border:1px solid var(--line);border-radius:6px;overflow:hidden';
+    cell.innerHTML =
+      '<video src="'+url+'" controls preload="metadata" playsinline muted style="display:block;width:100%;aspect-ratio:16/10;background:#000;object-fit:contain"></video>'+
+      '<div style="padding:4px 6px;font-size:10px;color:var(--txt);word-break:break-all;line-height:1.25">'+((f.name||'clip').replace(/</g,'&lt;'))+'<span style="color:var(--mut)"> · '+(f.size?((f.size/1024/1024).toFixed(1)+' MB'):'')+'</span></div>'+
+      '<button class="mini acRm" data-i="'+i+'" title="Remove from this batch" style="position:absolute;top:4px;right:4px;background:#0009;color:#fff;border:none;border-radius:50%;width:22px;height:22px;font-size:12px;line-height:1;cursor:pointer">✕</button>';
+    grid.appendChild(cell);
+  });
+  grid.querySelectorAll('.acRm').forEach(b=>{ b.onclick=()=>{
+    const i=+b.dataset.i; _acFiles.splice(i,1);
+    if(!_acFiles.length){ $('#addClipModal').style.display='none'; _acFiles=null;
+      _acBlobUrls.forEach(u=>{ try{ URL.revokeObjectURL(u); }catch(e){} }); _acBlobUrls=[]; return; }
+    _acRenderFiles();
+    $('#acFilesLbl').textContent = _acFiles.length+' file(s) — preview below, ✕ to drop any you don\'t want';
+  }; });
+}
 function openAddClip(files){
   files=[...files].filter(isVideoFile); if(!files.length) return toast('No video files');
   _acFiles=files;
@@ -5885,7 +5912,8 @@ function openAddClip(files){
   const nw=document.createElement('option'); nw.value='__new__'; nw.textContent='➕ New category…'; sel.appendChild(nw);
   sel.value = cats.includes('uploads') ? 'uploads' : (cats.length ? cats[0] : '__new__');
   acCatUI();
-  $('#acFiles').textContent=files.length+' file(s): '+files.map(f=>f.name).join(', ');
+  $('#acFilesLbl').textContent = files.length+' file(s) — preview below, ✕ to drop any you don\'t want';
+  _acRenderFiles();
   $('#addClipModal').style.display='flex';
 }
 function acCatUI(){ $('#acNewRow').style.display = ($('#acCat').value==='__new__') ? '' : 'none'; }
@@ -5911,11 +5939,14 @@ async function doUploadClips(files, cat, toTl){
   toast(ok+'/'+files.length+' clip(s) added to "'+cat+'"'+(toTl?' + timeline':''));
 }
 $('#acCat').onchange=acCatUI;
-$('#acCancel').onclick=()=>{ $('#addClipModal').style.display='none'; _acFiles=null; };
+function _acCloseCleanup(){ $('#addClipModal').style.display='none'; _acFiles=null;
+  _acBlobUrls.forEach(u=>{ try{ URL.revokeObjectURL(u); }catch(e){} }); _acBlobUrls=[];
+  const g=$('#acFiles'); if(g) g.innerHTML=''; }
+$('#acCancel').onclick=_acCloseCleanup;
 $('#acGo').onclick=()=>{ let cat=$('#acCat').value; if(cat==='__new__') cat=$('#acNew').value;
   cat=(cat||'').trim().toLowerCase().replace(/[^a-z0-9_-]/g,'')||'uploads';
   const toTl=$('#acToTl').checked, files=_acFiles||[];
-  $('#addClipModal').style.display='none'; _acFiles=null;
+  _acCloseCleanup();
   doUploadClips(files, cat, toTl); };
 $('#btnAddClip').onclick=()=>$('#fileAddClip').click();
 $('#binFilter').oninput=()=>renderBin();   // live filter the source bin (name + tags + id)
