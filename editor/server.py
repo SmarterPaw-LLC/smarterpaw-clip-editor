@@ -73,6 +73,29 @@ _probe_cache_load()
 # --- Clip tags (free-form, comma-separated, persisted in editor/clip_tags.json) ---
 CLIP_TAGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clip_tags.json")
 _clip_tags_cache = None
+# Custom clip labels (id → display name). Overrides the filename-derived label so users can
+# rename in the CLIPS panel without touching the file on disk. Persisted next to clip_tags.json.
+CLIP_LABELS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clip_labels.json")
+_clip_labels_cache = None
+def load_clip_labels():
+    global _clip_labels_cache
+    if _clip_labels_cache is not None: return _clip_labels_cache
+    try:
+        if os.path.exists(CLIP_LABELS_FILE):
+            d = json.load(open(CLIP_LABELS_FILE, encoding="utf-8")) or {}
+            if isinstance(d, dict):
+                _clip_labels_cache = {str(k): str(v).strip() for k, v in d.items() if str(v).strip()}
+                return _clip_labels_cache
+    except Exception: pass
+    _clip_labels_cache = {}
+    return _clip_labels_cache
+def save_clip_labels(d):
+    global _clip_labels_cache
+    _clip_labels_cache = {str(k): str(v).strip() for k, v in (d or {}).items() if str(v).strip()}
+    tmp = CLIP_LABELS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(_clip_labels_cache, f, indent=2, sort_keys=True)
+    os.replace(tmp, CLIP_LABELS_FILE)
 OPENAI_KEY_FILE = os.path.join(EDITOR if 'EDITOR' in dir() else os.path.dirname(__file__), "openai_key.txt")
 def load_openai_key():
     """Look for the key in env var first (OPENAI_API_KEY), then editor/openai_key.txt.
@@ -353,6 +376,7 @@ def scan_sources():
     """Return list of clips: {id,label,product,brand,url,dur,w,h,tags}."""
     bm = load_brand_map()
     tags_map = load_clip_tags()
+    labels_map = load_clip_labels()
     clips = []
     for root, _dirs, files in os.walk(SRC_ROOT):
         for fn in files:
@@ -364,11 +388,15 @@ def scan_sources():
             product = os.path.basename(root)
             dur, w, h = probe(full)
             rel = os.path.relpath(full, PROJ).replace("\\", "/")
-            # build a readable label from the title portion before [id]
-            label = fn
-            if m:
-                label = fn[:m.start()].strip().strip("｜|").strip()
-            label = re.sub(r"\s+", " ", label)[:60] or fn
+            # Custom label from the sidecar wins over the filename-derived one so users can
+            # rename clips inline in the CLIPS panel without renaming the file on disk.
+            if cid in labels_map:
+                label = labels_map[cid]
+            else:
+                label = fn
+                if m:
+                    label = fn[:m.start()].strip().strip("｜|").strip()
+                label = re.sub(r"\s+", " ", label)[:60] or fn
             try: mtime = int(os.path.getmtime(full))
             except Exception: mtime = 0
             clips.append({"id": cid, "label": label, "product": product,
@@ -3245,6 +3273,18 @@ class Handler(BaseHTTPRequestHandler):
             # Remember this product->brand mapping so flat-layout siblings still resolve
             bm[cat] = brand; save_brand_map(bm)
             return self._json({"ok": True, "category": cat, "brand": brand})
+        if path == "/api/clip/rename":   # inline rename — writes to the labels sidecar, file untouched
+            cid = (data.get("id") or "").strip()
+            label = (data.get("label") or "").strip()
+            if not cid:
+                return self._json({"ok": False, "log": "id required"}, 400)
+            m = dict(load_clip_labels())
+            if label:
+                m[cid] = label[:80]
+            else:
+                m.pop(cid, None)   # empty label = clear override, fall back to filename-derived name
+            save_clip_labels(m)
+            return self._json({"ok": True, "id": cid, "label": m.get(cid, "")})
         if path == "/api/clip/rename-category":   # rename a product folder; same brand parent kept
             oldcat = (data.get("old") or "").strip()
             newcat = re.sub(r"[^A-Za-z0-9_-]", "", (data.get("new") or "").lower())
