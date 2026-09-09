@@ -321,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.6</span>
+  <span class="ver" id="appVer">v2.9.7</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -4037,13 +4037,16 @@ function _ovHandleGroup(){
     d.style.cssText = 'position:absolute;width:'+size+'px;height:'+size+'px;background:#5b8cff;border:2px solid #fff;border-radius:50%;box-shadow:0 1px 3px #000a;pointer-events:auto;cursor:'+cursor+';margin-left:-'+(size/2)+'px;margin-top:-'+(size/2)+'px;';
     wrap.appendChild(d); return d; };
   const tl=mkDot('tl','nwse-resize'), tr=mkDot('tr','nesw-resize'), bl=mkDot('bl','nesw-resize'), br=mkDot('br','nwse-resize');
+  // Edge midpoints for single-axis stretch on shape/sprinkle/arrow/clipframe (wh types).
+  // Hidden for scalar-size overlays (image/text) since they don't have independent w/h.
+  const t=mkDot('t','ns-resize',10), b=mkDot('b','ns-resize',10), l=mkDot('l','ew-resize',10), r_=mkDot('r','ew-resize',10);
   const rot=mkDot('rot','grab',14); rot.style.background='#ffd54a';
   // Connector line from center-top to rotate grip so it reads as attached, not floating.
   const stem=document.createElement('div');
   stem.style.cssText = 'position:absolute;width:1px;background:#5b8cffcc;pointer-events:none;';
   wrap.appendChild(stem);
   layer.appendChild(wrap);
-  _ovHG = { wrap, tl, tr, bl, br, rot, stem };
+  _ovHG = { wrap, tl, tr, bl, br, t, b, l, r:r_, rot, stem };
   return _ovHG;
 }
 function _positionOvHandles(o, el){
@@ -4059,6 +4062,16 @@ function _positionOvHandles(o, el){
   hg.tr.style.left=r.width+'px'; hg.tr.style.top='0';
   hg.bl.style.left='0';       hg.bl.style.top=r.height+'px';
   hg.br.style.left=r.width+'px'; hg.br.style.top=r.height+'px';
+  // Edge handles: show only for wh-type overlays (shape/sprinkle/arrow/clipframe).
+  const _isWh = (o.type === 'shape' || o.type === 'sprinkle' || o.type === 'arrow' || o.type === 'clipframe');
+  const _e = [hg.t, hg.b, hg.l, hg.r];
+  _e.forEach(d => d.style.display = _isWh ? '' : 'none');
+  if(_isWh){
+    hg.t.style.left = (r.width/2) + 'px'; hg.t.style.top = '0';
+    hg.b.style.left = (r.width/2) + 'px'; hg.b.style.top = r.height + 'px';
+    hg.l.style.left = '0'; hg.l.style.top = (r.height/2) + 'px';
+    hg.r.style.left = r.width + 'px'; hg.r.style.top = (r.height/2) + 'px';
+  }
   hg.rot.style.left=(r.width/2)+'px'; hg.rot.style.top='-22px';
   hg.stem.style.left=(r.width/2 - 0.5)+'px'; hg.stem.style.top='-22px'; hg.stem.style.height='22px';
   // Wire handlers once per instance (o is captured freshly each render). Uses o's current fields
@@ -4074,19 +4087,28 @@ function _positionOvHandles(o, el){
   const bindResize = (dot, corner) => {
     dot.onpointerdown = ev => {
       ev.stopPropagation(); ev.preventDefault();
-      const sw = stage.getBoundingClientRect();
-      const cx = r.left + r.width/2, cy = r.top + r.height/2;   // overlay center at pointerdown
-      const d0 = Math.hypot(ev.clientX - cx, ev.clientY - cy) || 1;
+      const cx = r.left + r.width/2, cy = r.top + r.height/2;
+      // Per-corner sign: which direction moves the cursor AWAY from center on each axis.
+      const sx = corner.includes('r') ? 1 : -1;
+      const sy = corner.includes('b') ? 1 : -1;
+      const halfW0 = Math.max(1, r.width/2), halfH0 = Math.max(1, r.height/2);
       const kind = scaleField(o);
       const s0 = kind==='wh' ? {w:+o.w||0.4, h:+o.h||0.2} : (+o[kind]||(kind==='size'?0.06:0.3));
+      const d0 = Math.hypot(ev.clientX - cx, ev.clientY - cy) || 1;
       histCommit();
       const mv = e => {
-        const d1 = Math.hypot(e.clientX - cx, e.clientY - cy) || d0;
-        const f = Math.max(0.05, d1/d0);
-        if(kind==='wh'){
-          setOverlayField(o, 'w', Math.max(0.02, s0.w * f));
-          setOverlayField(o, 'h', Math.max(0.02, s0.h * f));
+        if(kind === 'wh'){
+          // Independent w/h stretch — cursor's X-from-center drives width, Y-from-center drives
+          // height. Shift = uniform (use whichever ratio the user pushed further).
+          let rw = Math.max(0.05, sx * (e.clientX - cx) / halfW0);
+          let rh = Math.max(0.05, sy * (e.clientY - cy) / halfH0);
+          if(e.shiftKey){ const f = Math.max(rw, rh); rw = rh = f; }
+          setOverlayField(o, 'w', Math.max(0.02, s0.w * rw));
+          setOverlayField(o, 'h', Math.max(0.02, s0.h * rh));
         } else {
+          // Scalar size (image scale, text size) — uniform scale from center-distance.
+          const d1 = Math.hypot(e.clientX - cx, e.clientY - cy) || d0;
+          const f = Math.max(0.05, d1/d0);
           setOverlayField(o, kind, Math.max(0.01, s0 * f));
         }
         renderOverlays(playhead); buildOvEditor();
@@ -4096,6 +4118,27 @@ function _positionOvHandles(o, el){
     };
   };
   bindResize(hg.tl,'tl'); bindResize(hg.tr,'tr'); bindResize(hg.bl,'bl'); bindResize(hg.br,'br');
+  // Edge handles: single-axis resize on wh types. axis = 'w' for l/r, 'h' for t/b.
+  const bindEdge = (dot, axis, sign) => {
+    dot.onpointerdown = ev => {
+      ev.stopPropagation(); ev.preventDefault();
+      if(scaleField(o) !== 'wh') return;   // scalar types skip — edges are hidden anyway
+      const cx = r.left + r.width/2, cy = r.top + r.height/2;
+      const half0 = Math.max(1, axis==='w' ? r.width/2 : r.height/2);
+      const s0 = axis==='w' ? (+o.w||0.4) : (+o.h||0.2);
+      histCommit();
+      const mv = e => {
+        const cur = axis==='w' ? (e.clientX - cx) : (e.clientY - cy);
+        const ratio = Math.max(0.05, sign * cur / half0);
+        setOverlayField(o, axis, Math.max(0.02, s0 * ratio));
+        renderOverlays(playhead); buildOvEditor();
+      };
+      const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); };
+      window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
+    };
+  };
+  bindEdge(hg.t, 'h', -1); bindEdge(hg.b, 'h', +1);
+  bindEdge(hg.l, 'w', -1); bindEdge(hg.r, 'w', +1);
   hg.rot.onpointerdown = ev => {
     ev.stopPropagation(); ev.preventDefault();
     const cx = r.left + r.width/2, cy = r.top + r.height/2;
