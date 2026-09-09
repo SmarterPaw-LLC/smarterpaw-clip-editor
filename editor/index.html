@@ -321,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.9</span>
+  <span class="ver" id="appVer">v2.9.10</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -5671,9 +5671,22 @@ function clipResizeUpper(handle,o,side){ const seg=o.seg;
   handle.onpointerdown=ev=>{ if(seg.locked){ ev.stopPropagation(); return; } ev.stopPropagation(); ev.preventDefault(); histCommit();
     const area=$('#tlTracks').getBoundingClientRect(); const total=totalDur()||1; const x0=ev.clientX; const d0=+seg.dur||0, t0=+seg.t0||0;
     const rnd=x=>Math.round(x*100)/100;
+    // Snap points: every other clip's start/end + overlay bounds + timeline 0/end + playhead.
+    // We exclude THIS seg's own start/end so it doesn't snap to itself. Threshold is 8px in
+    // timeline pixels → convert to seconds via total/area.width (Hold Alt to disable snapping).
+    const _selfL = o.start, _selfR = o.end;
+    const pts = snapPoints({id:'__ownclip__'}).filter(p => Math.abs(p-_selfL) > 0.001 && Math.abs(p-_selfR) > 0.001);
     const mv=e=>{ const dt=(e.clientX-x0)/area.width*total;
-      if(side==='r'){ seg.dur=rnd(Math.max(0.2,d0+dt)); }
-      else { const nt=Math.max(0,Math.min(t0+d0-0.2,t0+dt)); seg.dur=rnd(d0+(t0-nt)); seg.t0=rnd(nt); }
+      const th = e.altKey ? 0 : (8 / area.width) * total;   // px → seconds
+      if(side==='r'){
+        let newEnd = t0 + d0 + dt;
+        if(th > 0) newEnd = snap(newEnd, pts, th);
+        seg.dur = rnd(Math.max(0.2, newEnd - t0));
+      } else {
+        let nt = Math.max(0, Math.min(t0+d0-0.2, t0+dt));
+        if(th > 0) nt = Math.max(0, Math.min(t0+d0-0.2, snap(nt, pts, th)));
+        seg.dur = rnd(d0+(t0-nt)); seg.t0 = rnd(nt);
+      }
       renderTracks(); updateTotal(); };
     const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); renderTimeline(); };
     window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up);
