@@ -318,7 +318,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.2</span>
+  <span class="ver" id="appVer">v2.9.3</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -6387,6 +6387,9 @@ async function projLoad(file){
   applyEDL(edl); setCur({file, name:edl.name||file.replace(/\.json$/,'')});
   _lastLoadedSnapshot = _edlContentCount(edl);   // baseline for the save-time content-loss guard
   $('#projSelect').value=file; toast('Loaded “'+(edl.name||file)+'”');
+  // Remember last-opened project so a page refresh brings you back to what you were editing
+  // (falls back to most-recent-by-mtime if this file has since been renamed/deleted).
+  try{ localStorage.setItem('scl_lastProj', file); }catch(e){}
 }
 // Snapshot of what was last LOADED from disk (or last saved) — lets us detect a save that
 // would drastically shrink the project vs what's on disk (usually a bug/race, not intent).
@@ -6744,7 +6747,13 @@ async function boot(reload){
   MAN = await api('/api/manifest?_=' + Date.now()); MAN.byId={}; MAN.clips.forEach(c=>MAN.byId[c.id]=c);
   if(reload){ renderBin(); renderTimeline(); toast('Clips reloaded'); return; }
   const list=await loadProjects();
-  if(list.length) await projLoad(list[0].file);
+  // Prefer the last-opened project (localStorage) so a refresh drops you back into whatever
+  // you were editing. Falls back to list[0] (most-recent-by-mtime after the server sort).
+  let pick = null;
+  try{ const last = localStorage.getItem('scl_lastProj');
+    if(last && list.some(p => p.file === last)) pick = last; }catch(e){}
+  if(!pick && list.length) pick = list[0].file;
+  if(pick) await projLoad(pick);
   else { applyEDL(await api('/api/edl')); setCur(null); }
   $('#status').textContent=MAN.clips.length+' clips loaded · '+list.length+' saved project(s).';
   checkServerFreshness();   // one-shot at boot, then poll every 30s

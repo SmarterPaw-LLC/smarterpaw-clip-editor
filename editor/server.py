@@ -683,15 +683,21 @@ def safe_project(fname):
 def list_projects():
     os.makedirs(PROJECTS, exist_ok=True)
     out = []
-    for f in sorted(os.listdir(PROJECTS)):
-        if f.endswith(".json"):
-            name = os.path.splitext(f)[0]
-            try:
-                with open(os.path.join(PROJECTS, f), encoding="utf-8") as fh:
-                    name = json.load(fh).get("name", name)
-            except Exception:
-                pass
-            out.append({"file": f, "name": name})
+    for f in os.listdir(PROJECTS):
+        if not f.endswith(".json"): continue
+        full = os.path.join(PROJECTS, f)
+        name = os.path.splitext(f)[0]
+        try:
+            with open(full, encoding="utf-8") as fh:
+                name = json.load(fh).get("name", name)
+        except Exception:
+            pass
+        try: mtime = int(os.path.getmtime(full))
+        except Exception: mtime = 0
+        out.append({"file": f, "name": name, "mtime": mtime})
+    # Sort by mtime descending — most recently modified/saved rises to the top so the boot
+    # loader (and the project dropdown) surfaces recent work first.
+    out.sort(key=lambda p: (-p["mtime"], p["name"].lower()))
     return out
 
 
