@@ -2430,6 +2430,9 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
                 return {"ok": False, "log": f"end card image failed: {e!r}"}
         listf = os.path.join(tmp, "concat.txt")
         lines = []
+        # Parallel to `lines`: {path, dur, fi, fo} per joined clip so the join step can build a
+        # crossfade chain when any segment has a fade. dur is the clip's on-disk length (seconds).
+        join_segs = []
         total = 0.0
         # Overlay-only shortcut: bypass the segment loop and lay down a single black clip whose
         # length covers every overlay + audio. Endcard (if enabled) still appends after.
@@ -2442,6 +2445,7 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
             if r.returncode != 0:
                 return {"ok": False, "log": f"overlay-only base failed:\n{r.stderr[-1500:]}"}
             lines.append("file '" + blk.replace("\\", "/") + "'")
+            join_segs.append({"path": blk, "dur": base_end, "fi": 0.0, "fo": 0.0})
             total = base_end
         flat, _vt = flatten_segments(edl)   # multi-channel → sequential (top channel covers lower)
         if not flat and not overlay_only:
@@ -2458,6 +2462,7 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
                 if r.returncode != 0:
                     return {"ok": False, "log": f"black {idx} failed:\n{r.stderr[-1500:]}"}
                 lines.append("file '" + gp.replace("\\", "/") + "'")
+                join_segs.append({"path": gp, "dur": d, "fi": 0.0, "fo": 0.0})
                 total += d
                 continue
             src = i2f.get(seg["id"])
@@ -2573,10 +2578,8 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
                 base += f",hue=h={hu_:.2f}"
             base += f",tpad=stop_mode=clone:stop_duration={outlen:.3f}"   # freeze-fill the last frame so over-length clips hold (matches preview); -t clamps to outlen
             sfi = float(seg.get("fadeIn", 0) or 0); sfo = float(seg.get("fadeOut", 0) or 0)
-            if sfi > 0:
-                base += f",fade=t=in:st=0:d={sfi}"
-            if sfo > 0:
-                base += f",fade=t=out:st={max(0,outlen-sfo)}:d={sfo}"
+            # Fades are NO LONGER baked in as black fades — they're applied in the join step
+            # below via xfade so a fadeIn crossfades from the previous clip instead of black.
             is_last = (idx == last_real)
             cap = (seg.get("cap") or "").strip()
             cap_dt = ""
@@ -2613,6 +2616,10 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
                     return {"ok": False, "log": f"seg {idx} failed:\n{r.stderr[-1500:]}"}
                 total += outlen
             lines.append("file '" + so.replace("\\", "/") + "'")
+            # `outlen` was the fresh timeline-length here; endcard-transparent branch used `ext`.
+            # Grab the actual clip duration from the last modification we made to total.
+            _joinDur = (ext if (is_last and ec_transparent) else outlen)
+            join_segs.append({"path": so, "dur": float(_joinDur), "fi": sfi, "fo": sfo})
         # If overlays/audio extend PAST the last video clip, pad the concat with a black filler
         # so their content is actually rendered instead of getting truncated at the last clip's
         # end (mirrors client's layout() extension — timeline plays to the last content, not the
@@ -2627,6 +2634,7 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
             if r.returncode != 0:
                 return {"ok": False, "log": f"tail-fill failed:\n{r.stderr[-1500:]}"}
             lines.append("file '" + tp.replace("\\", "/") + "'")
+            join_segs.append({"path": tp, "dur": tail_gap, "fi": 0.0, "fo": 0.0})
             total += tail_gap
         # end card: solid/gradient gets its own clip; transparent is already baked into the last segment
         if ec_on and not ec_transparent:
@@ -2636,18 +2644,56 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
             if r.returncode != 0:
                 return {"ok": False, "log": f"endcard failed:\n{r.stderr[-1500:]}"}
             lines.append("file '" + ec_clip.replace("\\", "/") + "'")
+            join_segs.append({"path": ec_clip, "dur": ec_dur, "fi": 0.0, "fo": 0.0})
             total += ec_dur
         with open(listf, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
         silent = os.path.join(tmp, "silent.mp4")
         prog("Joining clips…", 70)
-        # Re-encode the concat (not -c copy): stream-copying tpad freeze-fill segments yields a file
-        # that plays fine but is filter-HOSTILE — the overlay/geq pass crawls (90s+ vs 3s). A clean
-        # CFR re-encode here makes the overlay compositing fast again.
-        r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", listf,
-                 "-vf", "fps=60,format=yuv420p"] + ENC + [silent])
-        if r.returncode != 0:
-            return {"ok": False, "log": f"concat failed:\n{r.stderr[-1500:]}"}
+        # If ANY segment has a fadeIn or fadeOut, use an xfade chain so the transitions cross-
+        # blend into neighboring clips instead of the old fade-from-black baked into each segment.
+        # Otherwise take the fast concat-demuxer path — no need to demux/re-encode every segment.
+        _has_fade = any((s.get("fi") or 0) > 0.001 or (s.get("fo") or 0) > 0.001 for s in join_segs)
+        if _has_fade and len(join_segs) >= 2:
+            # Build a filter_complex xfade chain. Each pair (i-1, i) crossfades over
+            # D = max(prev.fo, cur.fi). Pairs with D==0 use the concat filter (hard cut). All
+            # segments are pre-normalized (fps=60, yuv420p) so xfade can hand off cleanly.
+            inputs_cmd = []
+            for s in join_segs:
+                inputs_cmd += ["-i", s["path"]]
+            filt = []
+            # Normalize each stream to CFR + a common pixel format up front so xfade/concat lines up.
+            for i in range(len(join_segs)):
+                filt.append(f"[{i}:v]fps=60,format=yuv420p,setpts=PTS-STARTPTS[n{i}]")
+            cur = "n0"
+            cur_dur = float(join_segs[0]["dur"])
+            for i in range(1, len(join_segs)):
+                prev, this = join_segs[i-1], join_segs[i]
+                d = max(float(prev.get("fo") or 0), float(this.get("fi") or 0))
+                out = f"v{i}"
+                if d <= 0.001:
+                    filt.append(f"[{cur}][n{i}]concat=n=2:v=1:a=0[{out}]")
+                    cur_dur = cur_dur + float(this["dur"])
+                else:
+                    # xfade overlaps by d seconds — start the transition at (cur_dur - d).
+                    off = max(0.0, cur_dur - d)
+                    filt.append(f"[{cur}][n{i}]xfade=transition=fade:duration={d:.4f}:offset={off:.4f}[{out}]")
+                    cur_dur = cur_dur + float(this["dur"]) - d
+                cur = out
+            fc = ";".join(filt)
+            r = run([FFMPEG, "-y", "-loglevel", "error"] + inputs_cmd +
+                    ["-filter_complex", fc, "-map", f"[{cur}]"] + ENC + [silent])
+            if r.returncode != 0:
+                return {"ok": False, "log": f"xfade join failed:\n{r.stderr[-1500:]}"}
+            # Crossfades reduce total by the fade overlap durations.
+            total = cur_dur
+        else:
+            # Re-encode the concat (not -c copy): stream-copying tpad freeze-fill segments yields
+            # a file that plays fine but is filter-HOSTILE — the overlay/geq pass crawls (90s+ vs 3s).
+            r = run([FFMPEG, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", listf,
+                     "-vf", "fps=60,format=yuv420p"] + ENC + [silent])
+            if r.returncode != 0:
+                return {"ok": False, "log": f"concat failed:\n{r.stderr[-1500:]}"}
         # free-floating overlays (text/images) over the whole timeline
         n_ov = len([o for o in (edl.get("overlays") or []) if isinstance(o, dict)])
         prog((f"Compositing {n_ov} overlay(s) — this is the slow step…" if n_ov else "Finishing…"), 78)
