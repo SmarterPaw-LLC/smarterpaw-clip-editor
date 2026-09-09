@@ -318,7 +318,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.8.6</span>
+  <span class="ver" id="appVer">v2.9.0</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -3440,6 +3440,57 @@ function buildArrowCanvas(o){
 }
 // For render: bake each sticker-text overlay to a PNG (same canvas as preview), upload it,
 // and swap it to an image overlay so the server composites the identical pixels.
+// Bake a framed image into a canvas at export resolution. Frame set matches clipframe (see
+// CF_FRAMES). Polaroid draws a coloured card with the image inset at the polaroid inner rect;
+// every other frame masks the image with a clipping path. Returns {canvas, cw, exportW}.
+async function buildFramedImageCanvas(o){
+  const exportW = (CANVAS_PX[EDL.settings.canvas]||[1080,1920])[0];
+  const src = o.src ? ('/' + encodeURI(o.src)) : '';
+  if(!src) return null;
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('image load failed')); img.src = src; });
+  const nw = img.naturalWidth || 512, nh = img.naturalHeight || 512;
+  // Target size: scale × exportW for width, keep source aspect for height. Even-round for H.264.
+  let cw = Math.max(2, Math.round((o.scale || 0.3) * exportW));
+  let ch = Math.max(2, Math.round(cw * nh / nw));
+  cw += cw % 2; ch += ch % 2;
+  const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+  const c = cv.getContext('2d');
+  if(o.frame === 'polaroid'){
+    const P = CF_POLAROID;
+    c.fillStyle = o.frameColor || '#ffffff';
+    c.fillRect(0, 0, cw, ch);
+    const ix = P.padL * cw, iy = P.padT * ch;
+    const iw = (1 - P.padL - P.padR) * cw, ih = (1 - P.padT - P.padB) * ch;
+    c.drawImage(img, ix, iy, iw, ih);
+  } else {
+    // Same shape math as _cfMaskCss but drawn onto the canvas via clip.
+    c.save();
+    c.beginPath();
+    if(o.frame === 'circle'){ c.ellipse(cw/2, ch/2, cw/2, ch/2, 0, 0, Math.PI*2); }
+    else if(o.frame === 'roundrect'){ const r = Math.min(cw, ch) * 0.12;
+      c.moveTo(r, 0); c.arcTo(cw, 0, cw, ch, r); c.arcTo(cw, ch, 0, ch, r); c.arcTo(0, ch, 0, 0, r); c.arcTo(0, 0, cw, 0, r); c.closePath(); }
+    else if(o.frame === 'star'){
+      const pts = [[50,0],[61,35],[98,35],[68,57],[79,91],[50,70],[21,91],[32,57],[2,35],[39,35]];
+      pts.forEach(([x,y], i) => { const px = x/100*cw, py = y/100*ch; if(i===0) c.moveTo(px, py); else c.lineTo(px, py); });
+      c.closePath();
+    }
+    else if(o.frame === 'trapezoid'){ c.moveTo(cw*0.2, 0); c.lineTo(cw*0.8, 0); c.lineTo(cw, ch); c.lineTo(0, ch); c.closePath(); }
+    else if(o.frame === 'parallelogram'){ c.moveTo(cw*0.2, 0); c.lineTo(cw, 0); c.lineTo(cw*0.8, ch); c.lineTo(0, ch); c.closePath(); }
+    else if(o.frame === 'bolt'){
+      const pts = [[45,0],[80,0],[55,40],[85,40],[30,100],[50,55],[20,55]];
+      pts.forEach(([x,y], i) => { const px = x/100*cw, py = y/100*ch; if(i===0) c.moveTo(px, py); else c.lineTo(px, py); });
+      c.closePath();
+    }
+    else { c.rect(0, 0, cw, ch); }   // rect / unknown = no clip
+    c.clip();
+    c.drawImage(img, 0, 0, cw, ch);
+    c.restore();
+  }
+  return { canvas: cv, cw, exportW };
+}
+
 async function bakeStickersForRender(edl){
   const out=[];
   for(const oRaw of (edl.overlays||[])){
@@ -3462,6 +3513,13 @@ async function bakeStickersForRender(edl){
         const up=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'shape_'+o.id+'.png',data})});
         if(up&&up.ok){ out.push({id:o.id,type:'image',src:up.src,scale:r.cw/r.exportW,x:o.x,y:o.y,start:o.start,dur:o.dur,ch:o.ch,rot:o.rot,anims:o.anims}); continue; }
       }catch(e){}
+    }
+    else if(o.type==='image' && o.frame){   // framed image — bake to a shaped PNG so ffmpeg gets pre-clipped pixels
+      try{ const r=await buildFramedImageCanvas(o); if(r){
+        const data=r.canvas.toDataURL('image/png');
+        const up=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'framed_'+o.id+'.png',data})});
+        if(up&&up.ok){ out.push({id:o.id,type:'image',src:up.src,scale:r.cw/r.exportW,x:o.x,y:o.y,start:o.start,dur:o.dur,ch:o.ch,rot:o.rot,anims:o.anims,opacity:o.opacity}); continue; }
+      } }catch(e){}
     }
     else if(o.type==='sprinkle' && o.src){
       if(o.perPiece && (o.anims||[]).length){   // per-piece: one 'piececlip' overlay; server pre-renders the pieces
@@ -3760,7 +3818,22 @@ function renderOverlays(time){
       if(el.getAttribute('src')!==u){ el.setAttribute('src',u); el.onload=()=>{ try{renderOverlays(playhead);}catch(e){} }; }   // re-render once dims are known
       const w=(o.scale||0.3)*W, ar=(el.naturalWidth&&el.naturalHeight)?(el.naturalHeight/el.naturalWidth):1;
       el.style.width=w+'px'; el.style.height=(w*ar)+'px';
-      el.style.opacity=(o.opacity!=null?o.opacity:1); }   // explicit height so the rotation pivot is the true center, not the top
+      el.style.opacity=(o.opacity!=null?o.opacity:1);
+      // Frame preview: reuse the clipframe mask fn (circle/roundrect/star/trapezoid/parallelogram/bolt).
+      // Polaroid gets a bordered white card look via padding + background; needs box-sizing to keep w/h.
+      if(o.frame && o.frame!=='polaroid' && o.frame!=='rect'){
+        const cp = _cfMaskCss(o.frame, el.clientWidth||w, el.clientHeight||(w*ar));
+        el.style.clipPath = cp; el.style.webkitClipPath = cp;
+        el.style.background = ''; el.style.padding = ''; el.style.boxSizing = '';
+      } else if(o.frame === 'polaroid'){
+        el.style.clipPath = ''; el.style.webkitClipPath = '';
+        el.style.background = (o.frameColor||'#ffffff');
+        el.style.padding = (w*0.06)+'px '+(w*0.06)+'px '+((w*ar)*0.22)+'px';
+        el.style.boxSizing = 'border-box';
+      } else {
+        el.style.clipPath = ''; el.style.webkitClipPath = '';
+        el.style.background = ''; el.style.padding = ''; el.style.boxSizing = '';
+      } }
     else if(o.type==='shape'){   // baked canvas image (rect/round/circle/polygon/star…)
       const px=CANVAS_PX[EDL.settings.canvas]||[1080,1920];
       const key=[o.shape,o.fill,o.fillType,o.gradStart,o.gradEnd,o.gradType,o.gradAngle,o.opacity,o.w,o.h,o.radius,o.strokeW,o.stroke,EDL.settings.canvas].join('|');
@@ -4167,7 +4240,11 @@ function buildOvEditor(){
         <button class="mini" id="ovRepLib" title="Pick from the shared image library">📚 Library…</button>
       </div>
       <div style="margin-top:6px"><label>Size <input type="range" id="ovScale" min="0.05" max="3" step="0.01" value="${o.scale}"></label>
-      <label>Opacity <input type="range" id="ovImgOp" min="0" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label></div>`;
+      <label>Opacity <input type="range" id="ovImgOp" min="0" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label></div>
+      <div style="margin-top:6px" title="Wrap the image in a shape (polaroid card, circle, star, etc.) — same frame set as framed clips."><label>Frame
+        <select id="ovImgFrame"><option value="">none</option>${CF_FRAMES.map(f=>`<option value="${f[0]}" ${o.frame===f[0]?'selected':''}>${f[1]}</option>`).join('')}</select></label>
+        <label id="ovImgFrameColorRow" style="${o.frame==='polaroid'?'':'display:none'}">Frame color <input type="color" id="ovImgFrameColor" value="${o.frameColor||'#ffffff'}"></label>
+      </div>`;
   }
   // Rotation is per-aspect (a hook sticker that sits straight on 9:16 may need a tilt on 16:9).
   // The slider reflects the RESOLVED value for the current aspect; writes land in the aspect's
@@ -4248,7 +4325,10 @@ function buildOvEditor(){
       if($('#ovCfAud')) o.srcAudio=$('#ovCfAud').checked;
       if($('#ovCfAudVol')) o.srcAudioVol=parseFloat($('#ovCfAudVol').value);
       if($('#ovCfColRow')) $('#ovCfColRow').style.display = (o.frame==='polaroid')?'':'none'; }
-    else { o.scale=parseFloat($('#ovScale').value)||0.3; if($('#ovImgOp')) o.opacity=parseFloat($('#ovImgOp').value); }
+    else { o.scale=parseFloat($('#ovScale').value)||0.3; if($('#ovImgOp')) o.opacity=parseFloat($('#ovImgOp').value);
+      if($('#ovImgFrame')){ const fv=$('#ovImgFrame').value; if(fv) o.frame=fv; else delete o.frame;
+        if($('#ovImgFrameColorRow')) $('#ovImgFrameColorRow').style.display = (o.frame==='polaroid') ? '' : 'none'; }
+      if($('#ovImgFrameColor')) o.frameColor=$('#ovImgFrameColor').value; }
     if(o.type==='sprinkle') updSpWarn();   // live-refresh per-piece hints on toggle/count change
     renderOverlays(playhead); renderOvList(); };
   box.querySelectorAll('input,select,textarea').forEach(el=>{ el.oninput=upd; el.onchange=upd; });
