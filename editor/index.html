@@ -44,7 +44,7 @@
   .topRow { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:var(--leftW,220px) 7px minmax(220px,1fr) 7px var(--rightW,340px); gap:5px; }
   .psplit { align-self:stretch; cursor:col-resize; border-radius:4px; background:transparent; transition:background .12s; }
   .psplit:hover, .psplit.drag { background:var(--acc,#8ab81d); }
-  #tlPanel { flex:0 0 auto; height:var(--tlH,200px); background:var(--panel); border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; overflow:hidden; }
+  #tlPanel { flex:0 0 auto; height:var(--tlH,200px); background:var(--panel); border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; overflow:hidden; margin-right:var(--modalGutter,0); }
   .hsplit { flex:0 0 auto; height:7px; margin:-3px 0; cursor:row-resize; border-radius:4px; background:transparent; transition:background .12s; }
   .hsplit:hover, .hsplit.drag { background:var(--acc,#8ab81d); }
   #tlPanel h2 { font-size:12px; text-transform:uppercase; letter-spacing:.6px; color:var(--mut); margin:0; padding:7px 12px; border-bottom:1px solid var(--line); display:flex; gap:10px; align-items:center; }
@@ -318,7 +318,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.0</span>
+  <span class="ver" id="appVer">v2.9.1</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2147,6 +2147,10 @@ function _reflowModals(){
     const w = card.offsetWidth || parseInt(getComputedStyle(card).width) || 430;
     offset += w;
   });
+  // Reserve a right-side gutter so the timeline (and anything else that opts into
+  // margin-right:var(--modalGutter)) ends AT the modal's left edge instead of scrolling
+  // under it. Cleared to 0 when nothing's open so full-width layout returns immediately.
+  document.documentElement.style.setProperty('--modalGutter', offset + 'px');
 }
 if(!window._modalObs){
   window._modalObs = new MutationObserver(_reflowModals);
@@ -3957,7 +3961,10 @@ function renderOverlays(time){
     renderSparkles(o, time, layer);
     renderShine(o, time, layer);
     renderExplosion(o, time, layer);
+    if(ovEdit && oRaw.id===ovSel && !oRaw.locked) _positionOvHandles(oRaw, el);
   });
+  // Hide handles when nothing is selected or edit mode is off.
+  if(!(ovEdit && ovSel && (EDL.overlays||[]).find(x=>x.id===ovSel))){ const hg=_ovHG; if(hg && hg.wrap) hg.wrap.style.display='none'; }
   histSchedule();
 }
 function dragify(el,o){ el.onpointerdown=ev=>{ if(o.locked){ ev.stopPropagation(); return; }   // locked: no preview-canvas reposition
@@ -3986,6 +3993,98 @@ function dragify(el,o){ el.onpointerdown=ev=>{ if(o.locked){ ev.stopPropagation(
   const up=()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); centerGuides(false,false); };
   window.addEventListener('pointermove',move); window.addEventListener('pointerup',up); }; }
 function centerGuides(showV, showH){ const v=$('#guideV'), h=$('#guideH'); if(v) v.style.display=showV?'block':'none'; if(h) h.style.display=showH?'block':'none'; }
+// One shared handle group in the overlay layer — repositioned to the selected overlay each render.
+// Kept OUTSIDE the overlay element so its own rotation/clip-path/filter doesn't affect handle
+// positions or hit-tests. Resize = drag any corner to scale the overlay proportionally; rotate =
+// drag the round grip above the top-center to spin around the overlay's center.
+let _ovHG = null;
+function _ovHandleGroup(){
+  if(_ovHG && _ovHG.wrap && _ovHG.wrap.isConnected) return _ovHG;
+  const layer = $('#overlayLayer'); if(!layer) return null;
+  const wrap = document.createElement('div'); wrap.id='ovHandles';
+  wrap.style.cssText = 'position:absolute;pointer-events:none;z-index:99999;display:none';
+  const mkDot = (cls, cursor, size=12) => { const d=document.createElement('div');
+    d.className='ovH '+cls;
+    d.style.cssText = 'position:absolute;width:'+size+'px;height:'+size+'px;background:#5b8cff;border:2px solid #fff;border-radius:50%;box-shadow:0 1px 3px #000a;pointer-events:auto;cursor:'+cursor+';margin-left:-'+(size/2)+'px;margin-top:-'+(size/2)+'px;';
+    wrap.appendChild(d); return d; };
+  const tl=mkDot('tl','nwse-resize'), tr=mkDot('tr','nesw-resize'), bl=mkDot('bl','nesw-resize'), br=mkDot('br','nwse-resize');
+  const rot=mkDot('rot','grab',14); rot.style.background='#ffd54a';
+  // Connector line from center-top to rotate grip so it reads as attached, not floating.
+  const stem=document.createElement('div');
+  stem.style.cssText = 'position:absolute;width:1px;background:#5b8cffcc;pointer-events:none;';
+  wrap.appendChild(stem);
+  layer.appendChild(wrap);
+  _ovHG = { wrap, tl, tr, bl, br, rot, stem };
+  return _ovHG;
+}
+function _positionOvHandles(o, el){
+  const hg = _ovHandleGroup(); if(!hg) return;
+  if(!o || !el || !ovEdit){ hg.wrap.style.display='none'; return; }
+  const layer = $('#overlayLayer'); if(!layer){ hg.wrap.style.display='none'; return; }
+  const lr = layer.getBoundingClientRect(), r = el.getBoundingClientRect();
+  hg.wrap.style.display='';
+  hg.wrap.style.left = (r.left - lr.left)+'px';
+  hg.wrap.style.top  = (r.top  - lr.top )+'px';
+  hg.wrap.style.width = r.width+'px'; hg.wrap.style.height = r.height+'px';
+  hg.tl.style.left='0';       hg.tl.style.top='0';
+  hg.tr.style.left=r.width+'px'; hg.tr.style.top='0';
+  hg.bl.style.left='0';       hg.bl.style.top=r.height+'px';
+  hg.br.style.left=r.width+'px'; hg.br.style.top=r.height+'px';
+  hg.rot.style.left=(r.width/2)+'px'; hg.rot.style.top='-22px';
+  hg.stem.style.left=(r.width/2 - 0.5)+'px'; hg.stem.style.top='-22px'; hg.stem.style.height='22px';
+  // Wire handlers once per instance (o is captured freshly each render). Uses o's current fields
+  // so a re-selection swaps targets seamlessly.
+  const stage = $('#stageWrap');
+  const scaleField = (obj) => {
+    // Which field on the overlay drives its size?
+    if(obj.type === 'image') return 'scale';         // scalar (canvas-fraction width)
+    if(obj.type === 'text') return 'size';           // font size (canvas-fraction)
+    if(obj.type === 'shape' || obj.type === 'sprinkle' || obj.type === 'arrow' || obj.type === 'clipframe') return 'wh';
+    return 'scale';
+  };
+  const bindResize = (dot, corner) => {
+    dot.onpointerdown = ev => {
+      ev.stopPropagation(); ev.preventDefault();
+      const sw = stage.getBoundingClientRect();
+      const cx = r.left + r.width/2, cy = r.top + r.height/2;   // overlay center at pointerdown
+      const d0 = Math.hypot(ev.clientX - cx, ev.clientY - cy) || 1;
+      const kind = scaleField(o);
+      const s0 = kind==='wh' ? {w:+o.w||0.4, h:+o.h||0.2} : (+o[kind]||(kind==='size'?0.06:0.3));
+      histCommit();
+      const mv = e => {
+        const d1 = Math.hypot(e.clientX - cx, e.clientY - cy) || d0;
+        const f = Math.max(0.05, d1/d0);
+        if(kind==='wh'){
+          setOverlayField(o, 'w', Math.max(0.02, s0.w * f));
+          setOverlayField(o, 'h', Math.max(0.02, s0.h * f));
+        } else {
+          setOverlayField(o, kind, Math.max(0.01, s0 * f));
+        }
+        renderOverlays(playhead); buildOvEditor();
+      };
+      const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); };
+      window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
+    };
+  };
+  bindResize(hg.tl,'tl'); bindResize(hg.tr,'tr'); bindResize(hg.bl,'bl'); bindResize(hg.br,'br');
+  hg.rot.onpointerdown = ev => {
+    ev.stopPropagation(); ev.preventDefault();
+    const cx = r.left + r.width/2, cy = r.top + r.height/2;
+    const a0 = Math.atan2(ev.clientY - cy, ev.clientX - cx) * 180/Math.PI + 90;
+    const r0 = +o.rot || 0;
+    histCommit();
+    const mv = e => {
+      const a1 = Math.atan2(e.clientY - cy, e.clientX - cx) * 180/Math.PI + 90;
+      let deg = r0 + (a1 - a0);
+      if(e.shiftKey) deg = Math.round(deg/15)*15;   // snap to 15° with Shift
+      // Rotation is per-aspect (variant-eligible) — setOverlayField handles that.
+      setOverlayField(o, 'rot', Math.round(deg*10)/10);
+      renderOverlays(playhead); buildOvEditor();
+    };
+    const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
+  };
+}
 function uid(){ return 'ov'+Date.now()+Math.floor(Math.random()*1000); }
 function openOvModal(){ stop(); ovEdit=true; $('#ovModal').style.display='flex'; renderOvList(); buildOvEditor(); renderOverlays(playhead); }
 function closeOvModal(){
