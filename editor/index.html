@@ -321,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.11</span>
+  <span class="ver" id="appVer">v2.9.12</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2008,16 +2008,26 @@ function drawSafeZones(){
   const svg = $('#safeZones'); if(!svg) return;
   const c = (EDL && EDL.settings && EDL.settings.canvas) || '9x16';
   const zones = SAFE_ZONES[c] || [];
-  svg.setAttribute('viewBox', '0 0 100 100');
+  // Draw in the STAGE's pixel space so stroke width and font size stay uniform (viewBox 100×100
+  // with non-uniform preserveAspectRatio was stretching strokes vertically — barely visible on 9:16).
+  const sw = $('#stageWrap');
+  const W = (sw && sw.clientWidth)  || 360;
+  const H = (sw && sw.clientHeight) || 640;
+  svg.setAttribute('viewBox', '0 0 '+W+' '+H);
   svg.setAttribute('preserveAspectRatio', 'none');
   const parts = zones.map((z, i)=>{
     const [t,r,b,l] = z.insets;
-    const x = l*100, y = t*100, w = (1 - l - r)*100, h = (1 - t - b)*100;
+    const x = l*W, y = t*H, w = (1 - l - r)*W, h = (1 - t - b)*H;
     const lbl = z.label.replace(/</g,'&lt;');
-    // Text: canvas is drawn 0..100 in width AND height (non-uniform scale) — so font size must
-    // stay independent of Y stretching, done via vector-effect. Reserve a little top pad.
-    return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="none" stroke="${z.color}" stroke-width="0.35" stroke-dasharray="1.2 0.8" vector-effect="non-scaling-stroke"/>
-      <text x="${x + 0.6}" y="${y + 2.4}" fill="${z.color}" font-size="2.1" font-family="ui-monospace,monospace" style="paint-order:stroke;stroke:#000a;stroke-width:0.4;stroke-linejoin:round">${lbl}</text>`;
+    const isTitleSafe = /title-safe/i.test(z.label);
+    // For platform chrome (not title-safe), also shade the COVERED region (outside the safe rect)
+    // in a matching color so the "this is hidden by UI chrome" area reads at a glance.
+    const shade = isTitleSafe ? '' :
+      `<path d="M0,0 L${W},0 L${W},${H} L0,${H} Z M${x},${y} L${x},${y+h} L${x+w},${y+h} L${x+w},${y} Z" fill="${z.color}" fill-opacity="0.10" fill-rule="evenodd"/>`;
+    return shade +
+      `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="none" stroke="${z.color}" stroke-width="2.5" stroke-dasharray="10 6" vector-effect="non-scaling-stroke"/>` +
+      `<g transform="translate(${x+6},${y+18})"><rect x="-4" y="-13" rx="3" ry="3" width="${Math.min(W-x-8, lbl.length*8 + 12)}" height="18" fill="#000c" stroke="${z.color}" stroke-width="1"/>` +
+      `<text x="0" y="0" fill="${z.color}" font-size="12" font-family="ui-monospace,monospace" font-weight="700">${lbl}</text></g>`;
   }).join('');
   svg.innerHTML = parts;
   svg.style.display = _safeZonesOn ? '' : 'none';
@@ -6411,7 +6421,7 @@ $('#btnLoop').onclick=()=>{ window._tlLoop = !window._tlLoop;
 $('#btnAddCh').onclick=addChannel;
 $('#btnAddAudCh').onclick=addAudChannel;
 $('#btnStop').onclick=stop;
-window.addEventListener('resize', ()=>{ if(EDL) sizeStage(); });
+window.addEventListener('resize', ()=>{ if(EDL){ sizeStage(); drawSafeZones(); } });
 
 /* ---------- projects ---------- */
 let curProj = null; // {file, name} of the currently loaded saved project (null = unsaved)
