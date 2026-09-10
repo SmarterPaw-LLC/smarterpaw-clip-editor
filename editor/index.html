@@ -321,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.18</span>
+  <span class="ver" id="appVer">v2.9.19</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -5272,7 +5272,7 @@ async function clipSearch(q){ const grid=$('#clipGrid'); q=(q||'').trim();
     const byPrefix = {};
     icons.forEach(name => { const [p, ic] = name.split(':'); if(p && ic){ (byPrefix[p] = byPrefix[p] || []).push(ic); } });
     grid.innerHTML='';
-    const svgs = {};   // "prefix:name" → {body, w, h}
+    const svgs = {};   // "prefix:name" → {body, w, h} — also mirrored into _iconifyBodies below
     await Promise.all(Object.keys(byPrefix).map(async p => {
       const csv = byPrefix[p].join(',');
       try{
@@ -5280,7 +5280,9 @@ async function clipSearch(q){ const grid=$('#clipGrid'); q=(q||'').trim();
         const dw = j.width || 16, dh = j.height || 16;
         for(const nm of Object.keys(j.icons || {})){
           const it = j.icons[nm];
-          svgs[p+':'+nm] = { body: it.body || '', w: it.width || dw, h: it.height || dh };
+          const rec = { body: it.body || '', w: it.width || dw, h: it.height || dh };
+          svgs[p+':'+nm] = rec;
+          _iconifyBodies[p+':'+nm] = rec;   // stash so pickClip → iconifyToPng doesn't need another API hit
         }
       }catch(_){}
     }));
@@ -5300,21 +5302,39 @@ async function clipSearch(q){ const grid=$('#clipGrid'); q=(q||'').trim();
     if(brokenCount > icons.length/2) toast('Some icons failed to load (Iconify may be rate-limiting — try again in a minute).');
   }catch(e){ grid.innerHTML='<div style="grid-column:1/-1;color:var(--mut);font-size:12px;padding:8px">Search failed — check your internet connection ('+(e.message||e)+').</div>'; }
 }
+// Module-scope cache of icon bodies fetched during clipSearch (batched-per-prefix requests).
+// Reusing these when the user clicks a thumbnail avoids per-icon API fetches (which trip
+// Iconify's rate limit) AND lets us bake color deterministically instead of relying on the
+// server's ?color= param (which some icon sets ignore, producing a black PNG).
+const _iconifyBodies = {};   // "prefix:name" → {body, w, h}
 async function iconifyToPng(name, color, size){
   const [p,ic]=name.split(':');
-  // Iconify's ?color=… wants hex WITHOUT the leading # — otherwise some collections return an
-  // uncolored SVG (or fail entirely).
   const cleanCol = color ? String(color).replace(/^#/, '') : '';
-  let url=ICONIFY+'/'+encodeURIComponent(p)+'/'+encodeURIComponent(ic)+'.svg?height='+size;
-  if(cleanCol) url += '&color=' + encodeURIComponent(cleanCol);
-  const svg=await fetch(url).then(r=>r.text());
-  if(!svg || svg.indexOf('<svg')<0) throw new Error('icon fetch failed');
-  const datauri='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(svg)));
-  const img=new Image();
-  await new Promise((res,rej)=>{ img.onload=res; img.onerror=()=>rej(new Error('decode')); img.src=datauri; });
-  const w=img.naturalWidth||size, h=img.naturalHeight||size, sc=size/Math.max(w,h);
-  const cw=Math.max(1,Math.round(w*sc)), ch=Math.max(1,Math.round(h*sc));
-  const cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; cv.getContext('2d').drawImage(img,0,0,cw,ch);
+  let it = _iconifyBodies[name];
+  if(!it){
+    // Cache miss (rare — user opened the clip modal but body wasn't captured). Batch-fetch this
+    // single icon's prefix with just this name, and stash for next time.
+    try{
+      const j = await fetch(ICONIFY + '/' + encodeURIComponent(p) + '.json?icons=' + encodeURIComponent(ic)).then(r => r.json());
+      const dw = j.width || 16, dh = j.height || 16;
+      const raw = (j.icons || {})[ic];
+      if(raw && raw.body){ it = { body: raw.body, w: raw.width || dw, h: raw.height || dh };
+        _iconifyBodies[name] = it;
+      }
+    }catch(e){}
+  }
+  if(!it || !it.body) throw new Error('icon fetch failed');
+  // Wrap the body with BOTH fill="…" and style="color:…" so icons that use `currentColor`
+  // OR hardcoded fills paint in the user's chosen color. Without recolor, use currentColor black.
+  const colorAttr = cleanCol ? ('#'+cleanCol) : 'currentColor';
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+it.w+' '+it.h+'" width="'+size+'" height="'+size+'" fill="'+colorAttr+'" style="color:'+colorAttr+'">'+it.body+'</svg>';
+  const datauri = 'data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(svg)));
+  const img = new Image();
+  await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('decode')); img.src = datauri; });
+  const w = img.naturalWidth || size, h = img.naturalHeight || size, sc = size / Math.max(w, h);
+  const cw = Math.max(1, Math.round(w * sc)), ch = Math.max(1, Math.round(h * sc));
+  const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+  cv.getContext('2d').drawImage(img, 0, 0, cw, ch);
   return cv.toDataURL('image/png');
 }
 async function pickClip(name){
