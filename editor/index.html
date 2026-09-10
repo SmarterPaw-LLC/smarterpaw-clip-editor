@@ -321,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.19</span>
+  <span class="ver" id="appVer">v2.9.20</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1517,6 +1517,7 @@ function renderTimeline(){
       <div class="cscrub-row">
         <label style="font-size:11px;display:flex;align-items:center;gap:4px" title="Include the clip's original audio in the render (mixed with any music/voiceover overlays)"><input type="checkbox" data-sa="srcAudio" ${s.srcAudio?'checked':''}> 🎤 Src audio</label>
         <label style="font-size:11px;display:flex;align-items:center;gap:4px;flex:1;opacity:${s.srcAudio?1:0.4}">vol <input type="range" data-sa="srcAudioVol" min="0" max="2" step="0.05" value="${s.srcAudioVol!=null?s.srcAudioVol:1}" style="flex:1;min-width:60px" ${s.srcAudio?'':'disabled'}> <span class="csct" style="min-width:32px">${Math.round((s.srcAudioVol!=null?s.srcAudioVol:1)*100)}%</span></label>
+        <button class="mini" data-sa="splitAudio" title="Move this clip's audio onto its own timeline track (unlinks it from the video). After this you can change the video's speed without pitch-shifting the audio." style="font-size:11px;padding:2px 6px">🎵 Split off audio</button>
       </div>
       <div class="cscrub-row" style="gap:6px;flex-wrap:wrap" title="Ken Burns animation. Type START and END times in seconds (within this clip). Use ⧉ Capture to snapshot the current preview framing at each endpoint. Animation only fires when BOTH framings are captured.">
         <label style="font-size:11px;display:flex;align-items:center;gap:3px">START at <input type="number" min="0" step="0.1" data-sa="kbStartTNum" value="${_kbNum(s,'start')}" style="width:52px"> s</label>
@@ -1678,6 +1679,37 @@ function renderTimeline(){
           delete s.zoomStart; delete s.panXStart; delete s.panYStart;
           delete s.kbStartT; delete s.kbEndT;
           renderTimeline(); selectSeg(i); toast('Animation cleared');
+        }
+        else if(a==='splitAudio'){
+          // Move the segment's audio onto its own timeline lane, at 1x speed, so the video's
+          // playback speed can be changed independently (avoids the chipmunk problem when
+          // slowing/speeding the source). Uses srcIn to seek into the source at seg.in, and
+          // takes the SEGMENT's timeline start/dur so the audio lines up where the clip plays.
+          const c = MAN.byId[s.id];
+          if(!c || !c.url){ toast("Can't split — source file missing"); return; }
+          histCommit();
+          // Server audio pipeline resolves `src` via PROJ join with forward-slashed relative path.
+          // c.url is "/<url-encoded rel>" — decode + strip leading slash to get "sources/clips/…".
+          let src = c.url.replace(/^\/+/, '');
+          try{ src = decodeURI(src); }catch(_){}
+          const spd = +s.speed || 1;
+          const tlDur = (+s.dur || 1) / Math.max(0.1, spd);   // timeline seconds this segment occupies
+          const L = layout(); const _me = L.all.find(o => o.seg === s);
+          const startTl = _me ? +_me.start : (playhead||0);
+          EDL.audio = EDL.audio || [];
+          const ach = _firstFreeAch(startTl, startTl + tlDur);
+          const audId = uidA();
+          EDL.audio.push({ id: audId, src, start: Math.round(startTl*100)/100, dur: Math.round(tlDur*100)/100,
+            volume: (s.srcAudioVol != null ? +s.srcAudioVol : 1),
+            fadeIn: 0, fadeOut: 0, ach,
+            srcIn: Math.round((+s.in || 0) * 100) / 100,    // start reading the source at the seg's IN point
+            speed: 1                                        // audio stays 1x even if you speed up the video
+          });
+          // Turn off the seg's own srcAudio so we don't render both.
+          s.srcAudio = false;
+          audSel = audId; _lastPick = 'aud';
+          renderTimeline(); renderTracks(); audSyncEditor && audSyncEditor(); audSyncPreview && audSyncPreview();
+          toast('Audio split onto its own track — video speed can now change independently');
         }
       };
     });
