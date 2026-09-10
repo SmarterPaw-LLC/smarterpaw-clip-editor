@@ -321,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.10</span>
+  <span class="ver" id="appVer">v2.9.11</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -384,6 +384,7 @@
       <button class="arbtn" data-ar="1x1">1:1</button>
       <button class="arbtn" data-ar="16x9">16:9</button>
       <span class="ardim" id="arDim"></span>
+      <button class="mini" id="btnSafeZones" title="Show platform-specific safe zones — dotted rectangles that mark where UI chrome (captions, action buttons, etc.) covers the frame on each channel">🔒 Safe zones</button>
       <span class="pzctl" title="Preview INSPECT zoom (view-only, never affects the render). Use Ctrl+scroll on the canvas, or scroll outside it. Alt-drag or middle-drag to pan. Plain scroll on the canvas zooms the CLIP framing instead.">
         <button class="mini" id="pzOut">−</button><span id="pzLbl">100%</span><button class="mini" id="pzIn">+</button><button class="mini" id="pzFit">Fit</button>
       </span>
@@ -395,6 +396,10 @@
       <div id="endcard"><img id="ecLogo" alt=""><div id="ecLines"></div></div>
       <div id="overlayLayer"></div>
       <div id="guideV"></div><div id="guideH"></div>
+      <!-- Safe-zone guides: dotted rectangles per aspect showing where UI chrome hides content
+           on each channel (TikTok caption/action buttons, YT progress bar, IG feed frame, etc.).
+           Toggled by #btnSafeZones. Sits above overlays (pointer-events:none). -->
+      <svg id="safeZones" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:none;z-index:20;overflow:visible"></svg>
     </div>
     <div id="pzBadge"></div>
     </div>
@@ -1977,6 +1982,46 @@ $('#btnFreezeEnd').onclick=async()=>{
 
 /* ---------- settings ---------- */
 const CANVAS_PX={'9x16':[1080,1920],'4x5':[1080,1350],'1x1':[1080,1080],'16x9':[1920,1080]};
+// Safe-zone guides per aspect. Each entry: {label, color, insets:[top,right,bottom,left]} as
+// canvas fractions. Multiple entries per aspect layer up (title-safe + platform chrome).
+// Numbers approximate the covered area on each channel's live UI — tune as chrome sizes change.
+const SAFE_ZONES = {
+  '9x16': [
+    {label:'title-safe',        color:'#f5c842', insets:[0.05, 0.05, 0.05, 0.05]},
+    {label:'TikTok chrome',     color:'#00e5ff', insets:[0.14, 0.16, 0.28, 0.03]},
+    {label:'IG Reels chrome',   color:'#e879f9', insets:[0.10, 0.18, 0.24, 0.03]},
+  ],
+  '4x5': [
+    {label:'title-safe',        color:'#f5c842', insets:[0.05, 0.05, 0.05, 0.05]},
+    {label:'Meta feed chrome',  color:'#00e5ff', insets:[0.08, 0.04, 0.10, 0.04]},
+  ],
+  '1x1': [
+    {label:'title-safe',        color:'#f5c842', insets:[0.05, 0.05, 0.05, 0.05]},
+  ],
+  '16x9': [
+    {label:'title-safe',        color:'#f5c842', insets:[0.05, 0.05, 0.05, 0.05]},
+    {label:'YouTube UI',        color:'#00e5ff', insets:[0.06, 0.03, 0.10, 0.03]},
+  ],
+};
+let _safeZonesOn = (function(){ try{ return localStorage.getItem('scl_safeZones')==='1'; }catch(e){ return false; } })();
+function drawSafeZones(){
+  const svg = $('#safeZones'); if(!svg) return;
+  const c = (EDL && EDL.settings && EDL.settings.canvas) || '9x16';
+  const zones = SAFE_ZONES[c] || [];
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  const parts = zones.map((z, i)=>{
+    const [t,r,b,l] = z.insets;
+    const x = l*100, y = t*100, w = (1 - l - r)*100, h = (1 - t - b)*100;
+    const lbl = z.label.replace(/</g,'&lt;');
+    // Text: canvas is drawn 0..100 in width AND height (non-uniform scale) — so font size must
+    // stay independent of Y stretching, done via vector-effect. Reserve a little top pad.
+    return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="none" stroke="${z.color}" stroke-width="0.35" stroke-dasharray="1.2 0.8" vector-effect="non-scaling-stroke"/>
+      <text x="${x + 0.6}" y="${y + 2.4}" fill="${z.color}" font-size="2.1" font-family="ui-monospace,monospace" style="paint-order:stroke;stroke:#000a;stroke-width:0.4;stroke-linejoin:round">${lbl}</text>`;
+  }).join('');
+  svg.innerHTML = parts;
+  svg.style.display = _safeZonesOn ? '' : 'none';
+}
 function chooseCanvas(c){
   const prevAspect = EDL.settings.canvas;
   EDL.settings.canvas=c; if($('#setCanvas')) $('#setCanvas').value=c;
@@ -1995,7 +2040,7 @@ function chooseCanvas(c){
       toast('Seeded '+c+' layout from '+prevAspect+' — adjust or Undo');
     }
   }
-  sizeStage(); updateTotal(); if(sel>=0&&EDL.segments[sel]) applyFraming(EDL.segments[sel]); renderOverlays(playhead); renderTracks(); updateAspectBadge(); }
+  sizeStage(); updateTotal(); if(sel>=0&&EDL.segments[sel]) applyFraming(EDL.segments[sel]); renderOverlays(playhead); renderTracks(); updateAspectBadge(); drawSafeZones(); }
 function updateAspectBadge(){
   const b=$('#aspectBadge'), btn=$('#aspectReset'); if(!b||!EDL) return;
   if(isPrimary()){ b.textContent='· primary'; b.style.color='var(--mut)'; if(btn) btn.style.display='none'; return; }
@@ -2056,6 +2101,15 @@ $('#aspectCopyFrom').onclick=()=>{
 };
 if($('#setProjBrand')) $('#setProjBrand').onchange=e=>{ histCommit(); EDL.settings.brand=e.target.value; toast('Brand: '+(BRAND_LABELS[e.target.value]||e.target.value)+'. New overlays use this brand’s gradient.'); };
 document.querySelectorAll('.arbtn').forEach(b=>b.onclick=()=>chooseCanvas(b.dataset.ar));
+// Safe-zones toggle — persists across sessions. Redraws immediately on click AND on aspect change.
+(function(){ const b = $('#btnSafeZones'); if(!b) return;
+  const sync = () => { b.classList.toggle('on', _safeZonesOn);
+    b.textContent = _safeZonesOn ? '🔒 Safe zones · ON' : '🔒 Safe zones';
+    drawSafeZones(); };
+  b.onclick = () => { _safeZonesOn = !_safeZonesOn;
+    try{ localStorage.setItem('scl_safeZones', _safeZonesOn ? '1' : '0'); }catch(e){} sync(); };
+  sync();
+})();
 
 /* ---------- end-card modal ---------- */
 function ecBgModeUI(){ const m=$('#ecBgMode').value; $('#ecGradRow').style.display=(m==='gradient')?'':'none'; $('#ecColorRow').style.display=(m==='color')?'':'none'; }
