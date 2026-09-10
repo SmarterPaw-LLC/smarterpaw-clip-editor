@@ -1301,6 +1301,15 @@ def _anim_exprs(o, s, dur, W, tv="t", H=None):
             in_curve = _ease_expr(_ease_user or "linear", k)
             # Before Plays-from: 0 (invisible). After: 1 (visible). In: fade curve.
             amul.append("if(lt(%s,%g),0,if(gt(%s,%g),1,%s))" % (tv, win_open, tv, win_close, in_curve))
+        elif ty == "popOut":
+            # Mirror of popIn on the trailing edge. Opacity fades over the LAST d*0.3 seconds
+            # of the anim window; scale side is baked into sc_factors below. After Plays-to: 0.
+            d = max(0.01, float(a.get("d", 0.45)))
+            fade_len = d * 0.3
+            trig = max(0.0, dw - fade_len)
+            k_out = "min(1,max(0,(%g-%s)/%g))" % (dw, lt, fade_len)   # 1 at trig, 0 at dw
+            curve = _ease_expr(_ease_user or "linear", k_out)
+            amul.append("if(lt(%s,%g),1,if(gt(%s,%g),0,if(lt(%s,%g),1,%s)))" % (tv, win_open, tv, win_close, lt, trig, curve))
         elif ty == "bubbleUp":
             d = max(0.01, float(a.get("d", 0.7)))
             dist = float(a.get("dist", 0.15)) * W
@@ -2051,7 +2060,7 @@ def apply_overlays(silent, overlays, W, H, tmp):
             sc_factors = []
             for a in (o.get("anims") or []):
                 ty = a.get("type")
-                if ty not in ("popIn", "scaleUp", "scaleDown", "scaleBeat", "bubbleUp"): continue
+                if ty not in ("popIn", "popOut", "scaleUp", "scaleDown", "scaleBeat", "bubbleUp"): continue
                 aS = s + max(0.0, float(a.get("tStart", 0) or 0))
                 aEv = a.get("tEnd"); aE = s + min(dur_o, float(aEv)) if (aEv is not None and float(aEv) > 0) else (s + dur_o)
                 if aE <= aS: continue
@@ -2066,6 +2075,14 @@ def apply_overlays(silent, overlays, W, H, tmp):
                     eb = _ease_expr(_u or "back-out", kk)
                     # Pre: 0.05 (invisible-ish; can't be 0 for ffmpeg scale). In-window: eased scale. Post: 1.
                     sc_factors.append("if(lt(t,%g),0.05,if(gt(t,%g),1,max(0.05,%s)))" % (aS, aS + d, eb))
+                elif ty == "popOut":
+                    # Mirror of popIn on the trailing edge — scale from 1 → 0 over the last d
+                    # seconds of the anim window. Pre-tail = 1, tail = eased 1→0, post = 0.05.
+                    d = max(0.01, float(a.get("d", 0.45)))
+                    tail = aE - d
+                    kk = "min(1,max(0,(%g-t)/%g))" % (aE, d)   # 1 at tail, 0 at aE
+                    eb = _ease_expr(_u or "back-out", kk)
+                    sc_factors.append("if(lt(t,%g),1,if(gt(t,%g),0.05,max(0.05,%s)))" % (tail, aE, eb))
                 elif ty == "scaleUp":
                     d = max(0.01, float(a.get("d", 0.5))); fr = float(a.get("from", 0.3))
                     kk = "min(1,max(0,%s/%g))" % (lt, d)
