@@ -321,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.12</span>
+  <span class="ver" id="appVer">v2.9.13</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -399,7 +399,7 @@
       <!-- Safe-zone guides: dotted rectangles per aspect showing where UI chrome hides content
            on each channel (TikTok caption/action buttons, YT progress bar, IG feed frame, etc.).
            Toggled by #btnSafeZones. Sits above overlays (pointer-events:none). -->
-      <svg id="safeZones" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:none;z-index:20;overflow:visible"></svg>
+      <svg id="safeZones" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:none;z-index:2147483647;overflow:visible"></svg>
     </div>
     <div id="pzBadge"></div>
     </div>
@@ -621,8 +621,24 @@
     <div class="modal-body">
       <div style="font-size:11px;color:var(--mut);margin-bottom:6px">Add music + sound effects on separate lanes. Drag clips on the timeline to move/retime. Click a clip to edit its volume + fades.</div>
       <div class="sec" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">＋ Add at playhead
-        <button class="mini" id="audRecOpen" title="Record a voiceover from your microphone — saved to sources/voiceover/ and added to the list below" style="margin-left:auto">🎙 Record voiceover…</button>
+        <button class="mini" id="audUploadOpen" title="Upload an audio file from your computer (mp3, wav, m4a, ogg, aac, flac) into music / sfx / voiceover" style="margin-left:auto">⬆ Upload audio…</button>
+        <button class="mini" id="audRecOpen" title="Record a voiceover from your microphone — saved to sources/voiceover/ and added to the list below">🎙 Record voiceover…</button>
         <button class="mini" id="audTtsOpen" title="Generate an AI voiceover with OpenAI TTS — saved to sources/voiceover/ and added to the list below">🤖 Generate voiceover…</button></div>
+      <div id="audUploadPanel" style="display:none;background:var(--panel2,#232732);border:1px solid var(--line);border-radius:6px;padding:8px;margin-bottom:6px;font-size:12px">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+          <b>⬆ Upload audio</b>
+          <button class="mini" id="audUploadClose" style="margin-left:auto">✕</button>
+        </div>
+        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+          <label>Category <select id="audUploadCat">
+            <option value="music" selected>Music</option>
+            <option value="sfx">SFX</option>
+            <option value="voiceover">Voiceover</option>
+          </select></label>
+          <input type="file" id="audUploadFile" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.opus" multiple style="flex:1;min-width:200px">
+        </div>
+        <div id="audUploadStatus" style="font-size:11px;color:var(--mut);min-height:14px;margin-top:6px">Pick a category, then choose one or more audio files.</div>
+      </div>
       <div id="audRecPanel" style="display:none;background:var(--panel2,#232732);border:1px solid var(--line);border-radius:6px;padding:8px;margin-bottom:6px;font-size:12px">
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
           <b>🎙 Record voiceover</b>
@@ -5029,6 +5045,35 @@ if($('#audUsageFilter')) $('#audUsageFilter').onchange=renderAudPickList;
 // /api/voiceover/upload-raw which transcodes to mp3 via ffmpeg and drops it into sources/voiceover/.
 let _recStream = null, _recRec = null, _recChunks = [], _recBlob = null, _recStart = 0, _recTick = null;
 function _recFmt(sec){ return sec.toFixed(1) + 's'; }
+// Upload audio panel — toggle + file handler. Each picked file gets uploaded to the selected
+// category, then the manifest reloads so the new track shows up in the pick list immediately.
+$('#audUploadOpen').onclick = () => {
+  const p = $('#audUploadPanel');
+  p.style.display = (p.style.display === 'none' ? 'block' : 'none');
+};
+$('#audUploadClose').onclick = () => { $('#audUploadPanel').style.display = 'none'; $('#audUploadFile').value = ''; };
+$('#audUploadFile').onchange = async e => {
+  const files = [...(e.target.files || [])]; if(!files.length) return;
+  const cat = $('#audUploadCat').value || 'sfx';
+  const status = $('#audUploadStatus');
+  const fileToDataUri = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(f); });
+  let ok = 0;
+  for(let i = 0; i < files.length; i++){ const f = files[i];
+    status.textContent = 'Uploading ' + (i+1) + '/' + files.length + ': ' + f.name + '…';
+    try{
+      const data = await fileToDataUri(f);
+      const r = await api('/api/audio/upload', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: f.name, data, category: cat})});
+      if(r && r.ok) ok++;
+      else status.textContent = 'Failed on ' + f.name + ': ' + ((r && r.log) || 'unknown');
+    } catch(err){ status.textContent = 'Failed on ' + f.name + ': ' + err.message; }
+  }
+  status.textContent = ok + '/' + files.length + ' uploaded to "' + cat + '"';
+  e.target.value = '';
+  // Refresh manifest so the new tracks appear in the picker.
+  MAN = await api('/api/manifest?_=' + Date.now()); MAN.byId = {}; MAN.clips.forEach(c => MAN.byId[c.id] = c);
+  renderAudPickList();
+  toast(ok ? (ok + ' audio track(s) uploaded to ' + cat) : 'Upload failed');
+};
 $('#audRecOpen').onclick = () => {
   const p = $('#audRecPanel');
   p.style.display = (p.style.display === 'none' ? 'block' : 'none');

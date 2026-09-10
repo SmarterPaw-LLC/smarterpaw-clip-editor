@@ -3578,6 +3578,34 @@ class Handler(BaseHTTPRequestHandler):
             with open(os.path.join(ASSETS, name), "wb") as f:
                 f.write(raw)
             return self._json({"ok": True, "src": "assets/" + name})
+        if path == "/api/audio/upload":
+            # Upload a raw audio file (mp3/wav/m4a/…) into music/sfx/voiceover based on category.
+            # Client sends base64 data URI + filename + category. File is de-duped on disk to
+            # avoid clobbering existing tracks.
+            import base64
+            cat = (data.get("category") or "sfx").lower().strip()
+            dest_dir = {"music": MUSIC_DIR, "sfx": SFX_DIR, "voiceover": VOICEOVER_DIR}.get(cat, SFX_DIR)
+            os.makedirs(dest_dir, exist_ok=True)
+            name = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(data.get("name") or "upload")) or "upload.mp3"
+            if not re.search(r"\.[A-Za-z0-9]{2,5}$", name):
+                name += ".mp3"
+            b64 = data.get("data", "") or ""
+            if "," in b64:
+                b64 = b64.split(",", 1)[1]
+            try:
+                raw = base64.b64decode(b64)
+            except Exception:
+                return self._json({"ok": False, "log": "bad audio data"}, 400)
+            if not raw:
+                return self._json({"ok": False, "log": "empty file"}, 400)
+            dest = os.path.join(dest_dir, name)
+            stem, ext = os.path.splitext(name); n = 2
+            while os.path.exists(dest):
+                dest = os.path.join(dest_dir, f"{stem}_{n}{ext}"); n += 1
+            with open(dest, "wb") as f:
+                f.write(raw)
+            rel = os.path.relpath(dest, PROJ).replace("\\", "/")
+            return self._json({"ok": True, "src": rel, "category": cat, "name": os.path.basename(dest)})
         if path == "/api/freeze-frame":
             src_id = (data.get("clipId") or "").strip()
             if not src_id:
