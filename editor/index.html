@@ -321,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.17</span>
+  <span class="ver" id="appVer">v2.9.16</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -4151,16 +4151,13 @@ function _positionOvHandles(o, el){
   hg.wrap.style.left = (r.left - lr.left)+'px';
   hg.wrap.style.top  = (r.top  - lr.top )+'px';
   hg.wrap.style.width = r.width+'px'; hg.wrap.style.height = r.height+'px';
-  // Text overlays have a Size slider in the editor panel — corner/edge handles just get in the
-  // way of dragging (the caption body's clickable area is bigger than the text, so hitting a
-  // corner used to trigger resize). Hide ALL handles for text; keep the rotate grip.
-  const _isText = (o.type === 'text');
+  // Position handles OUTSIDE the box: each transform pushes its dot fully off the overlay so
+  // clicking inside the box always hits the drag, not a resize handle. Small gap (3px) too.
   const G = 3;   // gap between handle and box edge
   hg.tl.style.left=(-G)+'px';        hg.tl.style.top=(-G)+'px';        hg.tl.style.transform='translate(-100%,-100%)';
   hg.tr.style.left=(r.width+G)+'px'; hg.tr.style.top=(-G)+'px';        hg.tr.style.transform='translate(0,-100%)';
   hg.bl.style.left=(-G)+'px';        hg.bl.style.top=(r.height+G)+'px';hg.bl.style.transform='translate(-100%,0)';
   hg.br.style.left=(r.width+G)+'px'; hg.br.style.top=(r.height+G)+'px';hg.br.style.transform='translate(0,0)';
-  [hg.tl, hg.tr, hg.bl, hg.br].forEach(d => d.style.display = _isText ? 'none' : '');
   const _isWh = (o.type === 'shape' || o.type === 'sprinkle' || o.type === 'arrow' || o.type === 'clipframe');
   const _e = [hg.t, hg.b, hg.l, hg.r];
   _e.forEach(d => d.style.display = _isWh ? '' : 'none');
