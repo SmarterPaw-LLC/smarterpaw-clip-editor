@@ -321,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.16</span>
+  <span class="ver" id="appVer">v2.9.18</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -4074,7 +4074,12 @@ function renderOverlays(time){
       if(r > 0.05) _blurFilt = `blur(${r.toFixed(2)}px)`;
     }
     el.style.filter = [_distFilt,_shFilt,_hueFilt,_blurFilt].filter(Boolean).join(' ') || 'none';
-    el.style.opacity=active?(A.op*(o.opacity!=null?o.opacity:1)):0;   // static overlay opacity × anim opacity
+    // Selected-in-edit stays visible even when the playhead is outside the overlay's window so
+    // the user can see what they clicked. Otherwise "click a text box → it disappears" reads as
+    // the overlay vanishing when it just went transparent for its own timing reasons.
+    if(active) el.style.opacity = A.op * (o.opacity!=null?o.opacity:1);
+    else if(ovEdit && o.id===ovSel && !o.hidden) el.style.opacity = 0.35;   // ghost-preview when off-window
+    else el.style.opacity = 0;
     if(ovEdit){ el.style.pointerEvents='auto'; el.style.cursor='move'; el.style.outline=(oRaw.id===ovSel)?'2px dashed #5b8cff':'none'; el.style.outlineOffset='3px'; dragify(el,oRaw); }
     else { el.style.pointerEvents='none'; el.style.outline='none'; }
     renderSparkles(o, time, layer);
