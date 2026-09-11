@@ -1770,12 +1770,21 @@ def prerender_clipframe(o, W, H, tmp, k):
     parts = []
     bg = fc_rgb if frame == "polaroid" else "black"     # ffmpeg color: "0xRRGGBB" or a named color — 8-hex ("0x00000000") is invalid
     bg_a = 1.0 if frame == "polaroid" else 0.0
-    # Speed up + scale to inner (COVER: fill, then crop overflow — matches CSS object-fit:cover)
-    # + pad to outer with border color (transparent for non-polaroid).
+    # Speed up + scale to (inner × videoZoom) with cover — bigger source, more crop overflow to
+    # pan through. videoX/videoY pick which part survives the crop (matches CSS object-position).
+    # Then pad to outer with border color (transparent for non-polaroid).
+    v_zoom = max(1.0, float(o.get("videoZoom", 1) or 1))
+    v_x    = max(0.0, min(1.0, float(o.get("videoX", 0.5))))
+    v_y    = max(0.0, min(1.0, float(o.get("videoY", 0.5))))
+    sc_w = max(2, int(inner_w * v_zoom))
+    sc_h = max(2, int(inner_h * v_zoom))
+    # crop offsets: 0..(sc - inner) linearly across videoX/videoY (0 = show far-left, 1 = far-right)
+    crop_x = int(max(0, (sc_w - inner_w)) * v_x)
+    crop_y = int(max(0, (sc_h - inner_h)) * v_y)
     parts.append("[0:v]setpts=(PTS-STARTPTS)/%g,"
-                 "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,"
+                 "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d:%d:%d,"
                  "format=rgba,pad=%d:%d:%d:%d:color=%s@%g,setpts=PTS-STARTPTS[fg]"
-                 % (spd, inner_w, inner_h, inner_w, inner_h,
+                 % (spd, sc_w, sc_h, inner_w, inner_h, crop_x, crop_y,
                     outer_w, outer_h, inner_x, inner_y, bg, bg_a))
     parts.append("[1:v]format=gray[m]")
     parts.append("[fg][m]alphamerge[outv]")
