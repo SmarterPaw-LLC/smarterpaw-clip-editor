@@ -321,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.22</span>
+  <span class="ver" id="appVer">v2.9.23</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -4537,7 +4537,11 @@ function buildOvEditor(){
         <label>Height <input type="range" id="ovCfH" min="0.05" max="1" step="0.01" value="${_cfEffectiveWH(o).h.toFixed(3)}"></label></div>
       <div><label>Opacity <input type="range" id="ovCfOp" min="0" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label>
         <button class="mini" id="ovCfFit" title="Reset width & height to the frame shape's natural aspect on this canvas">↔ Fit shape</button></div>
-      <div><label>Seek into source <input type="range" id="ovCfIn" min="0" max="${Math.max(0.1,clipDur-0.1)}" step="0.05" value="${+o.srcIn||0}"></label>
+      <div><label title="Which second of the SOURCE clip plays when this overlay starts (0 = beginning). Range slider is coarse; type into the number for exact frames.">Seek into source
+        <input type="range" id="ovCfIn" min="0" max="${Math.max(0.1,clipDur-0.1)}" step="0.05" value="${+o.srcIn||0}">
+        <input type="number" id="ovCfInN" min="0" max="${Math.max(0.1,clipDur)}" step="0.01" value="${(+o.srcIn||0).toFixed(2)}" style="width:64px"> s
+        <button class="mini" id="ovCfInHere" title="Use the playhead's position in the SOURCE clip (playhead time - overlay start × speed)" style="font-size:10px;padding:1px 5px">⤓ playhead</button>
+      </label>
         <label>Speed <input type="range" id="ovCfSpd" min="0.25" max="4" step="0.05" value="${+o.srcSpeed||1}"></label></div>
       <div><label class="ck"><input type="checkbox" id="ovCfAud" ${o.srcAudio?'checked':''}> Use source audio</label>
         <label>Vol <input type="range" id="ovCfAudVol" min="0" max="2" step="0.05" value="${o.srcAudioVol!=null?o.srcAudioVol:1}"></label></div>
@@ -4632,6 +4636,16 @@ function buildOvEditor(){
       if(o.scale != null) delete o.scale;   // legacy single-knob field is now dead — w/h own the sizing
       if($('#ovCfOp')) o.opacity=parseFloat($('#ovCfOp').value);
       if($('#ovCfIn')) o.srcIn=parseFloat($('#ovCfIn').value)||0;
+      // Number box mirrors the range; either can drive it. Sync when the user typed in the number.
+      if($('#ovCfInN')){
+        const nv = parseFloat($('#ovCfInN').value);
+        if(isFinite(nv) && nv >= 0){ o.srcIn = nv;
+          const sl=$('#ovCfIn'); if(sl && parseFloat(sl.value) !== nv){
+            if(nv > +sl.max) sl.max = String(nv);   // extend range if the user typed past the current max
+            sl.value = nv;
+          }
+        }
+      }
       if($('#ovCfSpd')) o.srcSpeed=parseFloat($('#ovCfSpd').value)||1;
       if($('#ovCfAud')) o.srcAudio=$('#ovCfAud').checked;
       if($('#ovCfAudVol')) o.srcAudioVol=parseFloat($('#ovCfAudVol').value);
@@ -4661,6 +4675,22 @@ function buildOvEditor(){
   if($('#ovArFill')){ $('#ovArFill').value=(o.fillType==='gradient')?'gradient':'solid'; const g=o.fillType==='gradient'; $('#ovArGrad').style.display=g?'':'none'; $('#ovArSolid').style.display=g?'none':''; if($('#ovArArchRow')) $('#ovArArchRow').style.display=((o.subtype||'arrow')==='arrow')?'':'none'; }
   if($('#ovArSeed')) $('#ovArSeed').onclick=()=>{ histCommit(); o.seed=Math.floor(Math.random()*1e6); renderOverlays(playhead); };
   if($('#ovCfPick')) $('#ovCfPick').onclick=()=>openCfPicker(clip=>{ histCommit(); o.srcId=clip.id; o.srcIn=Math.min(+o.srcIn||0, Math.max(0,(clip.dur||1)-0.1)); if(ovCfVids[o.id]){ ovCfVids[o.id].removeAttribute('src'); ovCfVids[o.id].dataset.src=''; } renderOvList(); buildOvEditor(); renderOverlays(playhead); });
+  // Keep the Seek-into-source slider and number box in sync as the user drags EITHER control.
+  const _cfSl = $('#ovCfIn'), _cfSlN = $('#ovCfInN');
+  if(_cfSl && _cfSlN){
+    _cfSl.addEventListener('input', () => { if(_cfSlN.value !== _cfSl.value) _cfSlN.value = (+_cfSl.value).toFixed(2); });
+    _cfSlN.addEventListener('input', () => { if(_cfSl.value !== _cfSlN.value){ if(+_cfSlN.value > +_cfSl.max) _cfSl.max = String(_cfSlN.value); _cfSl.value = _cfSlN.value; } });
+  }
+  // "⤓ playhead" — set srcIn to the playhead's position INSIDE this overlay's source, accounting
+  // for the overlay's start time on the timeline + its playback speed. Handy when scrubbing to a
+  // specific frame in the source clip and wanting it to become the anchor.
+  if($('#ovCfInHere')) $('#ovCfInHere').onclick = () => { histCommit();
+    const spd = Math.max(0.1, +o.srcSpeed || 1);
+    const localT = Math.max(0, (playhead||0) - (+o.start || 0));
+    const wantSrc = Math.max(0, (+o.srcIn || 0) + localT * spd);   // where the source currently IS at the playhead
+    o.srcIn = Math.round(wantSrc * 100) / 100;
+    buildOvEditor(); renderOverlays(playhead);
+  };
   if($('#ovCfFit')) $('#ovCfFit').onclick=()=>{ histCommit();
     // Reset height so the frame renders at its native aspect on THIS canvas — width stays as-is.
     const px = CANVAS_PX[EDL.settings.canvas]||[1080,1920];
