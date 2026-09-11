@@ -321,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.23</span>
+  <span class="ver" id="appVer">v2.9.24</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -5044,27 +5044,39 @@ function renderClipFrame(el, o, time, W){
   el.style.borderRadius = '';
   el.style.overflow = 'hidden';
   el.style.boxShadow = 'none';
-  // Ensure the inner video exists
+  // Ensure the inner cutout wrapper + video exist. The wrapper is critical: it's a fixed-size
+  // clipping box (photo rect) with overflow:hidden + clip-path applied — so any transform:scale
+  // on the video is clipped to the photo cutout, not leaking into the polaroid border area.
   let vid = ovCfVids[o.id];
+  let cut = el._cfCut;
+  if(!cut || cut.parentNode !== el){
+    cut = document.createElement('div');
+    cut.style.position='absolute'; cut.style.overflow='hidden'; cut.style.pointerEvents='none';
+    el.appendChild(cut); el._cfCut = cut;
+  }
   if(!vid){
     vid = document.createElement('video');
     vid.muted = true; vid.playsInline = true; vid.preload = 'auto';
-    vid.style.position='absolute'; vid.style.pointerEvents='none';
-    ovCfVids[o.id] = vid; el.appendChild(vid);
-  } else if(vid.parentNode !== el){ el.appendChild(vid); }
+    vid.style.position='absolute'; vid.style.left='0'; vid.style.top='0';
+    vid.style.width='100%'; vid.style.height='100%'; vid.style.pointerEvents='none';
+    ovCfVids[o.id] = vid;
+  }
+  if(vid.parentNode !== cut) cut.appendChild(vid);
   // Per-clip audio: unmute + set volume when srcAudio is on. Clamp to [0,1] since HTML <video>
   // volume can't exceed 1 (server side supports >1 for boost via ffmpeg volume filter).
   vid.muted = !o.srcAudio;
   vid.volume = Math.max(0, Math.min(1, +o.srcAudioVol||1));
   // Set source once
   if(clip && vid.dataset.src !== clip.url){ vid.dataset.src = clip.url; vid.src = clip.url; }
-  // Place video in the inner (photo) rect
+  // Size the CUTOUT to the inner photo rect and apply the frame's clip path to it.
   const inner = _cfInnerRect(o, outerW, outerH);
-  vid.style.left = inner.x + 'px'; vid.style.top = inner.y + 'px';
-  vid.style.width = inner.w + 'px'; vid.style.height = inner.h + 'px';
-  // Object-fit cover keeps clip aspect and fills the inner rect.
-  // object-position pans WHICH part of the source is visible after the cover crop (0..1 → 0..100%).
-  // transform: scale(zoom) around the same anchor lets the user push in on that pan point.
+  cut.style.left = inner.x + 'px'; cut.style.top = inner.y + 'px';
+  cut.style.width = inner.w + 'px'; cut.style.height = inner.h + 'px';
+  cut.style.clipPath = _cfMaskCss(o.frame||'polaroid', inner.w, inner.h);
+  cut.style.webkitClipPath = cut.style.clipPath;
+  // Video fills the cutout via object-fit:cover. object-position pans what's shown post-crop;
+  // transform:scale + matching origin zooms further in on the same pan point. Both are clipped
+  // by the cutout wrapper — the polaroid border stays crisp regardless of zoom.
   vid.style.objectFit = 'cover';
   const vX = (o.videoX!=null ? +o.videoX : 0.5);
   const vY = (o.videoY!=null ? +o.videoY : 0.5);
@@ -5072,8 +5084,7 @@ function renderClipFrame(el, o, time, W){
   vid.style.objectPosition = (vX*100).toFixed(2)+'% '+(vY*100).toFixed(2)+'%';
   vid.style.transformOrigin = (vX*100).toFixed(2)+'% '+(vY*100).toFixed(2)+'%';
   vid.style.transform = vZ > 1.001 ? ('scale('+vZ.toFixed(3)+')') : '';
-  vid.style.clipPath = _cfMaskCss(o.frame||'polaroid', inner.w, inner.h);
-  vid.style.webkitClipPath = vid.style.clipPath;
+  vid.style.clipPath = ''; vid.style.webkitClipPath = '';   // handled by the cutout wrapper now
   // Sync playback to timeline
   const spd = Math.max(0.1, +o.srcSpeed || 1);
   const localT = Math.max(0, time - o.start);
