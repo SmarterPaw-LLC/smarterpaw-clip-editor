@@ -1737,10 +1737,15 @@ def prerender_clipframe(o, W, H, tmp, k):
     # Source clip is CROPPED to fill the inner rect ("cover" behavior) so a portrait 9:16 UGC
     # clip doesn't stretch the polaroid into a tall rectangle with an oversized bottom strip.
     if frame == "polaroid":
-        inner_x = int(outer_w * CF_POLAROID["padL"])
-        inner_y = int(outer_h * CF_POLAROID["padT"])
-        inner_w = max(2, int(outer_w * (1 - CF_POLAROID["padL"] - CF_POLAROID["padR"])))
-        inner_h = max(2, int(outer_h * (1 - CF_POLAROID["padT"] - CF_POLAROID["padB"])))
+        # Per-overlay overrides (o.polaroidSide / polaroidTop / polaroidBottom) tune the photo
+        # cutout. Fall back to CF_POLAROID defaults when unset.
+        pol_side = float(o.get("polaroidSide", CF_POLAROID["padL"]))
+        pol_top  = float(o.get("polaroidTop",  CF_POLAROID["padT"]))
+        pol_bot  = float(o.get("polaroidBottom", CF_POLAROID["padB"]))
+        inner_x = int(outer_w * pol_side)
+        inner_y = int(outer_h * pol_top)
+        inner_w = max(2, int(outer_w * max(0.05, (1 - pol_side * 2))))
+        inner_h = max(2, int(outer_h * max(0.05, (1 - pol_top - pol_bot))))
     else:
         inner_x = inner_y = 0
         inner_w, inner_h = outer_w, outer_h

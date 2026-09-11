@@ -321,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.20</span>
+  <span class="ver" id="appVer">v2.9.21</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -3609,12 +3609,10 @@ async function buildFramedImageCanvas(o){
   const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
   const c = cv.getContext('2d');
   if(o.frame === 'polaroid'){
-    const P = CF_POLAROID;
     c.fillStyle = o.frameColor || '#ffffff';
     c.fillRect(0, 0, cw, ch);
-    const ix = P.padL * cw, iy = P.padT * ch;
-    const iw = (1 - P.padL - P.padR) * cw, ih = (1 - P.padT - P.padB) * ch;
-    c.drawImage(img, ix, iy, iw, ih);
+    const inner = _cfInnerRect(o, cw, ch);   // honors per-overlay polaroidSide/Top/Bottom overrides
+    c.drawImage(img, inner.x, inner.y, inner.w, inner.h);
   } else {
     // Same shape math as _cfMaskCss but drawn onto the canvas via clip.
     c.save();
@@ -4525,6 +4523,11 @@ function buildOvEditor(){
       <div><b style="font-size:11px;color:var(--mut)">Source:</b> <span style="font-size:11px">${clip?clip.label:'<span style="color:#f3b54a">⚠ missing clip</span>'}</span> <button class="mini" id="ovCfPick">Replace…</button></div>
       <div><label>Frame <select id="ovCfFrame">${CF_FRAMES.map(f=>`<option value="${f[0]}" ${(o.frame||'polaroid')===f[0]?'selected':''}>${f[1]}</option>`).join('')}</select></label>
         <label id="ovCfColRow">Border <input type="color" id="ovCfColor" value="${o.frameColor||'#ffffff'}"></label></div>
+      <div id="ovCfPolRow" style="${(o.frame||'polaroid')==='polaroid'?'':'display:none'}" title="Polaroid photo cutout — how much white border sits around the video (photo area = 1 - side*2 wide, 1 - top - bottom tall)">
+        <label>Photo border <input type="range" id="ovCfPolSide" min="0.01" max="0.30" step="0.01" value="${o.polaroidSide!=null?+o.polaroidSide:CF_POLAROID.padL}"></label>
+        <label>Top pad <input type="range" id="ovCfPolTop" min="0.01" max="0.40" step="0.01" value="${o.polaroidTop!=null?+o.polaroidTop:CF_POLAROID.padT}"></label>
+        <label>Bottom strip <input type="range" id="ovCfPolBot" min="0.05" max="0.55" step="0.01" value="${o.polaroidBottom!=null?+o.polaroidBottom:CF_POLAROID.padB}"></label>
+      </div>
       <div><label>Width <input type="range" id="ovCfW" min="0.05" max="1" step="0.01" value="${_cfEffectiveWH(o).w.toFixed(3)}"></label>
         <label>Height <input type="range" id="ovCfH" min="0.05" max="1" step="0.01" value="${_cfEffectiveWH(o).h.toFixed(3)}"></label></div>
       <div><label>Opacity <input type="range" id="ovCfOp" min="0" max="1" step="0.05" value="${o.opacity!=null?o.opacity:1}"></label>
@@ -4627,7 +4630,11 @@ function buildOvEditor(){
       if($('#ovCfSpd')) o.srcSpeed=parseFloat($('#ovCfSpd').value)||1;
       if($('#ovCfAud')) o.srcAudio=$('#ovCfAud').checked;
       if($('#ovCfAudVol')) o.srcAudioVol=parseFloat($('#ovCfAudVol').value);
-      if($('#ovCfColRow')) $('#ovCfColRow').style.display = (o.frame==='polaroid')?'':'none'; }
+      if($('#ovCfPolSide')) o.polaroidSide=parseFloat($('#ovCfPolSide').value);
+      if($('#ovCfPolTop'))  o.polaroidTop =parseFloat($('#ovCfPolTop').value);
+      if($('#ovCfPolBot'))  o.polaroidBottom=parseFloat($('#ovCfPolBot').value);
+      if($('#ovCfColRow')) $('#ovCfColRow').style.display = (o.frame==='polaroid')?'':'none';
+      if($('#ovCfPolRow')) $('#ovCfPolRow').style.display = (o.frame==='polaroid')?'':'none'; }
     else { o.scale=parseFloat($('#ovScale').value)||0.3; if($('#ovImgOp')) o.opacity=parseFloat($('#ovImgOp').value);
       if($('#ovImgFrame')){ const fv=$('#ovImgFrame').value; if(fv) o.frame=fv; else delete o.frame;
         if($('#ovImgFrameColorRow')) $('#ovImgFrameColorRow').style.display = (o.frame==='polaroid') ? '' : 'none'; }
@@ -4951,8 +4958,14 @@ function _cfClip(o){ return (MAN.byId||{})[o.srcId] || null; }
 const CF_POLAROID = {padL:0.06, padR:0.06, padT:0.06, padB:0.22};
 function _cfInnerRect(o, outerW, outerH){
   if(o.frame==='polaroid'){
-    const P=CF_POLAROID;
-    return { x: P.padL*outerW, y: P.padT*outerH, w: (1-P.padL-P.padR)*outerW, h: (1-P.padT-P.padB)*outerH };
+    // Per-overlay overrides (o.polaroidSide / polaroidTop / polaroidBottom) let each polaroid
+    // tune its own photo cutout — how much white border sits around the video.
+    const side = (o.polaroidSide!=null ? +o.polaroidSide : CF_POLAROID.padL);
+    const top  = (o.polaroidTop !=null ? +o.polaroidTop  : CF_POLAROID.padT);
+    const bot  = (o.polaroidBottom!=null ? +o.polaroidBottom : CF_POLAROID.padB);
+    const iwFrac = Math.max(0.05, 1 - side*2);
+    const ihFrac = Math.max(0.05, 1 - top - bot);
+    return { x: side*outerW, y: top*outerH, w: iwFrac*outerW, h: ihFrac*outerH };
   }
   return { x:0, y:0, w:outerW, h:outerH };
 }
