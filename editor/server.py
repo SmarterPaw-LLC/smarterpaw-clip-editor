@@ -2607,7 +2607,19 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
                 base += ",eq=" + ":".join(eq_parts)
             if abs(hu_) > 0.5:
                 base += f",hue=h={hu_:.2f}"
-            base += f",tpad=stop_mode=clone:stop_duration={outlen:.3f}"   # freeze-fill the last frame so over-length clips hold (matches preview); -t clamps to outlen
+            # Freeze-fill the last frame ONLY if the segment asks for MORE source seconds than the
+            # clip actually has (that's the intentional "hold the last frame" case). When the
+            # source has plenty (splits, normal cuts), skipping tpad avoids adding a duplicated
+            # last frame that reads as a stutter at every segment seam.
+            try:
+                src_dur, _sw, _sh = probe(src); src_dur = float(src_dur)
+            except Exception:
+                src_dur = 0.0
+            needed_src = float(seg["in"]) + dur
+            if src_dur > 0.05 and needed_src > src_dur + 0.05:
+                # asked past end → clone-fill exactly the missing timeline seconds
+                miss_tl = max(0.0, (needed_src - src_dur) / spd) + 0.20
+                base += f",tpad=stop_mode=clone:stop_duration={miss_tl:.3f}"
             sfi = float(seg.get("fadeIn", 0) or 0); sfo = float(seg.get("fadeOut", 0) or 0)
             # Fades are NO LONGER baked in as black fades — they're applied in the join step
             # below via xfade so a fadeIn crossfades from the previous clip instead of black.
