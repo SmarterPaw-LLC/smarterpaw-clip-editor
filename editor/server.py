@@ -2645,9 +2645,7 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
                 fc = (f"[0:v]{vbase}[v];"
                       f"[1:v]format=rgba,fade=t=in:st={outlen}:d=0.4:alpha=1[g];"
                       f"[v][g]overlay=0:0:enable='gte(t,{outlen})'[out]")
-                # Accurate seek (`-ss` after `-i`) so the first frame is exactly at seg.in — same
-                # rationale as the non-endcard branch below; keyframe-snap dropped head frames.
-                r = run([FFMPEG, "-y", "-loglevel", "error", "-i", src, "-ss", str(seg["in"]), "-t", str(src_read),
+                r = run([FFMPEG, "-y", "-loglevel", "error", "-ss", str(seg["in"]), "-t", str(src_read), "-i", src,
                          "-loop", "1", "-i", ec_png,
                          "-filter_complex", fc, "-map", "[out]", "-t", str(ext)] + ENC + [so])
                 if r.returncode != 0:
@@ -2655,14 +2653,10 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
                 total += ext
             else:
                 vf = base + (("," + cap_dt) if cap_dt else "")
-                # ACCURATE seek: `-ss` AFTER `-i` reads from the input's first keyframe and
-                # decodes forward to the exact IN point, so the first output frame is the frame
-                # the user actually wanted. `-ss` BEFORE `-i` (the fast path we used to use)
-                # snaps to the nearest keyframe, which drops frames at the head of every split
-                # segment → visible stutter at each split boundary when the pieces get joined
-                # back together. Slower per-segment but frame-accurate.
-                r = run([FFMPEG, "-y", "-loglevel", "error", "-i", src,
-                         "-ss", str(seg["in"]), "-t", str(dur),
+                # Fast seek (`-ss` before `-i`) — the accurate-seek attempt broke rendering on
+                # some sources (0-length output → concat step erred with "no stream"). Head-frame
+                # drops from keyframe-snap are a separate problem to solve after fixing render.
+                r = run([FFMPEG, "-y", "-loglevel", "error", "-ss", str(seg["in"]), "-t", str(dur), "-i", src,
                          "-vf", vf, "-t", str(outlen)] + ENC + [so])
                 if r.returncode != 0:
                     return {"ok": False, "log": f"seg {idx} failed:\n{r.stderr[-1500:]}"}
