@@ -321,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.26</span>
+  <span class="ver" id="appVer">v2.9.27</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1740,11 +1740,16 @@ function splitAtPlayhead(i){
   const seg=EDL.segments[i]; if(!seg) return;
   if(seg.locked){ toast('Unlock the clip first (🔒)'); return; }
   const L=layout().all.find(o=>o.idx===i); if(!L){ toast('Clip is not on the timeline'); return; }
-  const ph=playhead||0, eps=0.06;
+  const ph=playhead||0;
+  // Edge threshold: 20 ms — or 5% of the clip's timeline length for very short clips (so a
+  // 0.5s clip at 1.25× speed can still be split without the old 60 ms hardcode rejecting it).
+  const tlLen = Math.max(0.05, L.end - L.start);
+  const eps = Math.min(0.02, tlLen * 0.05);
   if(ph<=L.start+eps || ph>=L.end-eps){ toast('Move the playhead inside this clip, then split'); return; }
   const spd=segSpeed(seg), totalSrc=Math.max(0.05,+seg.dur||1);
   const srcOff=Math.round((ph-L.start)*spd*1000)/1000;   // timeline offset → source seconds from seg.in
-  if(srcOff<=0.02 || srcOff>=totalSrc-0.02){ toast('Too close to the edge to split'); return; }
+  const srcEps = Math.min(0.02, totalSrc * 0.05);
+  if(srcOff<=srcEps || srcOff>=totalSrc-srcEps){ toast('Too close to the edge to split'); return; }
   histCommit();
   const second=JSON.parse(JSON.stringify(seg));
   second.in=(+seg.in||0)+srcOff; second.dur=totalSrc-srcOff; seg.dur=srcOff;
