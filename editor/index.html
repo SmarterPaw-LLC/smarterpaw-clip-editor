@@ -322,7 +322,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.39</span>
+  <span class="ver" id="appVer">v2.9.40</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -4326,13 +4326,33 @@ function _positionOvHandles(o, el){
   hg.bl.style.left=(-G)+'px';        hg.bl.style.top=(r.height+G)+'px';hg.bl.style.transform='translate(-100%,0)';
   hg.br.style.left=(r.width+G)+'px'; hg.br.style.top=(r.height+G)+'px';hg.br.style.transform='translate(0,0)';
   const _isWh = (o.type === 'shape' || o.type === 'sprinkle' || o.type === 'arrow' || o.type === 'clipframe');
-  const _e = [hg.t, hg.b, hg.l, hg.r];
-  _e.forEach(d => d.style.display = _isWh ? '' : 'none');
-  if(_isWh){
+  // Text (plain/button/caption, not sticker) shows L/R edge handles for drag-to-widen that
+  // writes o.w (max-width fraction) — same field the Max width slider edits. T/B stay hidden
+  // for text since the text's height is driven by font size + wrapped line count. Handles sit
+  // further OUT (BG gap) with a bar shape so they can't be confused with the overlay body or
+  // its corner-resize dots.
+  const _isTextW = (o.type === 'text' && o.style !== 'sticker');
+  const _showLR = _isWh || _isTextW;
+  const _showTB = _isWh;
+  hg.t.style.display = _showTB ? '' : 'none';
+  hg.b.style.display = _showTB ? '' : 'none';
+  hg.l.style.display = _showLR ? '' : 'none';
+  hg.r.style.display = _showLR ? '' : 'none';
+  const BG = _isTextW && !_isWh ? 14 : G;   // bigger gap for text so handles don't touch the body
+  if(_showTB){
     hg.t.style.left=(r.width/2)+'px'; hg.t.style.top=(-G)+'px';        hg.t.style.transform='translate(-50%,-100%)';
     hg.b.style.left=(r.width/2)+'px'; hg.b.style.top=(r.height+G)+'px';hg.b.style.transform='translate(-50%,0)';
-    hg.l.style.left=(-G)+'px';        hg.l.style.top=(r.height/2)+'px';hg.l.style.transform='translate(-100%,-50%)';
-    hg.r.style.left=(r.width+G)+'px'; hg.r.style.top=(r.height/2)+'px';hg.r.style.transform='translate(0,-50%)';
+  }
+  if(_showLR){
+    hg.l.style.left=(-BG)+'px';        hg.l.style.top=(r.height/2)+'px';hg.l.style.transform='translate(-100%,-50%)';
+    hg.r.style.left=(r.width+BG)+'px'; hg.r.style.top=(r.height/2)+'px';hg.r.style.transform='translate(0,-50%)';
+    // Make text-only width handles visually distinct — a tall bar reads as "drag to widen" and
+    // can't be mistaken for the corner size dots. Shape/wh types keep the default round dot.
+    if(_isTextW && !_isWh){
+      [hg.l, hg.r].forEach(d => { d.style.borderRadius='3px'; d.style.width='8px'; d.style.height='28px'; d.style.background='#5b8cff'; d.style.border='2px solid #fff'; });
+    } else {
+      [hg.l, hg.r].forEach(d => { d.style.borderRadius='50%'; d.style.width='10px'; d.style.height='10px'; d.style.background='#5b8cff'; d.style.border='2px solid #fff'; });
+    }
   }
   hg.rot.style.left=(r.width/2)+'px'; hg.rot.style.top='-24px'; hg.rot.style.transform='translate(-50%,-100%)';
   hg.stem.style.left=(r.width/2 - 0.5)+'px'; hg.stem.style.top='-24px'; hg.stem.style.height='24px'; hg.stem.style.transform='';
@@ -4380,23 +4400,55 @@ function _positionOvHandles(o, el){
     };
   };
   bindResize(hg.tl,'tl'); bindResize(hg.tr,'tr'); bindResize(hg.bl,'bl'); bindResize(hg.br,'br');
-  // Edge handles: single-axis resize on wh types. axis = 'w' for l/r, 'h' for t/b.
+  // Edge handles: single-axis resize. On wh types, l/r drives o.w (shape width multiplier),
+  // t/b drives o.h. On plain/button/caption text, l/r drives o.w as the max-width fraction
+  // of the canvas, so dragging widens the text box and the content re-wraps WITHOUT changing
+  // font size. We use setPointerCapture + handlers on the dot itself so move / up always land
+  // on the handle regardless of pointer location — no window listeners that can leak when a
+  // re-render replaces the dot mid-drag.
   const bindEdge = (dot, axis, sign) => {
     dot.onpointerdown = ev => {
       ev.stopPropagation(); ev.preventDefault();
-      if(scaleField(o) !== 'wh') return;   // scalar types skip — edges are hidden anyway
+      const isTextEdge = (o.type === 'text' && o.style !== 'sticker' && axis === 'w');
+      if(scaleField(o) !== 'wh' && !isTextEdge) return;
+      const stageWrap = $('#stageWrap');
+      const stageW = stageWrap ? Math.max(1, stageWrap.clientWidth) : 1;
       const cx = r.left + r.width/2, cy = r.top + r.height/2;
-      const half0 = Math.max(1, axis==='w' ? r.width/2 : r.height/2);
+      // Starting state — captured once at pointerdown, drives the entire drag.
+      const curWFrac = (r.width) / stageW;      // current box width as canvas fraction
       const s0 = axis==='w' ? (+o.w||0.4) : (+o.h||0.2);
+      const half0 = Math.max(1, axis==='w' ? r.width/2 : r.height/2);
       histCommit();
+      try{ dot.setPointerCapture(ev.pointerId); }catch(_){}
       const mv = e => {
-        const cur = axis==='w' ? (e.clientX - cx) : (e.clientY - cy);
-        const ratio = Math.max(0.05, sign * cur / half0);
-        setOverlayField(o, axis, Math.max(0.02, s0 * ratio));
-        renderOverlays(playhead); buildOvEditor();
+        if(isTextEdge){
+          // Drag distance (in canvas-fraction) from the handle's starting X. Positive sign on
+          // the right handle, negative on left — both widen when the pointer moves AWAY from
+          // the box center. We grow symmetrically around the text anchor (o.x), so adding 2x
+          // the per-side delta to the current fractional width keeps the text visually
+          // centered inside its new rectangle.
+          const dxPx = sign * (e.clientX - cx);
+          const deltaFrac = (dxPx - half0) / stageW;   // movement beyond the original edge
+          const newW = Math.min(1, Math.max(0.06, curWFrac + 2 * deltaFrac));
+          setOverlayField(o, 'w', Math.round(newW * 1000) / 1000);
+        } else {
+          const cur = axis==='w' ? (e.clientX - cx) : (e.clientY - cy);
+          const ratio = Math.max(0.05, sign * cur / half0);
+          setOverlayField(o, axis, Math.max(0.02, s0 * ratio));
+        }
+        renderOverlays(playhead);
       };
-      const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); };
-      window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
+      const up = e => {
+        try{ dot.releasePointerCapture(e.pointerId); }catch(_){}
+        dot.onpointermove = null; dot.onpointerup = null; dot.onpointercancel = null;
+        // Only rebuild the editor panel at the END of the drag — doing it on every mv tick
+        // destroys the inputs the user might still be interacting with and leaves stale
+        // handles on screen that then can't be clicked again.
+        buildOvEditor();
+      };
+      dot.onpointermove = mv;
+      dot.onpointerup = up;
+      dot.onpointercancel = up;
     };
   };
   bindEdge(hg.t, 'h', -1); bindEdge(hg.b, 'h', +1);
