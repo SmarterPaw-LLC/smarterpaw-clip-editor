@@ -322,7 +322,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.40</span>
+  <span class="ver" id="appVer">v2.9.41</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -432,7 +432,7 @@
       </div>
       <div class="row">
         <label title="Zoom into the frame, then drag the preview to choose what stays in view">zoom
-          <input type="range" id="inZoomR" min="1" max="4" step="0.05" value="1" style="width:120px;vertical-align:middle">
+          <input type="range" id="inZoomR" min="1" max="10" step="0.05" value="1" style="width:120px;vertical-align:middle" title="1 = no zoom; 10 = extreme punch-in. The number box accepts beyond-slider values too.">
           <input type="number" id="inZoom" step="0.05" min="1" style="width:58px"></label>
         <label>anchor
           <select id="inAnchor">
@@ -2125,7 +2125,7 @@ $('#btnFreezeEnd').onclick=async()=>{
     const s=curSeg(); if(!s||tlPlaying) return;
     e.preventDefault(); e.stopPropagation();    // claim this wheel tick so view-zoom doesn't also fire
     const sr = resolveSegment(s);
-    let z=(+sr.zoom||1) - e.deltaY*0.0015; z=Math.min(4,Math.max(1, Math.round(z*100)/100));
+    let z=(+sr.zoom||1) - e.deltaY*0.0015; z=Math.min(10,Math.max(1, Math.round(z*100)/100));
     setSegField(s,'zoom',z); $('#inZoom').value=z; $('#inZoomR').value=z; applyFraming(s); histSchedule();
   }, {passive:false});
 })();
@@ -4716,7 +4716,7 @@ function buildOvEditor(){
       <div title="Pan and zoom the VIDEO inside the frame — moves what's visible in the cutout without changing the frame itself">
         <label>Video X <input type="range" id="ovCfVX" min="0" max="1" step="0.01" value="${o.videoX!=null?+o.videoX:0.5}"></label>
         <label>Video Y <input type="range" id="ovCfVY" min="0" max="1" step="0.01" value="${o.videoY!=null?+o.videoY:0.5}"></label>
-        <label>Video zoom <input type="range" id="ovCfVZ" min="1" max="4" step="0.05" value="${o.videoZoom!=null?+o.videoZoom:1}"></label>
+        <label>Video zoom <input type="range" id="ovCfVZ" min="1" max="10" step="0.05" value="${o.videoZoom!=null?+o.videoZoom:1}"></label>
       </div>
       <div><label>Width <input type="range" id="ovCfW" min="0.05" max="1" step="0.01" value="${_cfEffectiveWH(o).w.toFixed(3)}"></label>
         <label>Height <input type="range" id="ovCfH" min="0.05" max="1" step="0.01" value="${_cfEffectiveWH(o).h.toFixed(3)}"></label></div>
