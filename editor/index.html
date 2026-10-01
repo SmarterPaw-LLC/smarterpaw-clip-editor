@@ -321,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.31</span>
+  <span class="ver" id="appVer">v2.9.32</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -440,7 +440,7 @@
         <button class="mini" id="btnResetFrame" title="Reset zoom to 1 and re-center">⟲ Reset framing</button>
         <button class="mini" id="btnAddSel">+ Add this clip to timeline</button>
         <button class="mini" id="btnFreezeEnd" title="Grab the frame at THIS clip's current OUT point and add it as a new still-clip right after this one. Drag the new clip's edge to hold the frame as long as you want.">❄ Freeze last frame</button>
-        <label title="Shrink the video on the render canvas and pad the empty space with black. 1 = fill canvas; 0.5 = half size with black bars around it (classic POV letterbox look).">canvas size
+        <label title="Shrink the video inside the render canvas and pad the empty space with black. 1 = video fills the canvas; 0.5 = video is half-size, centered, with black bars around it (classic POV letterbox look). The canvas dimensions do not change.">video size
           <input type="range" id="inCanvasScale" min="0.2" max="1" step="0.02" value="1" style="width:100px;vertical-align:middle">
           <input type="number" id="inCanvasScaleN" min="0.2" max="1" step="0.02" value="1" style="width:52px"></label>
       </div>
