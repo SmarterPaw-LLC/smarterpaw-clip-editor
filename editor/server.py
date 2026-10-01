@@ -2357,6 +2357,8 @@ def flatten_segments(edl):
             seg["videoW"] = s.get("videoW")
         if s.get("videoH") is not None:
             seg["videoH"] = s.get("videoH")
+        if s.get("reverse"):
+            seg["reverse"] = True
         fi = float(s.get("fadeIn", 0) or 0)
         fo = float(s.get("fadeOut", 0) or 0)
         if fi > 0 and abs(a - top["start"]) < 0.02:
@@ -2624,6 +2626,11 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
                 sw2 = max(2, int(round(W * vw_))); sh2 = max(2, int(round(H * vh_)))
                 sw2 -= sw2 % 2; sh2 -= sh2 % 2
                 base += f",crop={sw2}:{sh2},pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black"
+            # Reverse: play this segment backwards. ffmpeg's `reverse` buffers the whole segment
+            # in RAM — fine for short cuts (which is what this control is for). Audio reversal
+            # is applied separately on the src-audio tap below.
+            if seg.get("reverse"):
+                base += ",reverse"
             # Freeze-fill the last frame ONLY if the segment asks for MORE source seconds than the
             # clip actually has (that's the intentional "hold the last frame" case). When the
             # source has plenty (splits, normal cuts), skipping tpad avoids adding a duplicated
@@ -2805,7 +2812,7 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
             src_in = max(0.0, float(a.get("srcIn", 0) or 0))   # skip N seconds into the source file
             spd = max(0.25, min(4.0, float(a.get("speed", 1) or 1)))   # atempo-safe range
             pitch = max(-12.0, min(12.0, float(a.get("pitch", 0) or 0)))   # semitones; ±12 = one octave
-            tracks.append((ap, st, du, vol, fi, fo, src_in, spd, pitch))
+            tracks.append((ap, st, du, vol, fi, fo, src_in, spd, pitch, False))
         # Segment source audio: iterate flattened segments (already visible-ordered, multi-channel
         # collapsed) with a running timeline position. Any segment with srcAudio=true contributes
         # its clip's original audio at the exact position it appears on the timeline. Uses the
@@ -2822,7 +2829,7 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
                     _vol = max(0.0, min(2.0, float(_fseg.get("srcAudioVol", 1))))
                     if _vol > 0.001 and _tl_pos < total:
                         _du = min(_dur_tl, total - _tl_pos)
-                        tracks.append((_ap, _tl_pos, _du, _vol, 0.0, 0.0, float(_fseg.get("in", 0)), float(_fseg.get("speed", 1)), 0.0))
+                        tracks.append((_ap, _tl_pos, _du, _vol, 0.0, 0.0, float(_fseg.get("in", 0)), float(_fseg.get("speed", 1)), 0.0, bool(_fseg.get("reverse"))))
             _tl_pos += _dur_tl
         # Framed-clip (picture-in-picture) source audio — one track per clipframe with srcAudio=true.
         # Reuse id_to_file lookup to resolve the source file path.
@@ -2842,7 +2849,7 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
             spd = max(0.1, float(o.get("srcSpeed", 1) or 1))
             if st >= total: continue
             if st + du > total: du = total - st
-            tracks.append((ap, st, du, vol, 0.0, 0.0, src_in, spd, 0.0))
+            tracks.append((ap, st, du, vol, 0.0, 0.0, src_in, spd, 0.0, False))
         prog("Adding audio + finalizing…", 92)
         if tracks:
             ff_in = [FFMPEG, "-y", "-loglevel", "error", "-i", vid_src]
@@ -2875,7 +2882,7 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
                 # projects so no data loss — just a no-op until we swap in rubberband or an
                 # input-rate-aware formula.
                 return ""
-            for i, (p, st, du, vol, fi, fo, src_in, spd, pitch) in enumerate(tracks, start=1):
+            for i, (p, st, du, vol, fi, fo, src_in, spd, pitch, rev) in enumerate(tracks, start=1):
                 # Seek into source (framed-clip audio) uses -ss BEFORE -i for accurate keyframe seek.
                 if src_in > 0.001:
                     ff_in += ["-ss", "%.3f" % src_in, "-i", p]
@@ -2885,6 +2892,10 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
                 # Trim BEFORE atempo so we grab exactly (du*spd) seconds pre-speedup; atempo yields du.
                 take = du * spd if spd > 0 else du
                 ch = (f"[{i}:a]atrim=0:{take:.3f},asetpts=PTS-STARTPTS")
+                if rev:
+                    # areverse after atrim so only the needed window is reversed — matches the
+                    # video reverse applied in the base filter chain.
+                    ch += ",areverse"
                 tempo = _atempo_chain(spd)
                 if tempo:
                     ch += "," + tempo
