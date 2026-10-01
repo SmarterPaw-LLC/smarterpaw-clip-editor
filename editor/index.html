@@ -322,7 +322,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.38</span>
+  <span class="ver" id="appVer">v2.9.39</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -4326,21 +4326,11 @@ function _positionOvHandles(o, el){
   hg.bl.style.left=(-G)+'px';        hg.bl.style.top=(r.height+G)+'px';hg.bl.style.transform='translate(-100%,0)';
   hg.br.style.left=(r.width+G)+'px'; hg.br.style.top=(r.height+G)+'px';hg.br.style.transform='translate(0,0)';
   const _isWh = (o.type === 'shape' || o.type === 'sprinkle' || o.type === 'arrow' || o.type === 'clipframe');
-  // Text (plain/button/caption, not sticker) shows the L/R edge handles for drag-to-widen
-  // (writes o.w = max-width fraction, same field the slider edits). T/B stay hidden since the
-  // text's height is driven by font size + wrapped line count, not a free h value.
-  const _isTextW = (o.type === 'text' && o.style !== 'sticker');
-  const _showLR = _isWh || _isTextW;
-  const _showTB = _isWh;
-  hg.t.style.display = _showTB ? '' : 'none';
-  hg.b.style.display = _showTB ? '' : 'none';
-  hg.l.style.display = _showLR ? '' : 'none';
-  hg.r.style.display = _showLR ? '' : 'none';
-  if(_showTB){
+  const _e = [hg.t, hg.b, hg.l, hg.r];
+  _e.forEach(d => d.style.display = _isWh ? '' : 'none');
+  if(_isWh){
     hg.t.style.left=(r.width/2)+'px'; hg.t.style.top=(-G)+'px';        hg.t.style.transform='translate(-50%,-100%)';
     hg.b.style.left=(r.width/2)+'px'; hg.b.style.top=(r.height+G)+'px';hg.b.style.transform='translate(-50%,0)';
-  }
-  if(_showLR){
     hg.l.style.left=(-G)+'px';        hg.l.style.top=(r.height/2)+'px';hg.l.style.transform='translate(-100%,-50%)';
     hg.r.style.left=(r.width+G)+'px'; hg.r.style.top=(r.height/2)+'px';hg.r.style.transform='translate(0,-50%)';
   }
@@ -4390,37 +4380,12 @@ function _positionOvHandles(o, el){
     };
   };
   bindResize(hg.tl,'tl'); bindResize(hg.tr,'tr'); bindResize(hg.bl,'bl'); bindResize(hg.br,'br');
-  // Edge handles: single-axis resize. On wh types, l/r drives o.w, t/b drives o.h. On plain/
-  // button/caption text, l/r drives o.w (max-width fraction) so dragging the side widens the
-  // text box without touching font size — the text wraps to fill the new width.
+  // Edge handles: single-axis resize on wh types. axis = 'w' for l/r, 'h' for t/b.
   const bindEdge = (dot, axis, sign) => {
     dot.onpointerdown = ev => {
       ev.stopPropagation(); ev.preventDefault();
-      const isTextEdge = (o.type === 'text' && o.style !== 'sticker' && axis === 'w');
-      if(scaleField(o) !== 'wh' && !isTextEdge) return;
+      if(scaleField(o) !== 'wh') return;   // scalar types skip — edges are hidden anyway
       const cx = r.left + r.width/2, cy = r.top + r.height/2;
-      // For text edge drags, drive the width directly in canvas-fraction space (not a multi-
-      // plier). Current w defaults to 1 (full canvas) when unset.
-      const stageWrap = $('#stageWrap');
-      const stageW = stageWrap ? stageWrap.clientWidth : 1;
-      if(isTextEdge){
-        // Current half-width of the text box ON the canvas, in canvas fractions.
-        const curHalfFrac = (r.width / 2) / Math.max(1, stageW);
-        const curX = (o.x != null ? +o.x : 0.5);   // text anchor x (0..1)
-        histCommit();
-        const mv = e => {
-          const dxPx = sign * (e.clientX - cx);
-          const dxFrac = dxPx / Math.max(1, stageW);
-          const newHalf = Math.max(0.03, curHalfFrac + dxFrac);
-          // o.w represents the TOTAL max-width fraction (both halves).
-          const newW = Math.min(1, Math.max(0.06, newHalf * 2));
-          setOverlayField(o, 'w', Math.round(newW * 1000) / 1000);
-          renderOverlays(playhead); buildOvEditor();
-        };
-        const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); };
-        window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
-        return;
-      }
       const half0 = Math.max(1, axis==='w' ? r.width/2 : r.height/2);
       const s0 = axis==='w' ? (+o.w||0.4) : (+o.h||0.2);
       histCommit();
