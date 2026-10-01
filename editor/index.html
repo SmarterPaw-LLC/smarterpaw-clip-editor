@@ -322,7 +322,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.36</span>
+  <span class="ver" id="appVer">v2.9.37</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2064,11 +2064,25 @@ $('#btnFreezeEnd').onclick=async()=>{
     MAN = await api('/api/manifest?_=' + Date.now()); MAN.byId={}; MAN.clips.forEach(c=>MAN.byId[c.id]=c);
     const insAt = sel + 1;   // right after the source segment
     const holdDur = Math.min(3, +r.dur || 3);
-    const stillSeg = {id: r.id, in: 0, dur: holdDur, cap: '', zoom: 1, anchor: 'center'};
+    // Inherit the parent's framing + color so the frozen still LOOKS identical to the live frame
+    // at the capture point. The server extracts a raw full-frame MP4, so applying the same zoom
+    // / anchor / pan / vid-rect / color-grade to the still reproduces exactly what was on canvas.
+    const sr = resolveSegment(seg);
+    const stillSeg = {id: r.id, in: 0, dur: holdDur, cap: '',
+      zoom: sr.zoom != null ? +sr.zoom : 1,
+      anchor: sr.anchor || 'center'};
+    if(sr.panX != null) stillSeg.panX = +sr.panX;
+    if(sr.panY != null) stillSeg.panY = +sr.panY;
+    if(sr.videoW != null) stillSeg.videoW = +sr.videoW;
+    if(sr.videoH != null) stillSeg.videoH = +sr.videoH;
+    if(seg.bright != null) stillSeg.bright = +seg.bright;
+    if(seg.contrast != null) stillSeg.contrast = +seg.contrast;
+    if(seg.saturation != null) stillSeg.saturation = +seg.saturation;
+    if(seg.hue != null) stillSeg.hue = +seg.hue;
     if(seg.ch != null) stillSeg.ch = seg.ch;
     EDL.segments.splice(insAt, 0, stillSeg);
     sel = insAt; renderTimeline(); renderTracks(); selectSeg(sel);
-    toast('Freeze frame added — drag its right edge to hold longer');
+    toast('Freeze frame added (inherits zoom / crop / color) — drag its right edge to hold longer');
   } catch(e){ toast('Freeze failed: '+e); }
   finally{ btn.disabled=false; btn.textContent=label; }
 };
