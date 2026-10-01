@@ -321,7 +321,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.34</span>
+  <span class="ver" id="appVer">v2.9.35</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -3427,7 +3427,11 @@ function buildTextOverlayCanvas(o){
     lines = String(o.text||'').replace(/\r/g,'').split('\n').flatMap(wrapLine);
     if(!lines.length) lines = [''];
   } else {
-    lines = [(o.text||'').replace(/\n/g,' ')];
+    // Plain / button: honor explicit \n from the textarea (Enter inserts a line break). No
+    // word-wrap — the user controls the breaks. Empty text keeps a single empty line so the
+    // canvas sizing doesn't collapse to zero.
+    lines = String(o.text||'').replace(/\r/g,'').split('\n');
+    if(!lines.length) lines = [''];
   }
   let maxTw = 0;
   for(const L of lines){ maxTw = Math.max(maxTw, m.measureText(L).width); }
@@ -3453,24 +3457,32 @@ function buildTextOverlayCanvas(o){
     const baseY = pad+padY+lineH/2;
     lines.forEach((L, i) => c.fillText(L, cw/2, baseY + i*lineH));
   } else if(o.button){   // preview: bg rect + padding + radius, NO text shadow (plus optional drop-shadow)
-    const padX=size*0.55, padY=size*0.38, rad=size*0.3;
+    const padX=size*0.55, padY=size*0.38, rad=size*0.3, lineH=size*1.1;
     const pad=Math.ceil(useSh ? (shBlur+Math.max(Math.abs(shDx),Math.abs(shDy))) : 0)+4;
-    cw=Math.ceil(tw+padX*2+pad*2); ch=Math.ceil(size*1.25+padY*2+pad*2);
+    cw=Math.ceil(tw+padX*2+pad*2); ch=Math.ceil(lineH*lines.length+padY*2+pad*2);
     cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; c=cv.getContext('2d'); c.font=font;
     const bw=cw-pad*2, bh=ch-pad*2;
     if(useSh){ c.save(); c.shadowColor=shCol; c.shadowBlur=shBlur; c.shadowOffsetX=shDx; c.shadowOffsetY=shDy; c.fillStyle=o.bg||'#f07830'; rr(c,pad,pad,bw,bh,rad); c.fill(); c.restore(); }
     c.fillStyle=o.bg||'#f07830'; rr(c,pad,pad,bw,bh,rad); c.fill();
-    c.fillStyle=o.color||'#ffffff'; c.textAlign='center'; c.textBaseline='middle'; c.fillText(lines[0]||'',cw/2,ch/2+size*0.03);
+    c.fillStyle=o.color||'#ffffff'; c.textAlign='center'; c.textBaseline='middle';
+    const baseY = pad+padY+lineH/2;
+    lines.forEach((L,i) => c.fillText(L, cw/2, baseY + i*lineH + size*0.03));
   } else {   // preview: soft drop shadow (CSS textShadow ~0 2px 6px on the scaled-down stage) + optional drop-shadow
     const softBlur=exportW*0.012, softDy=exportW*0.0045;
     const pad=Math.ceil(Math.max(softBlur+softDy, useSh?(shBlur+Math.abs(shDx)+Math.abs(shDy)):0))+6;
-    cw=Math.ceil(tw+pad*2); ch=Math.ceil(size*1.5+pad*2);
+    const lineH=size*1.1;
+    cw=Math.ceil(tw+pad*2); ch=Math.ceil(lineH*lines.length+pad*2+size*0.4);
     cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; c=cv.getContext('2d'); c.font=font; c.textAlign='center'; c.textBaseline='middle';
-    if(useSh){ c.save(); c.shadowColor=shCol; c.shadowBlur=shBlur; c.shadowOffsetX=shDx; c.shadowOffsetY=shDy; c.fillStyle=o.color||'#ffffff'; c.fillText(lines[0]||'',cw/2,ch/2); c.restore(); }
+    const baseY = pad+lineH/2+size*0.2;
+    if(useSh){ c.save(); c.shadowColor=shCol; c.shadowBlur=shBlur; c.shadowOffsetX=shDx; c.shadowOffsetY=shDy; c.fillStyle=o.color||'#ffffff';
+      lines.forEach((L,i) => c.fillText(L, cw/2, baseY + i*lineH));
+      c.restore(); }
     // Only draw the soft baseline shadow when Drop shadow is ON — matches preview.
     c.save();
     if(useSh){ c.shadowColor='rgba(0,0,0,0.55)'; c.shadowBlur=softBlur; c.shadowOffsetX=0; c.shadowOffsetY=softDy; }
-    c.fillStyle=o.color||'#ffffff'; c.fillText(lines[0]||'',cw/2,ch/2); c.restore();
+    c.fillStyle=o.color||'#ffffff';
+    lines.forEach((L,i) => c.fillText(L, cw/2, baseY + i*lineH));
+    c.restore();
   }
   return {canvas:cv, cw, exportW};
 }
@@ -4100,12 +4112,14 @@ function renderOverlays(time){
         el.style.textShadow = ((o.shadow||{}).on) ? '0 2px 4px rgba(0,0,0,0.5)' : 'none';
       } else if(o.button){
         el.textContent = o.text || '';
-        el.style.whiteSpace='nowrap'; el.style.lineHeight='1';
+        // Honor explicit \n from the textarea so Enter in the editor creates a new line in the
+        // button (matches the bake). pre-line collapses runs of spaces but preserves line breaks.
+        el.style.whiteSpace='pre-line'; el.style.lineHeight='1.1'; el.style.textAlign='center';
         el.style.background=o.bg||'#f07830'; const p=(o.size||0.06)*W;
         el.style.padding=(p*0.38)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.3)+'px'; el.style.textShadow='none';
       } else {
         el.textContent = o.text || '';
-        el.style.whiteSpace='nowrap'; el.style.lineHeight='1';
+        el.style.whiteSpace='pre-line'; el.style.lineHeight='1.1'; el.style.textAlign='center';
         el.style.background='none'; el.style.padding='0'; el.style.borderRadius='0';
         // Shadow only when the Drop shadow checkbox is on — otherwise NO textShadow at all.
         el.style.textShadow = ((o.shadow||{}).on) ? '0 2px 6px rgba(0,0,0,.6)' : 'none';
@@ -4505,7 +4519,7 @@ function buildOvEditor(){
       </div>
     </div>`;
   if(o.type==='text'){
-    h+=`<div class="sec">Text</div><div><textarea id="ovText" rows="2" style="width:100%" placeholder="text — Enter = new line (bubble sticker)">${(o.text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</textarea></div>
+    h+=`<div class="sec">Text</div><div><textarea id="ovText" rows="2" style="width:100%" placeholder="text — Enter = new line">${(o.text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</textarea></div>
       <div><label>Style <select id="ovStyle"><option value="plain">Plain</option><option value="sticker">Bubble sticker</option><option value="caption">Caption (dark bg)</option></select></label>
       <label>Font <select id="ovFont"><option value="cooper">Cooper</option><option value="meowijuana">Meowijuana</option><option value="ofelia">Ofelia (KKZ display)</option><option value="caraque">Caraque (KKZ chunky)</option><option value="avenir">Avenir (KKZ body)</option><option value="helvetica">Helvetica (POV / IG style)</option><option value="arial">Arial</option></select></label></div>
       <div id="ovPlainRow"><label>Color <input type="color" id="ovColor" value="${o.color||'#ffffff'}"></label>
