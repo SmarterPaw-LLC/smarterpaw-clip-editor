@@ -322,7 +322,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.43</span>
+  <span class="ver" id="appVer">v2.9.44</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -1914,10 +1914,32 @@ function playRange(seg, onDone){
   const v=getVid(seg.id);
   const spd=segSpeed(seg);
   const start=Math.max(0,+seg.in||0), srcDur=Math.max(0.05,+seg.dur||1), end=start+srcDur, wall=srcDur/spd;
+  const rev = !!seg.reverse;
   let done=false;
   const finish=()=>{ if(done||my!==pbToken) return; done=true; clearTimeout(segTO); cancelAnimationFrame(segRaf); if(v){try{v.pause();v.playbackRate=1;}catch(e){}} if(onDone) onDone(); };
   segTO=setTimeout(finish, wall*1000+1200);   // backstop so the timeline never stalls
   if(!v){ return; }
+  // Reverse: HTML <video> can't go backwards natively. Drive currentTime from end→start via
+  // wall-clock in requestAnimationFrame; audio stays muted (will reverse on render).
+  if(rev){
+    const t0 = performance.now();
+    const watchRev = () => { if(my!==pbToken) return;
+      const el = (performance.now() - t0) / 1000;   // wall seconds since start
+      const prog = Math.min(1, el / Math.max(0.05, wall));
+      const want = Math.max(start, end - el * spd);
+      applyFraming(seg, v, prog);
+      try{ v.currentTime = want; }catch(_){}
+      if(prog >= 1){ finish(); return; }
+      segRaf = requestAnimationFrame(watchRev);
+    };
+    const goRev = () => { if(my!==pbToken) return; v.onseeked=null; applyFraming(seg, v, 0); showVid(seg.id); showCap(seg.cap);
+      try{ v.muted = true; v.pause(); v.playbackRate = 1; }catch(_){}
+      try{ v.currentTime = end; }catch(_){} segRaf = requestAnimationFrame(watchRev);
+    };
+    if(v.readyState>=1) goRev();
+    else v.addEventListener('loadedmetadata', function h(){ v.removeEventListener('loadedmetadata',h); goRev(); });
+    return;
+  }
   const watch=()=>{ if(my!==pbToken) return;
     if(v.currentTime>=end-0.03 || v.ended){ finish(); return; }
     // Ken Burns: update framing every frame based on progress into the segment.
@@ -1980,23 +2002,45 @@ function playTimeline(){
       renderOverlays(playhead); positionPlayhead(); return;
     }
     const spd=segSpeed(hit.seg);
-    const s=hit.seg, v=getVid(s.id), want=(+s.in||0)+hit.off*spd;
+    const s=hit.seg, v=getVid(s.id);
+    // Reverse: play from (in+dur) down to (in). HTML <video> can't do negative playbackRate
+    // reliably, so for reversed segments we PAUSE the video and manually drive currentTime
+    // each tick — the tick runs ~30fps which is plenty for preview.
+    const _rev = !!s.reverse;
+    const _in = (+s.in||0), _sdur = Math.max(0.05, +s.dur||1);
+    const want = _rev ? Math.max(_in, _in + _sdur - hit.off * spd) : _in + hit.off * spd;
     // Ken Burns progress within THIS segment: hit.off is timeline seconds since seg.start,
     // hit.dur is timeline seconds this seg occupies. Convert to source progress: (hit.off*spd) / (s.dur)
     const _kbProg = Math.max(0, Math.min(1, (hit.off * spd) / Math.max(0.001, +s.dur || 0)));
     if(s!==curKey){                                     // entered a new (topmost) clip
       curKey=s;
       for(const k in vids){ if(vids[k]!==v){ try{vids[k].pause(); vids[k].muted=true;}catch(_){} } }
-      if(v){ applyFraming(s,v,_kbProg); showVid(s.id); try{v.playbackRate=spd;}catch(_){} try{v.currentTime=Math.max(0,want);}catch(_){}
-        // Segment source-audio: unmute + volume for the incoming clip, others stay muted.
+      if(v){ applyFraming(s,v,_kbProg); showVid(s.id);
         try{ v.muted = !s.srcAudio; if(s.srcAudio) v.volume = Math.max(0, Math.min(1, (s.srcAudioVol!=null?+s.srcAudioVol:1))); }catch(_){}
-        const p=v.play(); if(p&&p.catch)p.catch(()=>{}); }
+        if(_rev){
+          // Keep the element paused so our tick-driven seeks win; mute regardless since reverse
+          // audio can't be played live by the browser (will reverse on render).
+          try{ v.muted = true; v.pause(); v.playbackRate = 1; v.currentTime = Math.max(0, want); }catch(_){}
+        } else {
+          try{v.playbackRate=spd;}catch(_){}
+          try{v.currentTime=Math.max(0,want);}catch(_){}
+          const p=v.play(); if(p&&p.catch)p.catch(()=>{});
+        }
+      }
       showCap(s.cap);
     } else if(v){                                      // same clip: keep it synced + playing + reframe
       applyFraming(s, v, _kbProg);
-      if(v.playbackRate!==spd){ try{v.playbackRate=spd;}catch(_){} }
-      if(Math.abs(v.currentTime-want)>0.35){ try{v.currentTime=Math.max(0,want);}catch(_){} }
-      if(v.paused){ const p=v.play(); if(p&&p.catch)p.catch(()=>{}); }
+      if(_rev){
+        // Manual reverse: pause + seek-step. Only seek when we've drifted enough that the next
+        // frame should actually change (~1/30s step at 1x) — avoids thrash on frames that would
+        // round to the same source timestamp.
+        if(!v.paused){ try{ v.pause(); }catch(_){} }
+        if(Math.abs(v.currentTime - want) > 0.03){ try{ v.currentTime = Math.max(0, want); }catch(_){} }
+      } else {
+        if(v.playbackRate!==spd){ try{v.playbackRate=spd;}catch(_){} }
+        if(Math.abs(v.currentTime-want)>0.35){ try{v.currentTime=Math.max(0,want);}catch(_){} }
+        if(v.paused){ const p=v.play(); if(p&&p.catch)p.catch(()=>{}); }
+      }
     }
     if(v){ const lt=hit.off, dd=hit.dur; let op=1; const fi=+s.fadeIn||0, fo=+s.fadeOut||0;  // clip fade preview
       if(fi>0 && lt<fi) op=Math.max(0,lt/fi);
