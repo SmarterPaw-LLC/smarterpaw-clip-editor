@@ -322,7 +322,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.41</span>
+  <span class="ver" id="appVer">v2.9.42</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -4162,14 +4162,19 @@ function renderOverlays(time){
         // button (matches the bake). pre-line collapses runs of spaces but preserves line breaks.
         el.style.whiteSpace='pre-line'; el.style.lineHeight='1.1'; el.style.textAlign='center';
         el.style.wordBreak='normal'; el.style.overflowWrap='break-word';
-        el.style.maxWidth = (o.w != null && +o.w > 0 && +o.w < 1) ? ((W * +o.w) + 'px') : 'none';
+        // When o.w is set, FORCE the box to exactly that fraction of the canvas (not just a cap).
+        // Otherwise the box auto-shrinks to the longest line and dragging the edge handle appears
+        // to do nothing even though o.w widened.
+        if(o.w != null && +o.w > 0 && +o.w <= 1){ el.style.width = (W * +o.w) + 'px'; el.style.maxWidth = (W * +o.w) + 'px'; el.style.boxSizing = 'border-box'; }
+        else { el.style.width = 'auto'; el.style.maxWidth = 'none'; }
         el.style.background=o.bg||'#f07830'; const p=(o.size||0.06)*W;
         el.style.padding=(p*0.38)+'px '+(p*0.55)+'px'; el.style.borderRadius=(p*0.3)+'px'; el.style.textShadow='none';
       } else {
         el.textContent = o.text || '';
         el.style.whiteSpace='pre-line'; el.style.lineHeight='1.1'; el.style.textAlign='center';
         el.style.wordBreak='normal'; el.style.overflowWrap='break-word';
-        el.style.maxWidth = (o.w != null && +o.w > 0 && +o.w < 1) ? ((W * +o.w) + 'px') : 'none';
+        if(o.w != null && +o.w > 0 && +o.w <= 1){ el.style.width = (W * +o.w) + 'px'; el.style.maxWidth = (W * +o.w) + 'px'; el.style.boxSizing = 'border-box'; }
+        else { el.style.width = 'auto'; el.style.maxWidth = 'none'; }
         el.style.background='none'; el.style.padding='0'; el.style.borderRadius='0';
         // Shadow only when the Drop shadow checkbox is on — otherwise NO textShadow at all.
         el.style.textShadow = ((o.shadow||{}).on) ? '0 2px 6px rgba(0,0,0,.6)' : 'none';
@@ -4412,25 +4417,23 @@ function _positionOvHandles(o, el){
       const isTextEdge = (o.type === 'text' && o.style !== 'sticker' && axis === 'w');
       if(scaleField(o) !== 'wh' && !isTextEdge) return;
       const stageWrap = $('#stageWrap');
-      const stageW = stageWrap ? Math.max(1, stageWrap.clientWidth) : 1;
+      const stageRect = stageWrap ? stageWrap.getBoundingClientRect() : {left:0, width:1};
+      const stageW = Math.max(1, stageRect.width);
       const cx = r.left + r.width/2, cy = r.top + r.height/2;
-      // Starting state — captured once at pointerdown, drives the entire drag.
-      const curWFrac = (r.width) / stageW;      // current box width as canvas fraction
       const s0 = axis==='w' ? (+o.w||0.4) : (+o.h||0.2);
       const half0 = Math.max(1, axis==='w' ? r.width/2 : r.height/2);
       histCommit();
       try{ dot.setPointerCapture(ev.pointerId); }catch(_){}
       const mv = e => {
         if(isTextEdge){
-          // Drag distance (in canvas-fraction) from the handle's starting X. Positive sign on
-          // the right handle, negative on left — both widen when the pointer moves AWAY from
-          // the box center. We grow symmetrically around the text anchor (o.x), so adding 2x
-          // the per-side delta to the current fractional width keeps the text visually
-          // centered inside its new rectangle.
-          const dxPx = sign * (e.clientX - cx);
-          const deltaFrac = (dxPx - half0) / stageW;   // movement beyond the original edge
-          const newW = Math.min(1, Math.max(0.06, curWFrac + 2 * deltaFrac));
-          setOverlayField(o, 'w', Math.round(newW * 1000) / 1000);
+          // Direct manipulation: the pointer's X distance from the overlay's center becomes
+          // the new half-width. Right-handle: positive sign → pointer-right-of-center widens.
+          // Left-handle: negative sign → pointer-left-of-center widens. Grows symmetrically
+          // around the text anchor so the text visually stays put while the box expands.
+          const halfPx = sign * (e.clientX - cx);
+          const newHalfPx = Math.max(10, halfPx);
+          const newWFrac = Math.min(1, Math.max(0.06, (newHalfPx * 2) / stageW));
+          setOverlayField(o, 'w', Math.round(newWFrac * 1000) / 1000);
         } else {
           const cur = axis==='w' ? (e.clientX - cx) : (e.clientY - cy);
           const ratio = Math.max(0.05, sign * cur / half0);
