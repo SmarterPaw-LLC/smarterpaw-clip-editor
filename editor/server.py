@@ -2351,6 +2351,8 @@ def flatten_segments(edl):
             seg["panX"] = s.get("panX")
         if s.get("panY") is not None:
             seg["panY"] = s.get("panY")
+        if s.get("canvasScale") is not None:
+            seg["canvasScale"] = s.get("canvasScale")
         fi = float(s.get("fadeIn", 0) or 0)
         fo = float(s.get("fadeOut", 0) or 0)
         if fi > 0 and abs(a - top["start"]) < 0.02:
@@ -2607,6 +2609,13 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
                 base += ",eq=" + ":".join(eq_parts)
             if abs(hu_) > 0.5:
                 base += f",hue=h={hu_:.2f}"
+            # Canvas-size: shrink the W×H frame and pad with black so the user can create letter-
+            # box bars (POV-style). Default 1.0 = fill canvas; 0.5 = half-size centered + black bars.
+            cs_ = max(0.1, min(1.0, float(seg.get("canvasScale", 1) or 1)))
+            if cs_ < 0.999:
+                sw2 = max(2, int(W * cs_)); sh2 = max(2, int(H * cs_))
+                sw2 -= sw2 % 2; sh2 -= sh2 % 2
+                base += f",scale={sw2}:{sh2},pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black"
             # Freeze-fill the last frame ONLY if the segment asks for MORE source seconds than the
             # clip actually has (that's the intentional "hold the last frame" case). When the
             # source has plenty (splits, normal cuts), skipping tpad avoids adding a duplicated
