@@ -229,6 +229,28 @@ def run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
+_fps_cache = {}
+def probe_fps(path):
+    """Return the source video's native frame rate (fps). Cached in-memory. Used by the reverse-
+    segment loop-seam trim so we drop exactly ONE source frame on each side even when fps=60
+    has upsampled the stream — a 30fps source becomes 2 output frames per source frame, so a
+    one-output-frame trim is only half a source frame = the duplicate at the seam survives."""
+    if path in _fps_cache:
+        return _fps_cache[path]
+    r = run([FFPROBE, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=r_frame_rate", "-of", "json", path])
+    fps = 30.0
+    try:
+        rfr = json.loads(r.stdout)["streams"][0]["r_frame_rate"]
+        a, b = rfr.split("/")
+        if float(b) > 0:
+            fps = float(a) / float(b)
+    except Exception:
+        pass
+    _fps_cache[path] = fps
+    return fps
+
+
 def probe(path):
     global _probe_dirty
     if path in _probe_cache:
@@ -2637,9 +2659,16 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
             # shorter at 60fps — imperceptible, and the alternative (freeze) is worse.
             if seg.get("reverse"):
                 base += ",reverse"
-                one_frame = 1.0 / 60.0
-                end_t = max(one_frame * 2.0, outlen - one_frame)
-                base += f",trim=start={one_frame:.5f}:end={end_t:.5f},setpts=PTS-STARTPTS"
+                # Source-fps-aware trim: at 60fps output, one source frame = ceil(60/source_fps)
+                # output frames (30fps source → 2 output frames per source frame, 24fps → ~3).
+                # Trim exactly that many output frames each side so the duplicate boundary frame
+                # (which matches the adjacent forward segment) is fully removed regardless of
+                # source cadence.
+                src_fps = probe_fps(src) or 30.0
+                out_per_src = max(1, int(round(60.0 / max(1.0, src_fps))))
+                trim_t = out_per_src / 60.0
+                end_t = max(trim_t * 2.0, outlen - trim_t)
+                base += f",trim=start={trim_t:.5f}:end={end_t:.5f},setpts=PTS-STARTPTS"
             # Freeze-fill the last frame ONLY if the segment asks for MORE source seconds than the
             # clip actually has (that's the intentional "hold the last frame" case). When the
             # source has plenty (splits, normal cuts), skipping tpad avoids adding a duplicated
