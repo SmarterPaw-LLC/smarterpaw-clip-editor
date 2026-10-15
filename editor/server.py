@@ -2629,8 +2629,17 @@ def render(edl, out_dir=None, out_name=None, progress=None, fmt="mp4", gif_fps=1
             # Reverse: play this segment backwards. ffmpeg's `reverse` buffers the whole segment
             # in RAM — fine for short cuts (which is what this control is for). Audio reversal
             # is applied separately on the src-audio tap below.
+            # Loop seam fix: a reversed segment's first/last frames are bit-identical to the
+            # last/first frames of an adjacent FORWARD segment reading the same source window
+            # (classic forward→reverse→forward ping-pong). Concatenating them produces a one-
+            # frame freeze at each seam that reads as a glitch. Trim one frame off each end of
+            # the reversed output so motion flows cleanly across every seam. Output is ~33ms
+            # shorter at 60fps — imperceptible, and the alternative (freeze) is worse.
             if seg.get("reverse"):
                 base += ",reverse"
+                one_frame = 1.0 / 60.0
+                end_t = max(one_frame * 2.0, outlen - one_frame)
+                base += f",trim=start={one_frame:.5f}:end={end_t:.5f},setpts=PTS-STARTPTS"
             # Freeze-fill the last frame ONLY if the segment asks for MORE source seconds than the
             # clip actually has (that's the intentional "hold the last frame" case). When the
             # source has plenty (splits, normal cuts), skipping tpad avoids adding a duplicated
