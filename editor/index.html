@@ -60,7 +60,7 @@
   .trk .grip:hover { color:var(--txt); }
   .trk .lanex { position:absolute; right:4px; top:50%; transform:translateY(-50%); z-index:4; font-size:10px; padding:0 5px; line-height:16px; }
   .trk.chlane { background:repeating-linear-gradient(90deg,transparent,transparent 22px,#ffffff06 22px,#ffffff06 23px); }
-  .blk { position:absolute; top:3px; bottom:3px; border-radius:4px; font-size:10px; color:#fff; overflow:hidden; white-space:nowrap; cursor:grab; box-sizing:border-box; padding:2px 6px; min-width:8px; }
+  .blk { position:absolute; top:3px; bottom:3px; border-radius:4px; font-size:10px; color:#fff; overflow:hidden; white-space:nowrap; cursor:grab; box-sizing:border-box; padding:2px 6px; min-width:8px; user-select:none; -webkit-user-drag:none; }
   .blk.clip { background:#34415a; box-shadow:inset 0 0 0 1px #5b8cff44; cursor:pointer; }
   .blk.endcard { background:#4a3f1a; box-shadow:inset 0 0 0 1px var(--acc); cursor:pointer; }
   .blk.ov-text { background:#2c6e49; } .blk.ov-shape { background:#5d539e; } .blk.ov-image { background:#7a5230; } .blk.ov-sprinkle { background:#8a5a2b; } .blk.ov-arrow { background:#9e4b3a; }
@@ -322,7 +322,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.57</span>
+  <span class="ver" id="appVer">v2.9.58</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -2969,6 +2969,10 @@ function _audHueForSrc(src){
 }
 function buildAudioBar(a, total){
   const b=document.createElement('div'); b.dataset.audid=a.id;
+  // Explicitly disable native HTML5 drag so the browser can't start a text-drag on the clip's
+  // label — that was what produced the red-X "no drop target" cursor when the user tried to
+  // move the bar earlier on the timeline. We drive moves via pointer events only.
+  b.draggable = false;
   const meta=_audSrcInLib(a.src||'');
   const kindCls = meta.kind==='s' ? 'sfx' : (meta.kind==='v' ? 'voice' : 'music');
   b.className='blk audclip '+kindCls+(a.id===audSel?' sel':'')+(a.hidden?' clhidden':'')+(a.locked?' cllocked':'');
