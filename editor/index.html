@@ -322,7 +322,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.52</span>
+  <span class="ver" id="appVer">v2.9.53</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -349,6 +349,7 @@
   <button class="mini" id="btnProjRename" title="Rename the current project (renames the file too)">Rename…</button>
   <button class="mini" id="btnProjNew">New</button>
   <button class="mini" id="btnAiBuild" title="New AI-assisted build — pick clips + a brief, then tell Claude to assemble">✨ AI build…</button>
+  <button class="mini" id="btnProjImport" title="Pick segments from another saved project and append them to this one's timeline">📥 Import from…</button>
   <button class="mini" id="btnProjDel" title="Delete this project">Delete</button>
   <span class="sp"></span>
   <span class="lbl">Brand</span>
@@ -844,6 +845,21 @@ EMPHASIS (unreliable — better to CAPS the word in the script, or add , or — 
       <div id="aiGrid" class="aigrid"></div>
       <div class="row" style="justify-content:flex-end;gap:8px"><button class="ghost" id="aiCancel">Cancel</button><button class="primary" id="aiGo">✨ Create build &amp; notify Claude</button></div>
       <div class="status" id="aiStatus"></div>
+    </div>
+  </div>
+</div>
+
+<div id="impModal" class="cmodal" style="display:none">
+  <div class="card" style="width:780px">
+    <div class="hd"><span>📥 Import segments from another project</span><button class="mini" id="impClose">✕</button></div>
+    <div class="bd">
+      <div class="row"><label class="k">From project</label>
+        <select id="impProj" style="flex:1"></select>
+        <button class="mini" id="impLoad">Load segments</button></div>
+      <div class="row" style="justify-content:space-between"><label class="k" style="min-width:auto">Pick segments (click to toggle; number = order)</label><span id="impCount" style="font-size:12px;color:var(--mut)">0 selected</span></div>
+      <div id="impGrid" class="aigrid"></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button class="ghost" id="impCancel">Cancel</button><button class="primary" id="impGo">📥 Append to this timeline</button></div>
+      <div class="status" id="impStatus"></div>
     </div>
   </div>
 </div>
@@ -7230,6 +7246,81 @@ if($('#projSort')){
     _renderProjSelect(cur);
   };
 }
+/* ---------- Import segments from another project ---------- */
+let _impSrcEdl = null;        // the full EDL loaded from the "from" project
+let _impSel = [];             // indices (into _impSrcEdl.segments) picked by the user, order kept
+async function openImport(){
+  stop(); _impSrcEdl = null; _impSel = [];
+  $('#impStatus').textContent = ''; $('#impGrid').innerHTML = '';
+  const sel = $('#impProj'); sel.innerHTML = '';
+  // Populate with every project EXCEPT the current one (importing from yourself is pointless).
+  const curFile = curProj && curProj.file;
+  (_projList || []).forEach(p => { if(p.file === curFile) return;
+    const o = document.createElement('option'); o.value = p.file; o.textContent = p.name; sel.appendChild(o);
+  });
+  if(!sel.options.length){ sel.innerHTML = '<option value="">(no other saved projects)</option>'; }
+  $('#impCount').textContent = '0 selected';
+  $('#impModal').style.display = 'flex';
+}
+function closeImport(){ $('#impModal').style.display = 'none'; }
+async function impLoadSegs(){
+  const file = $('#impProj').value; if(!file){ $('#impStatus').textContent = 'Pick a project first.'; return; }
+  $('#impStatus').textContent = 'Loading…';
+  _impSrcEdl = await api('/api/project?file=' + encodeURIComponent(file));
+  if(_impSrcEdl && _impSrcEdl.error){ $('#impStatus').textContent = 'Load failed: ' + _impSrcEdl.error; return; }
+  _impSel = [];
+  renderImpGrid();
+  const n = (_impSrcEdl.segments || []).length;
+  $('#impStatus').textContent = n ? (n + ' segment(s) available') : 'This project has no segments.';
+}
+function renderImpGrid(){
+  const g = $('#impGrid'); g.innerHTML = '';
+  const segs = (_impSrcEdl && _impSrcEdl.segments) || [];
+  if(!segs.length) return;
+  segs.forEach((s, i) => {
+    const c = (MAN.byId || {})[s.id];
+    const label = (s.label || (c && c.label) || s.id || '').toString();
+    const thumb = c && c.thumb ? c.thumb : '';
+    const dur = (+s.dur || 0);
+    const cell = document.createElement('div'); cell.className = 'aicell'; cell.dataset.i = i;
+    cell.title = label + ' · in ' + fmt(+s.in||0) + ' · ' + fmt(dur) + 's' + (s.reverse ? ' · ⟲ reverse' : '');
+    cell.innerHTML = `<span class="ord"></span><span class="pick">＋</span>${thumb?`<img src="${thumb}" loading="lazy">`:'<div style="background:#222;width:100%;aspect-ratio:1/1"></div>'}<div class="cap">${label} · ${fmt(dur)}s${s.reverse?' ⟲':''}</div>`;
+    cell.onclick = () => { const k = _impSel.indexOf(i); if(k>=0) _impSel.splice(k,1); else _impSel.push(i); refreshImpSel(); };
+    g.appendChild(cell);
+  });
+  refreshImpSel();
+}
+function refreshImpSel(){
+  $('#impCount').textContent = _impSel.length + ' selected';
+  document.querySelectorAll('#impGrid .aicell').forEach(cell => {
+    const idx = parseInt(cell.dataset.i, 10);
+    const k = _impSel.indexOf(idx);
+    cell.classList.toggle('on', k>=0);
+    cell.querySelector('.ord').textContent = k>=0 ? (k+1) : '';
+    cell.querySelector('.pick').textContent = k>=0 ? '✓' : '＋';
+  });
+}
+async function impGo(){
+  if(!_impSrcEdl || !_impSel.length){ $('#impStatus').textContent = 'Pick at least one segment first.'; return; }
+  histCommit();
+  EDL.segments = EDL.segments || [];
+  _impSel.forEach(i => {
+    // Deep-clone so edits in the new project don't mutate the source EDL in memory, and strip
+    // _suid so variant-override records don't collide with existing segments.
+    const src = _impSrcEdl.segments[i]; if(!src) return;
+    const copy = JSON.parse(JSON.stringify(src));
+    delete copy._suid;
+    EDL.segments.push(copy);
+  });
+  const n = _impSel.length;
+  updateTotal(); renderTimeline(); renderTracks();
+  closeImport();
+  toast('Imported ' + n + ' segment' + (n!==1?'s':'') + ' from "' + (_impSrcEdl.name || 'project') + '"');
+}
+$('#btnProjImport').onclick = openImport;
+$('#impClose').onclick = closeImport; $('#impCancel').onclick = closeImport;
+$('#impLoad').onclick = impLoadSegs; $('#impGo').onclick = impGo;
+
 $('#btnProjLoad').onclick=()=>projLoad($('#projSelect').value);
 $('#projSelect').onchange=()=>projLoad($('#projSelect').value);
 $('#btnProjSave').onclick=projSave;
