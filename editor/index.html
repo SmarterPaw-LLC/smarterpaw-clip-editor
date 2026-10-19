@@ -322,7 +322,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.50</span>
+  <span class="ver" id="appVer">v2.9.51</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -3552,7 +3552,11 @@ function buildTextOverlayCanvas(o){
   if(isCaption){   // subtitle-style: dark translucent bg box + white text, supports \n lines
     const padX=size*0.55, padY=size*0.30, rad=size*0.24, lineH=size*1.2;
     const pad=Math.ceil(useSh ? (shBlur+Math.max(Math.abs(shDx),Math.abs(shDy))) : 0)+4;
-    cw=Math.ceil(tw+padX*2+pad*2);
+    // When o.w is set, FORCE the canvas (and therefore the dark bg box) to that fraction of the
+    // export width so the drag-widened box bakes at its displayed size instead of auto-shrinking
+    // to the longest line. Falls back to text-width-fit when o.w is unset.
+    const _forcedW = (o.w != null) ? Math.ceil(exportW * +o.w + pad*2) : null;
+    cw = _forcedW != null ? Math.max(_forcedW, Math.ceil(tw+padX*2+pad*2)) : Math.ceil(tw+padX*2+pad*2);
     ch=Math.ceil(lineH*lines.length+padY*2+pad*2);
     cv=document.createElement('canvas'); cv.width=cw; cv.height=ch; c=cv.getContext('2d'); c.font=font;
     const bw=cw-pad*2, bh=ch-pad*2;
@@ -4200,15 +4204,16 @@ function renderOverlays(time){
       el.style.fontSize=((o.size||0.06)*W)+'px'; el.style.opacity=(o.opacity!=null?o.opacity:1);
       if(o.style==='caption'){
         // Caption: multi-line, dark translucent bg box, centered — subtitle look.
-        // max-width caps at 90% of canvas + word-break wraps long lines, matching what the
-        // baked render does (buildTextOverlayCanvas word-wraps at exportW*0.90). Without
-        // this cap the DOM preview showed captions running off the video edges just like
-        // the render used to.
+        // Width is FORCED to o.w * canvas-width (not just capped) so dragging the side
+        // handles widens the dark bg box past the longest line of text. If o.w is unset,
+        // fall back to the 0.9 cap behavior.
         el.textContent = o.text || '';
         el.style.whiteSpace = 'pre-line';        // honor \n from the textarea
         el.style.wordBreak = 'normal';
         el.style.overflowWrap = 'break-word';
-        el.style.maxWidth = (W * (o.w!=null?+o.w:0.9)) + 'px';
+        const _cw = (o.w != null) ? (W * +o.w) : null;
+        if(_cw != null){ el.style.width = _cw + 'px'; el.style.maxWidth = _cw + 'px'; }
+        else { el.style.width = 'auto'; el.style.maxWidth = (W * 0.9) + 'px'; }
         el.style.textAlign = 'center';
         el.style.lineHeight = '1.2';
         el.style.boxSizing = 'border-box';
@@ -4691,7 +4696,7 @@ function buildOvEditor(){
       <label>Font <select id="ovFont"><option value="cooper">Cooper</option><option value="meowijuana">Meowijuana</option><option value="ofelia">Ofelia (KKZ display)</option><option value="caraque">Caraque (KKZ chunky)</option><option value="avenir">Avenir (KKZ body)</option><option value="helvetica">Helvetica (POV / IG style)</option><option value="arial">Arial</option></select></label></div>
       <div id="ovPlainRow"><label>Color <input type="color" id="ovColor" value="${o.color||'#ffffff'}"></label>
         <label class="ck"><input type="checkbox" id="ovBtn" ${o.button?'checked':''}> button</label> <input type="color" id="ovBg" value="${o.bg||'#f07830'}" title="button color">
-        <label title="Max width of the text box as a fraction of the canvas. Any line that exceeds this width wraps onto the next line. Does not change the font size — use Size for that.">Max width <input type="range" id="ovPlainW" min="0.1" max="1" step="0.02" value="${oR.w!=null?oR.w:1}" style="width:110px"></label></div>
+        <label id="ovPlainWLbl" title="Max width of the text box as a fraction of the canvas. Any line that exceeds this width wraps onto the next line. Does not change the font size — use Size for that.">Max width <input type="range" id="ovPlainW" min="0.1" max="1" step="0.02" value="${oR.w!=null?oR.w:1}" style="width:110px"></label></div>
       <div id="ovStickRow"><label>From <input type="color" id="ovStFrom" value="${o.gradStart||'#8ab81d'}"></label>
         <label>To <input type="color" id="ovStTo" value="${o.gradEnd||'#3c8e14'}"></label>
         <button class="mini ovBrandBtn" type="button" title="Use the project brand's gradient">🎨 Brand</button>
@@ -4837,6 +4842,9 @@ function buildOvEditor(){
   if($('#ovFillType')){ $('#ovFillType').value=(o.fillType==='gradient')?'gradient':'solid'; $('#ovGradType').value=o.gradType||'linear'; ovShapeRows(); }
   function ovTextRows(){ if(!$('#ovStyle')) return; const sv=$('#ovStyle').value, st=sv==='sticker', cap=sv==='caption';
     $('#ovPlainRow').style.display=st?'none':''; $('#ovStickRow').style.display=st?'':'none';
+    // Hide the "Max width" slider inside the plain row when caption is picked — caption has its
+    // own Width slider in #ovCapRow and showing both reads as duplicate controls.
+    if($('#ovPlainWLbl')) $('#ovPlainWLbl').style.display = cap ? 'none' : '';
     $('#ovStickRow2').style.display=st?'':'none'; $('#ovStickRow3').style.display=st?'':'none';
     if($('#ovCapRow')) $('#ovCapRow').style.display=cap?'':'none';
     $('#ovStAngRow').style.display=(st && $('#ovStType').value!=='radial')?'':'none'; }
