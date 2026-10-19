@@ -322,7 +322,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.55</span>
+  <span class="ver" id="appVer">v2.9.56</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -663,7 +663,15 @@
           <b>🎤 Generate voiceover (OpenAI TTS)</b>
           <button class="mini" id="audTtsClose" style="margin-left:auto">✕</button>
         </div>
-        <textarea id="audTtsText" rows="3" style="width:100%;box-sizing:border-box;background:#191b21;color:#eee;border:1px solid #333;border-radius:4px;padding:6px" placeholder="Type what the voice should say (max 4000 chars)" spellcheck="true"></textarea>
+        <textarea id="audTtsText" rows="3" style="width:100%;box-sizing:border-box;background:#191b21;color:#eee;border:1px solid #333;border-radius:4px;padding:6px" placeholder="Type what the voice should say (max 4000 chars). Emphasis: SELECT a word then → BOLD it with CAPS · add a — before it for a dramatic pause · end a line with ! for inflection." spellcheck="true"></textarea>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;align-items:center" title="Highlight part of the script, then click one of these to apply the emphasis trick to it.">
+          <span style="font-size:10px;color:var(--mut);margin-right:4px">Emphasis:</span>
+          <button type="button" class="mini" id="audTtsEmphCaps" title="Uppercase the selected words — TTS reads them louder / with punch.">A→A ALL CAPS</button>
+          <button type="button" class="mini" id="audTtsEmphDash" title="Insert ' — ' before the selected words. The em-dash creates a short pause that makes the next phrase land harder.">— pause before</button>
+          <button type="button" class="mini" id="audTtsEmphBang" title="Append ! to the selected sentence for rising / exclamatory inflection.">!</button>
+          <button type="button" class="mini" id="audTtsEmphEllipsis" title="Insert '... ' before the selected words — slow trailing beat, works for suspense or a wink.">… trail</button>
+          <button type="button" class="mini" id="audTtsEmphQ" title="Append ? to the selected sentence for a question-rise inflection.">?</button>
+        </div>
         <div class="row" style="gap:8px;margin-top:6px;flex-wrap:wrap">
           <label>Voice <select id="audTtsVoice">
             <optgroup label="Female">
@@ -5600,6 +5608,31 @@ function _ttsSyncModelUI(){
   if(cur && cur.disabled){ $('#audTtsVoice').value = 'nova'; }
 }
 if($('#audTtsModel')){ $('#audTtsModel').onchange = _ttsSyncModelUI; _ttsSyncModelUI(); }
+// Emphasis quick-actions — operate on the current selection in the TTS textarea so the user
+// can mark a word for stress without hand-typing CAPS or em-dashes. Each one mutates the
+// selected substring, keeps the caret/selection focused around the result, and triggers
+// no network call — the TTS run still happens on Generate.
+(function(){
+  const ta = $('#audTtsText'); if(!ta) return;
+  const apply = (transform) => {
+    ta.focus();
+    const start = ta.selectionStart, end = ta.selectionEnd;
+    if(start === end){ toast('Select some text first.'); return; }
+    const before = ta.value.slice(0, start);
+    const picked = ta.value.slice(start, end);
+    const after = ta.value.slice(end);
+    const {replace, caretStart, caretEnd} = transform(picked);
+    ta.value = before + replace + after;
+    const newStart = (caretStart != null) ? before.length + caretStart : before.length;
+    const newEnd = (caretEnd != null) ? before.length + caretEnd : newStart + replace.length;
+    ta.setSelectionRange(newStart, newEnd);
+  };
+  $('#audTtsEmphCaps').onclick = () => apply(s => ({ replace: s.toUpperCase() }));
+  $('#audTtsEmphDash').onclick = () => apply(s => ({ replace: '— ' + s, caretStart: 2, caretEnd: 2 + s.length }));
+  $('#audTtsEmphEllipsis').onclick = () => apply(s => ({ replace: '… ' + s, caretStart: 2, caretEnd: 2 + s.length }));
+  $('#audTtsEmphBang').onclick = () => apply(s => ({ replace: s.replace(/[.!?]*$/, '') + '!' }));
+  $('#audTtsEmphQ').onclick = () => apply(s => ({ replace: s.replace(/[.!?]*$/, '') + '?' }));
+})();
 // Delivery presets — a one-click way to get a specific vibe without needing to write the
 // instructions prompt yourself. Each preset switches to gpt-4o-mini-tts (the only model
 // that accepts instructions), nudges the voice to a pairing that fits the vibe, and fills
