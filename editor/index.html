@@ -322,7 +322,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.49</span>
+  <span class="ver" id="appVer">v2.9.50</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -342,6 +342,7 @@
 <div class="projbar">
   <span class="lbl">Project</span>
   <select id="projSelect" title="Saved projects"></select>
+  <select id="projSort" title="Sort the project list" style="font-size:11px"><option value="mtime">Recent</option><option value="name">A→Z</option></select>
   <button class="mini" id="btnProjLoad">Load</button>
   <button class="mini" id="btnProjSave" title="Save changes to this project">Save</button>
   <button class="mini" id="btnProjSaveAs">Save As…</button>
@@ -6991,11 +6992,27 @@ function applyEDL(edl){
   updateAspectBadge();   // show "primary" vs "variant of <X>" next to the canvas dropdown
 }
 function setCur(p){ curProj=p; $('#projCur').textContent = p ? ('● '+p.name) : '○ unsaved'; }
+let _projList = [];
+function _renderProjSelect(selectFile){
+  const sortMode = (localStorage.getItem('scl_projSort') || 'mtime');
+  const list = _projList.slice();
+  if(sortMode === 'name'){
+    list.sort((a,b) => (a.name||'').toLowerCase().localeCompare((b.name||'').toLowerCase()));
+  } else {
+    list.sort((a,b) => (b.mtime||0) - (a.mtime||0) || (a.name||'').toLowerCase().localeCompare((b.name||'').toLowerCase()));
+  }
+  const fmtDate = ts => { if(!ts) return ''; const d=new Date(ts*1000); const mo=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]; return mo+' '+d.getDate(); };
+  $('#projSelect').innerHTML = list.map(p => {
+    const dateTag = sortMode === 'mtime' && p.mtime ? ' · ' + fmtDate(p.mtime) : '';
+    return `<option value="${p.file}">${p.name}${dateTag}</option>`;
+  }).join('');
+  if(selectFile) $('#projSelect').value = selectFile;
+  const srt = $('#projSort'); if(srt) srt.value = sortMode;
+}
 async function loadProjects(selectFile){
-  const r=await api('/api/projects'); const list=r.projects||[];
-  $('#projSelect').innerHTML=list.map(p=>`<option value="${p.file}">${p.name}</option>`).join('');
-  if(selectFile) $('#projSelect').value=selectFile;
-  return list;
+  const r=await api('/api/projects'); _projList = r.projects || [];
+  _renderProjSelect(selectFile);
+  return _projList;
 }
 async function projLoad(file){
   if(!file) return; stop();
@@ -7192,6 +7209,14 @@ $('#aiFilter').oninput=renderAiGrid; $('#aiCat').onchange=renderAiGrid;
   };
 })();
 
+if($('#projSort')){
+  $('#projSort').value = localStorage.getItem('scl_projSort') || 'mtime';
+  $('#projSort').onchange = () => {
+    localStorage.setItem('scl_projSort', $('#projSort').value);
+    const cur = $('#projSelect').value;
+    _renderProjSelect(cur);
+  };
+}
 $('#btnProjLoad').onclick=()=>projLoad($('#projSelect').value);
 $('#projSelect').onchange=()=>projLoad($('#projSelect').value);
 $('#btnProjSave').onclick=projSave;
