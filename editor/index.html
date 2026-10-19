@@ -322,7 +322,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.51</span>
+  <span class="ver" id="appVer">v2.9.52</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -4410,20 +4410,25 @@ function _positionOvHandles(o, el){
   hg.b.style.display = _showTB ? '' : 'none';
   hg.l.style.display = _showLR ? '' : 'none';
   hg.r.style.display = _showLR ? '' : 'none';
-  const BG = _isTextW && !_isWh ? 14 : G;   // bigger gap for text so handles don't touch the body
   if(_showTB){
     hg.t.style.left=(r.width/2)+'px'; hg.t.style.top=(-G)+'px';        hg.t.style.transform='translate(-50%,-100%)';
     hg.b.style.left=(r.width/2)+'px'; hg.b.style.top=(r.height+G)+'px';hg.b.style.transform='translate(-50%,0)';
   }
   if(_showLR){
-    hg.l.style.left=(-BG)+'px';        hg.l.style.top=(r.height/2)+'px';hg.l.style.transform='translate(-100%,-50%)';
-    hg.r.style.left=(r.width+BG)+'px'; hg.r.style.top=(r.height/2)+'px';hg.r.style.transform='translate(0,-50%)';
-    // Make text-only width handles visually distinct — a tall bar reads as "drag to widen" and
-    // can't be mistaken for the corner size dots. Shape/wh types keep the default round dot.
     if(_isTextW && !_isWh){
-      [hg.l, hg.r].forEach(d => { d.style.borderRadius='3px'; d.style.width='8px'; d.style.height='28px'; d.style.background='#5b8cff'; d.style.border='2px solid #fff'; });
+      // Text width handles sit INSIDE the box edges (slightly inset) so they stay grabbable even
+      // when the text box hugs the stage edge — outside-the-box handles get clipped by stageWrap's
+      // overflow:hidden and read as missing. Tall bar still reads as "drag to resize width" and
+      // can't be confused with the corner-size dots. Drag outward widens, drag inward narrows.
+      const inset = 4;
+      hg.l.style.left=(inset)+'px';         hg.l.style.top=(r.height/2)+'px'; hg.l.style.transform='translate(0,-50%)';
+      hg.r.style.left=(r.width-inset)+'px'; hg.r.style.top=(r.height/2)+'px'; hg.r.style.transform='translate(-100%,-50%)';
+      [hg.l, hg.r].forEach(d => { d.style.borderRadius='3px'; d.style.width='8px'; d.style.height='28px'; d.style.background='#5b8cff'; d.style.border='2px solid #fff'; d.style.boxShadow='0 1px 4px #000a'; });
     } else {
-      [hg.l, hg.r].forEach(d => { d.style.borderRadius='50%'; d.style.width='10px'; d.style.height='10px'; d.style.background='#5b8cff'; d.style.border='2px solid #fff'; });
+      const BG = G;
+      hg.l.style.left=(-BG)+'px';        hg.l.style.top=(r.height/2)+'px'; hg.l.style.transform='translate(-100%,-50%)';
+      hg.r.style.left=(r.width+BG)+'px'; hg.r.style.top=(r.height/2)+'px'; hg.r.style.transform='translate(0,-50%)';
+      [hg.l, hg.r].forEach(d => { d.style.borderRadius='50%'; d.style.width='10px'; d.style.height='10px'; d.style.background='#5b8cff'; d.style.border='2px solid #fff'; d.style.boxShadow='0 1px 3px #000a'; });
     }
   }
   hg.rot.style.left=(r.width/2)+'px'; hg.rot.style.top='-24px'; hg.rot.style.transform='translate(-50%,-100%)';
