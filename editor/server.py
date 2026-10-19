@@ -138,15 +138,36 @@ def _openai_tts(text, voice, model, out_path, instructions=None):
         headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            audio = resp.read()
-    except urllib.error.HTTPError as he:
-        try: err = he.read().decode("utf-8", errors="replace")[:400]
-        except Exception: err = str(he)
-        return False, f"OpenAI {he.code}: {err}"
-    except Exception as e:
-        return False, f"OpenAI request failed: {e!r}"
+    # 180s read timeout + 2 retries on transient failures (socket/timeout/5xx). gpt-4o-mini-tts
+    # on longer scripts can push past 60s; the previous 60s cap was timing out mid-generation
+    # and losing the user's work. HTTPError 4xx (auth/bad request) are returned immediately —
+    # retrying those is pointless.
+    import socket
+    audio = None
+    last_err = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                audio = resp.read()
+            last_err = None
+            break
+        except urllib.error.HTTPError as he:
+            try: err = he.read().decode("utf-8", errors="replace")[:400]
+            except Exception: err = str(he)
+            if 500 <= he.code < 600 and attempt < 2:
+                last_err = f"OpenAI {he.code} (retrying…): {err[:200]}"
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            return False, f"OpenAI {he.code}: {err}"
+        except (socket.timeout, urllib.error.URLError, TimeoutError) as e:
+            last_err = f"OpenAI request failed: {e!r}"
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+        except Exception as e:
+            return False, f"OpenAI request failed: {e!r}"
+    if audio is None:
+        return False, last_err or "OpenAI request failed after 3 attempts"
     if not audio:
         return False, "Empty response from OpenAI"
     os.makedirs(os.path.dirname(out_path), exist_ok=True)

@@ -322,7 +322,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.56</span>
+  <span class="ver" id="appVer">v2.9.57</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -5612,6 +5612,16 @@ if($('#audTtsModel')){ $('#audTtsModel').onchange = _ttsSyncModelUI; _ttsSyncMod
 // can mark a word for stress without hand-typing CAPS or em-dashes. Each one mutates the
 // selected substring, keeps the caret/selection focused around the result, and triggers
 // no network call — the TTS run still happens on Generate.
+// Auto-save the voiceover script + instructions textareas to localStorage on every keystroke
+// so a timeout / 500 / reload / tab-close never costs the user their typing. Restored on load.
+(function(){
+  const script = $('#audTtsText'), instr = $('#audTtsInstr');
+  const K_SCRIPT = 'scl_ttsDraftScript', K_INSTR = 'scl_ttsDraftInstr';
+  try{ const s = localStorage.getItem(K_SCRIPT); if(s && script && !script.value) script.value = s; }catch(_){}
+  try{ const s = localStorage.getItem(K_INSTR); if(s && instr && !instr.value) instr.value = s; }catch(_){}
+  if(script){ script.addEventListener('input', () => { try{ localStorage.setItem(K_SCRIPT, script.value); }catch(_){} }); }
+  if(instr){ instr.addEventListener('input', () => { try{ localStorage.setItem(K_INSTR, instr.value); }catch(_){} }); }
+})();
 (function(){
   const ta = $('#audTtsText'); if(!ta) return;
   const apply = (transform) => {
@@ -5626,6 +5636,7 @@ if($('#audTtsModel')){ $('#audTtsModel').onchange = _ttsSyncModelUI; _ttsSyncMod
     const newStart = (caretStart != null) ? before.length + caretStart : before.length;
     const newEnd = (caretEnd != null) ? before.length + caretEnd : newStart + replace.length;
     ta.setSelectionRange(newStart, newEnd);
+    ta.dispatchEvent(new Event('input', {bubbles: true}));   // keep the localStorage draft in sync
   };
   $('#audTtsEmphCaps').onclick = () => apply(s => ({ replace: s.toUpperCase() }));
   $('#audTtsEmphDash').onclick = () => apply(s => ({ replace: '— ' + s, caretStart: 2, caretEnd: 2 + s.length }));
