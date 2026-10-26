@@ -322,7 +322,7 @@
 <body>
 <header>
   <h1>🐾 SmarterClip Editor</h1>
-  <span class="ver" id="appVer">v2.9.58</span>
+  <span class="ver" id="appVer">v2.9.59</span>
   <button class="mini" id="staleServer" title="The Python server needs a restart to pick up recent code changes." style="display:none;background:#f3b54a;color:#111;border:0;font-weight:600">⚠ Restart server</button>
   <button class="mini" id="btnUpdate" title="Check for updates" style="display:none"></button>
   <span class="pill" id="totalPill">–</span>
@@ -726,7 +726,7 @@ EMPHASIS (unreliable — better to CAPS the word in the script, or add , or — 
           <option value="used">Only used in a project</option>
           <option value="unused">Only unused</option>
         </select></label></div>
-      <div id="audPickList" style="max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:6px"></div>
+      <div id="audPickList" style="flex:1;min-height:200px;overflow:auto;border:1px solid var(--line);border-radius:6px"></div>
       <hr>
       <div id="audEditor"><div style="color:var(--mut);font-size:11px">Select an audio clip on the timeline to edit it.</div></div>
     </div>
